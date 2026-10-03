@@ -742,7 +742,7 @@ await em.find(Post, { where: { author: { is: null } } });
 |--------|--------------------|
 | `some: w` | at least one related row matches `w` (`some: {}` — it has any) |
 | `none: w` | no related row matches `w` (`none: {}` — it has none) |
-| `every: w` | no related row fails `w` — true when there are none |
+| `every: w` | no related row fails `w` — true when there are none; a row for which `w` is unknown (a NULL column) counts as failing |
 | `is: w` | the related row exists and matches `w` |
 | `is: null` | there is no related row |
 | `isNot: w` | no related row matches `w`, a missing one included |

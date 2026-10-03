@@ -98,7 +98,8 @@ export class RelationWhereFilterBuilder {
       } else if (key === "none" || key === "isNot") {
         predicates.push(value === null ? this.existsMatching(path, alias, outer, undefined, depth) : sql`NOT ${matches(value)}`);
       } else {
-        // every: no related row fails the where.
+        // every: no related row fails the where — a row the where reads as
+        // unknown (a NULL column) fails it too.
         predicates.push(sql`NOT ${this.existsMatching(path, alias, outer, value, depth, true)}`);
       }
     }
@@ -110,7 +111,9 @@ export class RelationWhereFilterBuilder {
   /**
    * `EXISTS (SELECT 1 FROM <related> WHERE <correlation> AND <scope> AND <where>)`.
    * With `negateWhere`, the where is negated — the "every" form, where a
-   * row that fails the filter (or reads it as unknown) counts against it.
+   * row that fails the filter, or reads it as unknown, counts against it.
+   * `NOT (where)` alone would let an unknown row through (NOT UNKNOWN is
+   * UNKNOWN), so the where is folded to true / false first.
    */
   private existsMatching(
     path: RelationPath,
@@ -142,7 +145,7 @@ export class RelationWhereFilterBuilder {
       });
       if (resolved.length > 0) {
         const combined = resolved.length === 1 ? resolved[0] : Conditions.and(resolved);
-        conditions.push(negateWhere ? sql`NOT (${combined})` : combined);
+        conditions.push(negateWhere ? sql`CASE WHEN (${combined}) THEN 1 ELSE 0 END = 0` : combined);
       } else if (negateWhere) {
         // every: {} — no row can fail an empty filter.
         conditions.push(sql`1 = 0`);
@@ -188,10 +191,30 @@ export class RelationWhereFilterBuilder {
     return sql`${raw(this.ctx.wrapTable(metadata.name))} AS ${wrappedAlias}`;
   }
 
-  private primaryKeyOf(entity: ClazzType<any>): string | undefined {
-    return this.resolver
-      .resolveEntityMetadata(entity)
-      ?.columns.find((col: any) => col.options?.primary)?.name;
+  /**
+   * The column of `keyed` a join column of relation `property` (declared on
+   * `entity`) points at: the relation's `references` when it names one,
+   * otherwise the single primary key. A composite key with no `references`
+   * has no single column to correlate on, so the filter is refused rather
+   * than matched on one part of the key.
+   */
+  private keyColumnOf(
+    entity: ClazzType<any>,
+    property: string,
+    keyed: ClazzType<any>,
+    references: string | undefined,
+  ): string {
+    if (references) return references;
+    const keys = (this.resolver.resolveEntityMetadata(keyed)?.columns ?? [])
+      .filter((col: any) => col.options?.primary)
+      .map((col: any) => col.name as string);
+    if (keys.length === 1) return keys[0];
+    if (keys.length === 0) return "id";
+    throw new InvalidQueryError(
+      `Relation "${property}" of "${entity.name}" cannot be filtered: "${keyed.name}" has a composite primary key ` +
+        `(${keys.join(", ")}) and the relation does not say which column its join column references.`,
+      `Declare the referenced column on the relation that holds the join column: @ManyToOne(() => ${keyed.name}, { references: "<column>" }).`,
+    );
   }
 
   /** How `property` of `entity` reaches its related rows; undefined when it is no relation. */
@@ -203,14 +226,13 @@ export class RelationWhereFilterBuilder {
     if (m2o) {
       const RelatedEntity = m2o.getMappingEntity() as ClazzType<any>;
       const joinColumn = m2o.joinColumn ?? `${m2o.columnName}_id`;
+      const targetKey = this.keyColumnOf(entity, property, RelatedEntity, (m2o as any).references);
       return {
         kind: "ManyToOne",
         RelatedEntity,
         correlate: (alias, outer) => ({
           from: this.sourceOf(RelatedEntity, alias),
-          on: [
-            sql`${col(alias, (m2o as any).references ?? this.primaryKeyOf(RelatedEntity) ?? "id")} = ${raw(outer(joinColumn))}`,
-          ],
+          on: [sql`${col(alias, targetKey)} = ${raw(outer(joinColumn))}`],
         }),
       };
     }
@@ -222,13 +244,13 @@ export class RelationWhereFilterBuilder {
         .resolveManyToOneMetadata(RelatedEntity)
         .find((m) => m.columnName === o2m.mappedBy);
       const fkColumn = owner?.joinColumn ?? o2m.mappedBy;
-      const parentPk = this.primaryKeyOf(entity);
+      const parentKey = this.keyColumnOf(entity, property, entity, (owner as any)?.references);
       return {
         kind: "OneToMany",
         RelatedEntity,
         correlate: (alias, outer) => ({
           from: this.sourceOf(RelatedEntity, alias),
-          on: [sql`${col(alias, fkColumn)} = ${raw(outer(parentPk ?? "id"))}`],
+          on: [sql`${col(alias, fkColumn)} = ${raw(outer(parentKey))}`],
         }),
       };
     }
@@ -237,16 +259,23 @@ export class RelationWhereFilterBuilder {
     if (m2m) {
       const RelatedEntity = m2m.getRelatedEntity();
       const joinInfo = this.resolver.resolveManyToManyJoinTable(m2m);
-      const parentPk = this.primaryKeyOf(entity);
-      if (!joinInfo) return undefined;
+      if (!joinInfo) {
+        throw new InvalidQueryError(
+          `Relation "${property}" of "${entity.name}" cannot be filtered: no join table is known for it` +
+            (m2m.mappedBy ? ` — "${m2m.mappedBy}" on "${RelatedEntity.name}" declares no joinTable.` : "."),
+          `Declare the join table on the owning side: @ManyToMany(() => ${RelatedEntity.name}, { joinTable: { name, joinColumn, inverseJoinColumn } }).`,
+        );
+      }
+      const parentKey = this.keyColumnOf(entity, property, entity, undefined);
+      const relatedKey = this.keyColumnOf(entity, property, RelatedEntity, undefined);
       return {
         kind: "ManyToMany",
         RelatedEntity,
         correlate: (alias, outer) => {
           const joinAlias = `${alias}_jt`;
           return {
-            from: sql`${raw(this.ctx.wrapTable(joinInfo.joinTableName))} AS ${raw(wrap(joinAlias))} INNER JOIN ${this.sourceOf(RelatedEntity, alias)} ON ${col(alias, this.primaryKeyOf(RelatedEntity) ?? "id")} = ${col(joinAlias, joinInfo.inverseJoinColumn)}`,
-            on: [sql`${col(joinAlias, joinInfo.joinColumn)} = ${raw(outer(parentPk ?? "id"))}`],
+            from: sql`${raw(this.ctx.wrapTable(joinInfo.joinTableName))} AS ${raw(wrap(joinAlias))} INNER JOIN ${this.sourceOf(RelatedEntity, alias)} ON ${col(alias, relatedKey)} = ${col(joinAlias, joinInfo.inverseJoinColumn)}`,
+            on: [sql`${col(joinAlias, joinInfo.joinColumn)} = ${raw(outer(parentKey))}`],
           };
         },
       };
@@ -257,33 +286,68 @@ export class RelationWhereFilterBuilder {
       const RelatedEntity = o2o.getRelatedEntity() as ClazzType<any>;
       if (o2o.joinColumn) {
         const joinColumn = o2o.joinColumn;
+        const targetKey = this.keyColumnOf(entity, property, RelatedEntity, undefined);
         return {
           kind: "OneToOne",
           RelatedEntity,
           correlate: (alias, outer) => ({
             from: this.sourceOf(RelatedEntity, alias),
-            on: [sql`${col(alias, this.primaryKeyOf(RelatedEntity) ?? "id")} = ${raw(outer(joinColumn))}`],
+            on: [sql`${col(alias, targetKey)} = ${raw(outer(joinColumn))}`],
           }),
         };
       }
       const owner = this.resolver
         .resolveOneToOneMetadata(RelatedEntity)
         .find((r) => r.propertyKey === o2o.inverseSide && !!r.joinColumn);
-      if (!owner?.joinColumn) return undefined;
+      if (!owner?.joinColumn) {
+        throw new InvalidQueryError(
+          `Relation "${property}" of "${entity.name}" cannot be filtered: it is the inverse side of a OneToOne` +
+            (o2o.inverseSide
+              ? ` and "${o2o.inverseSide}" on "${RelatedEntity.name}" holds no join column.`
+              : ` and names no inverseSide on "${RelatedEntity.name}".`),
+          `Give the owning side its column (@RelationColumn on "${RelatedEntity.name}") and name it in inverseSide.`,
+        );
+      }
       const ownerColumn = owner.joinColumn;
-      const parentPk = this.primaryKeyOf(entity);
+      const parentKey = this.keyColumnOf(entity, property, entity, undefined);
       return {
         kind: "OneToOne",
         RelatedEntity,
         correlate: (alias, outer) => ({
           from: this.sourceOf(RelatedEntity, alias),
-          on: [sql`${col(alias, ownerColumn)} = ${raw(outer(parentPk ?? "id"))}`],
+          on: [sql`${col(alias, ownerColumn)} = ${raw(outer(parentKey))}`],
         }),
       };
     }
 
     return undefined;
   }
+}
+
+/**
+ * The entity relation `property` of `entity` reaches, and the join table it
+ * crosses when it is a ManyToMany; undefined when `property` is no
+ * relation. What a relation filter on `property` reads.
+ */
+export function relationFilterTargetOf(
+  resolver: RelationMetadataResolver,
+  entity: ClazzType<any>,
+  property: string,
+): { entity: ClazzType<any>; joinTableName?: string } | undefined {
+  const m2o = resolver.resolveManyToOneMetadata(entity).find((r) => r.columnName === property);
+  if (m2o) return { entity: m2o.getMappingEntity() as ClazzType<any> };
+  const o2m = resolver.resolveOneToManyMetadata(entity).find((r) => r.propertyKey === property);
+  if (o2m) return { entity: o2m.getRelatedEntity() as ClazzType<any> };
+  const m2m = resolver.resolveManyToManyMetadata(entity).find((r) => r.propertyKey === property);
+  if (m2m) {
+    return {
+      entity: m2m.getRelatedEntity() as ClazzType<any>,
+      joinTableName: resolver.resolveManyToManyJoinTable(m2m)?.joinTableName,
+    };
+  }
+  const o2o = resolver.resolveOneToOneMetadata(entity).find((r) => r.propertyKey === property);
+  if (o2o) return { entity: o2o.getRelatedEntity() as ClazzType<any> };
+  return undefined;
 }
 
 /**
@@ -317,14 +381,5 @@ function relatedEntityOf(
   entity: ClazzType<any>,
   property: string,
 ): ClazzType<any> | undefined {
-  const m2o = resolver.resolveManyToOneMetadata(entity).find((r) => r.columnName === property);
-  if (m2o) return m2o.getMappingEntity() as ClazzType<any>;
-  for (const rel of [
-    ...resolver.resolveOneToManyMetadata(entity),
-    ...resolver.resolveManyToManyMetadata(entity),
-    ...resolver.resolveOneToOneMetadata(entity),
-  ]) {
-    if (rel.propertyKey === property) return rel.getRelatedEntity() as ClazzType<any>;
-  }
-  return undefined;
+  return relationFilterTargetOf(resolver, entity, property)?.entity;
 }

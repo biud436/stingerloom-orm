@@ -1639,6 +1639,7 @@ export class ReadExecutor {
         ? this.ctx.getQueryCache()?.policyForFind(entity, {
             cache: findOption.cache,
             relations: relationTree,
+            where: findOption.where,
           })
         : undefined;
 
@@ -1713,6 +1714,7 @@ export class ReadExecutor {
       ? this.ctx.getQueryCache()?.policyForFind(entity, {
           cache: option.cache,
           relations: relationTree,
+          where: option.where,
         })
       : undefined;
 
@@ -2110,6 +2112,7 @@ export class ReadExecutor {
         ? this.ctx.getQueryCache()?.policyForFind(entity, {
             cache: findOption.cache,
             relations: resolveRelationTree(entity, findOption.relations, this.resolver),
+            where: findOption.where,
           })
         : undefined;
     return this.ctx.executeReadOnly(async (rawSession) => {

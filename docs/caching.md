@@ -47,7 +47,7 @@ A single `find` may issue several SQL statements (the root query plus relation-l
 
 ## Invalidation
 
-Every cached row set is indexed under the tables the read could have touched: the entity's own table, its inheritance family (STI/TPT/TPC), the targets of eager and requested relations, and many-to-many join tables.
+Every cached row set is indexed under the tables the read could have touched: the entity's own table, its inheritance family (STI/TPT/TPC), the targets of eager and requested relations, many-to-many join tables, and the tables read by relation filters (`some` / `none` / `every` / `is` / `isNot`) in the read's `where` or in a relation's own `where`.
 
 Writes issued through the same `EntityManager` — `save`, `update`, `updateMany`, `delete`, `softDelete`, `restore`, `upsert`, `insertMany`, `increment`, and the rest — invalidate every entry tagged with a table the write can reach. That includes child tables reachable through `ON DELETE CASCADE` foreign keys, so a cached "authors with posts" result falls when a post is updated.
 

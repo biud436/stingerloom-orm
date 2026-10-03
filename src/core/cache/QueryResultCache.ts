@@ -6,6 +6,8 @@ import { MetadataContext } from "../../metadata/MetadataContext";
 import { transactionStorage } from "../../decorators/Transactional";
 import type { EntityManagerInternals } from "../EntityManagerInternals";
 import { relationTreeKey, type RelationTree } from "../RelationTree";
+import { isRelationFilter } from "../WhereResolver";
+import { relationFilterTargetOf } from "../RelationWhereFilter";
 
 /**
  * Per-query cache request, accepted by `FindOption.cache` and
@@ -251,14 +253,20 @@ export class QueryResultCache {
     option: {
       cache?: QueryCacheOption;
       relations?: RelationTree;
+      /** The read's where: relation filters in it read tables of their own. */
+      where?: unknown;
     },
   ): QueryCachePolicy | undefined {
     const normalized = this.normalizeOption(option.cache);
     if (!normalized) return undefined;
     if (transactionStorage.getStore()) return undefined;
-    const tags = this.collectReadTags(entity, option.relations);
-    if (normalized.tag) tags.push(USER_TAG_PREFIX + normalized.tag);
-    return new QueryCachePolicy(this, normalized.ttl, tags);
+    const tags = new Set<string>(this.collectReadTags(entity, option.relations));
+    for (const tag of this.collectFilterTags(entity, option.where, option.relations)) {
+      tags.add(tag);
+    }
+    const list = [...tags];
+    if (normalized.tag) list.push(USER_TAG_PREFIX + normalized.tag);
+    return new QueryCachePolicy(this, normalized.ttl, list);
   }
 
   /**
@@ -451,6 +459,78 @@ export class QueryResultCache {
     if (!perEntity) this.readTagsMemo.set(entity, (perEntity = new Map()));
     perEntity.set(memoKey, tags);
     return [...tags];
+  }
+
+  /**
+   * Tags for the tables the relation filters of a read touch: every
+   * `some` / `none` / `every` / `is` / `isNot` in the read's where and in a
+   * relation's own where under `relations`, at any depth, reads the related
+   * entity's tables (and a many-to-many join table) through a correlated
+   * EXISTS that neither the entity's closure nor the relation tree names.
+   */
+  private collectFilterTags(
+    entity: ClazzType<any>,
+    where: unknown,
+    relations: RelationTree | undefined,
+  ): string[] {
+    const tables = new Set<string>();
+    const visited = new Set<ClazzType<any>>([entity]);
+    this.visitFilterTargets(entity, where, tables, visited);
+    this.visitTreeFilters(entity, relations, tables, visited);
+    return [...tables].map((t) => TABLE_TAG_PREFIX + t);
+  }
+
+  private visitFilterTargets(
+    entity: ClazzType<any>,
+    where: unknown,
+    tables: Set<string>,
+    visited: Set<ClazzType<any>>,
+  ): void {
+    if (!where || typeof where !== "object") return;
+    if (Array.isArray(where)) {
+      for (const clause of where) this.visitFilterTargets(entity, clause, tables, visited);
+      return;
+    }
+    const resolver = this.ctx.getResolver();
+    for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
+      if (value === undefined || value === null) continue;
+      if (key === "OR" || key === "AND") {
+        if (Array.isArray(value)) {
+          for (const clause of value) this.visitFilterTargets(entity, clause, tables, visited);
+        }
+        continue;
+      }
+      if (key === "NOT") {
+        this.visitFilterTargets(entity, value, tables, visited);
+        continue;
+      }
+      if (!isRelationFilter(value)) continue;
+      const target = safeCall(() => relationFilterTargetOf(resolver, entity, key));
+      if (!target) continue;
+      if (target.joinTableName) tables.add(target.joinTableName);
+      this.visitReadClosure(target.entity, undefined, tables, visited);
+      for (const nested of Object.values(value)) {
+        this.visitFilterTargets(target.entity, nested, tables, visited);
+      }
+    }
+  }
+
+  private visitTreeFilters(
+    entity: ClazzType<any>,
+    relations: RelationTree | undefined,
+    tables: Set<string>,
+    visited: Set<ClazzType<any>>,
+  ): void {
+    if (!relations) return;
+    const resolver = this.ctx.getResolver();
+    for (const node of relations.nodes.values()) {
+      const target = safeCall(() => relationFilterTargetOf(resolver, entity, node.name))?.entity;
+      if (!target) continue;
+      if (node.options?.where !== undefined) {
+        this.visitFilterTargets(target, node.options.where, tables, visited);
+      }
+      this.visitTreeFilters(target, node.children, tables, visited);
+    }
   }
 
   /**
