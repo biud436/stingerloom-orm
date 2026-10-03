@@ -253,6 +253,22 @@ function resolveWhereValue(
 /**
  * Options for {@link resolveWhereClause}.
  */
+/** Keys of a relation filter: `some` / `none` / `every` (collections), `is` / `isNot` (single-valued). */
+const RELATION_FILTER_KEYS: ReadonlySet<string> = new Set(["some", "none", "every", "is", "isNot"]);
+
+/**
+ * Whether a `where` value is a relation filter: a plain object whose keys
+ * are all relation-filter keys. None of them is a column operator, so the
+ * shape cannot be mistaken for an operator object.
+ */
+export function isRelationFilter(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
+  const keys = Object.keys(value);
+  return keys.length > 0 && keys.every((key) => RELATION_FILTER_KEYS.has(key));
+}
+
 export interface WhereResolverOptions {
   /** Function to escape/quote a column identifier (e.g. wrapping in backticks or double quotes). */
   wrapColumn: (name: string) => string;
@@ -280,6 +296,13 @@ export interface WhereResolverOptions {
    * Defaults to the transform attached to `propertyToColumn`.
    */
   transformValue?: (field: string, value: unknown) => unknown;
+  /**
+   * Compiles a relation filter — `{ some | none | every | is | isNot }` on a
+   * relation property — into a predicate on the current row. Returns
+   * undefined when the property is no relation, which then resolves as a
+   * column. Without the hook a relation filter is rejected.
+   */
+  relationFilter?: (property: string, filter: Record<string, unknown>) => Sql | undefined;
 }
 
 /**
@@ -372,6 +395,16 @@ function resolveWhereSingleObject<T>(
 
     // Skip undefined
     if (value === undefined) continue;
+
+    // Relation filter: `{ posts: { some: { ... } } }`. A property that is no
+    // relation (a JSON column, say) resolves as a column below.
+    if (opts.relationFilter && isRelationFilter(value)) {
+      const predicate = opts.relationFilter(key, value);
+      if (predicate) {
+        result.push(predicate);
+        continue;
+      }
+    }
 
     // Regular field — resolve property name to DB column name via NamingStrategy map
     const dbColumnName = opts.propertyToColumn?.get(key) ?? key;

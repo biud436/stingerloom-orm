@@ -11,7 +11,8 @@ import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundErr
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { resolveRelationTree } from "./RelationTree";
-import { buildEntityColumnScope, validateReadIdentifiers } from "./ColumnNameValidator";
+import { validateReadIdentifiers } from "./ColumnNameValidator";
+import { RelationWhereFilterBuilder, relationAwareScope } from "./RelationWhereFilter";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 
 /**
@@ -107,13 +108,7 @@ export class ExplainQueryHandler {
     validateReadIdentifiers(
       findOption,
       select ? this.ctx.resolveSelectColumns<T>(select) : undefined,
-      buildEntityColumnScope({
-        entity,
-        metadata,
-        propertyToColumn: propToCol,
-        computedColumns: this.ctx.getComputedColumnNames(entity),
-        inheritanceResolver: this.ctx.getInheritanceResolver(),
-      }),
+      relationAwareScope(this.ctx, this.resolver, entity, metadata),
     );
 
     whereMap.push(
@@ -124,6 +119,11 @@ export class ExplainQueryHandler {
         dialect: this.ctx.getDialect(),
         dialectExpression: createDialectExpression(this.ctx.getDialect()),
         propertyToColumn: propToCol,
+        relationFilter: new RelationWhereFilterBuilder(
+          this.ctx,
+          this.resolver,
+          (findOption as any).withDeleted,
+        ).hookFor(entity, (column) => `${this.ctx.wrap(tableName)}.${this.ctx.wrap(column)}`),
       }),
     );
 

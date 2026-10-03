@@ -25,6 +25,7 @@ import type {
 import type { RelationQueryOptions, RelationTree } from "./RelationTree";
 import { relationTargetOf } from "./RelationNameValidator";
 import { resolveWhereClause } from "./WhereResolver";
+import { RelationWhereFilterBuilder } from "./RelationWhereFilter";
 import { createDialectExpression } from "../dialects/DialectExpression";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
@@ -145,8 +146,11 @@ export class RelationLoader {
    * table (the ManyToMany join table).
    */
   private relationWhere(
+    RelatedEntity: ClazzType<any>,
     relatedMetadata: { name?: string; columns: ColumnMetadata[] },
     options: RelationQueryOptions | undefined,
+    withDeleted: boolean | undefined,
+    source: string,
     table?: string,
   ): Sql[] {
     if (options?.where === undefined) return [];
@@ -158,6 +162,10 @@ export class RelationLoader {
       dialect,
       dialectExpression: createDialectExpression(dialect),
       propertyToColumn: this.ctx.buildPropertyToColumnMap(relatedMetadata as any),
+      relationFilter: new RelationWhereFilterBuilder(this.ctx, this.resolver, withDeleted).hookFor(
+        RelatedEntity,
+        (column) => `${this.ctx.wrap(source)}.${this.ctx.wrap(column)}`,
+      ),
     });
   }
 
@@ -567,7 +575,13 @@ export class RelationLoader {
 
         const whereConditions: Sql[] = [
           Conditions.in(this.ctx.wrap(fkColumn), parentIds),
-          ...this.relationWhere(relatedMetadata, options),
+          ...this.relationWhere(
+            RelatedEntity,
+            relatedMetadata,
+            options,
+            relationWithDeleted,
+            source.alias !== undefined ? TPC_UNION_ALIAS : relatedTableName,
+          ),
         ];
 
         const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
@@ -721,7 +735,14 @@ export class RelationLoader {
 
         const whereConditions: Sql[] = [
           Conditions.in(parentKey, parentIds),
-          ...this.relationWhere(relatedMetadata, options, relatedTableName),
+          ...this.relationWhere(
+            RelatedEntity,
+            relatedMetadata,
+            options,
+            relationWithDeleted,
+            relatedTableName,
+            relatedTableName,
+          ),
         ];
 
         // Soft-delete scoping for the target entity. Qualify by the related

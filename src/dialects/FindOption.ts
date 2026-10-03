@@ -272,12 +272,52 @@ export type WhereClause<T> = {
   // resolver, plus softDelete/restore's bespoke iterator, both
   // accept it. Document the typed `{ in: [...] }` form via FieldFilter
   // for full find()/findOne() coverage.
-  [K in keyof T]?: T[K] | T[K][] | FieldFilter<T[K]> | Sql | null;
+  [K in keyof T]?:
+    | T[K]
+    | T[K][]
+    | FieldFilter<T[K]>
+    | Sql
+    | null
+    | (K extends RelationPropertyKeys<T> ? RelationFilter<T[K]> : never);
 } & {
   OR?: WhereClause<T>[];
   AND?: WhereClause<T>[];
   NOT?: WhereClause<T>;
 };
+
+/**
+ * Filters rows by their related rows through a collection relation
+ * (`@OneToMany`, `@ManyToMany`). Each key takes a where clause of the
+ * related entity — an array ORs its elements, as the read's `where` does.
+ *
+ * - `some`: at least one related row matches (`some: {}` — has any)
+ * - `none`: no related row matches (`none: {}` — has none)
+ * - `every`: no related row fails to match (true when there are none)
+ */
+export type CollectionRelationFilter<E> = {
+  some?: WhereClause<E> | WhereClause<E>[];
+  none?: WhereClause<E> | WhereClause<E>[];
+  every?: WhereClause<E> | WhereClause<E>[];
+};
+
+/**
+ * Filters rows by the row a single-valued relation (`@ManyToOne`,
+ * `@OneToOne`) points at.
+ *
+ * - `is`: the related row exists and matches; `is: null` — there is none
+ * - `isNot`: no related row matches (a missing one included); `isNot: null`
+ *   — there is one
+ */
+export type SingleRelationFilter<E> = {
+  is?: WhereClause<E> | WhereClause<E>[] | null;
+  isNot?: WhereClause<E> | WhereClause<E>[] | null;
+};
+
+/** The relation filter a relation property of type `V` accepts in `where`. */
+export type RelationFilter<V> =
+  NonNullable<Awaited<V>> extends ReadonlyArray<unknown>
+    ? CollectionRelationFilter<RelationTarget<V>>
+    : SingleRelationFilter<RelationTarget<V>>;
 
 /**
  * Data type for the `updateMany` SET clause.

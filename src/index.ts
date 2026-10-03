@@ -532,14 +532,17 @@ export { DriverFactory, DriverRegistry } from "./dialects/DriverRegistry";
 export { EntityNotFound } from "./dialects/EntityNotFound";
 export {
   BaseFilter,
+  CollectionRelationFilter,
   ComparableFilter,
   FieldFilter,
   FILTER_OPERATOR_KEYS,
   FindOption,
+  RelationFilter,
   RelationKeys,
   RelationLoadOptions,
   RelationsObject,
   RelationsOption,
+  SingleRelationFilter,
   StringFilter,
   UpdateData,
   UpdateManyOptions,

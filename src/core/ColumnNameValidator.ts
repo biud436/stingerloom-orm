@@ -4,6 +4,7 @@ import type { ClazzType } from "../utils/types";
 import type { InheritanceResolver } from "./InheritanceResolver";
 import { InvalidQueryError } from "../errors";
 import { closestIdentifier } from "../utils/closestIdentifier";
+import { isRelationFilter } from "./WhereResolver";
 
 /**
  * Clause a rejected identifier came from, used verbatim in the message.
@@ -27,6 +28,12 @@ export type IdentifierClause =
 export interface ColumnNameScope {
   entityName: string;
   valid: Set<string>;
+  /**
+   * The scope of the entity a relation property leads to, when the
+   * statement accepts relation filters (reads); undefined for a property
+   * that is no relation. Absent where relation filters are not supported.
+   */
+  relationScope?: (property: string) => ColumnNameScope | undefined;
 }
 
 /**
@@ -127,6 +134,26 @@ export function validateWhereIdentifiers(
       continue;
     }
     if (value === undefined || typeof value === "function") continue;
+
+    // A relation filter's where names the related entity's columns.
+    if (isRelationFilter(value)) {
+      const related = scope.relationScope?.(key);
+      if (related) {
+        for (const nested of Object.values(value)) {
+          validateWhereIdentifiers(nested, related, clause);
+        }
+        continue;
+      }
+      if (!scope.relationScope && !scope.valid.has(key)) {
+        throw new InvalidQueryError(
+          `"${key}" in the ${clause} of "${scope.entityName}" is a relation filter (${Object.keys(value)
+            .map((k) => `"${k}"`)
+            .join(" / ")}), which this statement does not support.`,
+          "Relation filters work in reads — find(), findOne(), findAndCount(), findWithCursor(), count(), exists() and the aggregates. " +
+            "For a write, read the matching keys first and filter the write by them.",
+        );
+      }
+    }
 
     assertKnownColumn(key, clause, scope);
   }
