@@ -807,7 +807,7 @@ Complete list of options accepted by `find()`, `findOne()`, `findAndCount()`, `f
 | `limit` | `number` or `[offset, count]` | Raw LIMIT. Prefer `skip`/`take` for pagination. |
 | `skip` | `number` | Offset for pagination. Used with `take`. |
 | `take` | `number` | Max rows to return. Used with `skip`. |
-| `relations` | `(keyof T \| string)[]` | Relation properties to load. Names that match no relation (typos, nested paths like `"author.profile"`) throw `InvalidQueryError` listing the valid ones. |
+| `relations` | `(keyof T \| string)[]` or `RelationsObject<T>` | Relation properties to load. A dotted path (`"comments.author"`) or the object form (`{ comments: { relations: { author: true } } }`) loads relations of the related entities too — see [Nested Relations](./relations.md#nested-relations). Names that match no relation throw `InvalidQueryError` listing the valid ones, with the path for a nested level. |
 | `withDeleted` | `boolean` | Include soft-deleted entities (`@DeletedAt`). Default: `false`. |
 | `groupBy` | `(keyof T)[]` | GROUP BY columns. |
 | `having` | `Sql[]` | HAVING conditions (sql-template-tag). Joined with AND. |

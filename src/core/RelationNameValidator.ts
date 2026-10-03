@@ -113,11 +113,17 @@ function describeAvailable(index: RelationNameIndex): string {
  *
  * Only user-requested names are checked — eager relations are resolved from
  * metadata and can never be misspelled.
+ *
+ * `path` is the dotted relation path that reached `entity` when the names
+ * belong to a nested level of `relations` ("comments" for the relations of
+ * each comment); it is quoted in the message so the caller can find the
+ * offending entry.
  */
 export function validateRelationNames(
   entity: ClazzType<any>,
   relations: readonly string[] | undefined,
   resolver: RelationMetadataResolver,
+  path?: string,
 ): void {
   if (!relations || relations.length === 0) return;
 
@@ -127,23 +133,10 @@ export function validateRelationNames(
   for (const name of relations) {
     if (index.all.has(name)) continue;
 
-    // Nested paths ("author.profile") were never implemented — the loaders
-    // match the whole string against a property name, so a dotted entry could
-    // only ever no-op. Say so instead of dropping it.
-    if (typeof name === "string" && name.includes(".")) {
-      const root = name.split(".")[0];
-      throw new InvalidQueryError(
-        `Nested relation path "${name}" is not supported in "relations" for entity "${entity.name}". ` +
-          `Available relations: ${describeAvailable(index)}.`,
-        index.all.has(root)
-          ? `Load "${root}" here and fetch its nested relation with a follow-up query, or mark the nested relation eager.`
-          : `Relation paths must name a single relation property declared on "${entity.name}".`,
-      );
-    }
-
     const suggestion = closestIdentifier(String(name), index.all);
+    const requestedAs = path ? ` (requested as "${path}.${name}")` : "";
     throw new InvalidQueryError(
-      `Unknown relation "${name}" in "relations" for entity "${entity.name}". ` +
+      `Unknown relation "${name}" in "relations" for entity "${entity.name}"${requestedAs}. ` +
         `Available relations: ${describeAvailable(index)}.` +
         (suggestion ? ` Did you mean "${suggestion}"?` : ""),
       `Use one of the relation properties declared on "${entity.name}" ` +
@@ -152,6 +145,21 @@ export function validateRelationNames(
   }
 
   assertRelationTargetsResolvable(entity, relations, entries);
+}
+
+/**
+ * The entity class the relation `name` of `entity` points at, resolved the
+ * way the loaders resolve it. Undefined when `entity` declares no such
+ * relation or its target thunk yields nothing.
+ */
+export function relationTargetOf(
+  entity: ClazzType<any>,
+  name: string,
+  resolver: RelationMetadataResolver,
+): ClazzType<any> | undefined {
+  const entry = collectRelationEntries(entity, resolver).find((e) => e.name === name);
+  const target = entry?.readTarget();
+  return typeof target === "function" ? (target as ClazzType<any>) : undefined;
 }
 
 /**

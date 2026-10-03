@@ -149,6 +149,16 @@ export interface EntityManagerInternals {
   /** Returns the set of @ComputedColumn names for an entity. */
   getComputedColumnNames<T>(entity: ClazzType<T>): Set<string>;
   /**
+   * The physical columns a read of `entity` selects to hydrate it the way
+   * `find()` does: every @Column, the join column of each ManyToOne / owning
+   * OneToOne that has no @Column of its own, and every @ComputedColumn.
+   * Cached per metadata view like the read path's column plan.
+   */
+  getReadColumnNames<T>(
+    entity: ClazzType<T>,
+    metadata: { name: string; columns: ColumnMetadata[] },
+  ): readonly string[];
+  /**
    * Validates WHERE-criteria keys against the entity's known property/column
    * set, traversing AND / OR / NOT like the resolver does. `clause` names the
    * argument in the error ("criteria" for delete/softDelete/restore, "where"

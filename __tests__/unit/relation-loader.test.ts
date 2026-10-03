@@ -117,6 +117,9 @@ function createMockCtx(): jest.Mocked<EntityManagerInternals> {
     delete: jest.fn(),
     getTenantColumnConfig: jest.fn().mockReturnValue(null),
     buildTenantWhereClause: jest.fn().mockReturnValue(null),
+    getReadColumnNames: jest.fn((_entity: any, metadata: any) =>
+      metadata.columns.map((col: any) => col.name),
+    ),
   } as any;
 }
 

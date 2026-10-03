@@ -5,6 +5,7 @@ import { TransactionSessionManager } from "../../dialects/TransactionSessionMana
 import { MetadataContext } from "../../metadata/MetadataContext";
 import { transactionStorage } from "../../decorators/Transactional";
 import type { EntityManagerInternals } from "../EntityManagerInternals";
+import { relationTreeKey, type RelationTree } from "../RelationTree";
 
 /**
  * Per-query cache request, accepted by `FindOption.cache` and
@@ -249,7 +250,7 @@ export class QueryResultCache {
     entity: ClazzType<any>,
     option: {
       cache?: QueryCacheOption;
-      relations?: readonly string[];
+      relations?: RelationTree;
     },
   ): QueryCachePolicy | undefined {
     const normalized = this.normalizeOption(option.cache);
@@ -436,9 +437,9 @@ export class QueryResultCache {
 
   private collectReadTags(
     entity: ClazzType<any>,
-    relations: readonly string[] | undefined,
+    relations: RelationTree | undefined,
   ): string[] {
-    const memoKey = `${this.namespace()}|${(relations ?? []).join(",")}`;
+    const memoKey = `${this.namespace()}|${relationTreeKey(relations)}`;
     let perEntity = this.readTagsMemo.get(entity);
     if (perEntity?.has(memoKey)) return [...perEntity.get(memoKey)!];
 
@@ -456,44 +457,55 @@ export class QueryResultCache {
    * Tables a find over `entity` can read: its own tables (including the
    * inheritance family), targets of eager relations (recursively — loaders
    * hydrate related entities through the same eager machinery), targets of
-   * the explicitly requested top-level `relations`, and the join tables of
-   * any traversed many-to-many relation.
+   * the requested `relations` at every level of the tree, and the join
+   * tables of any traversed many-to-many relation.
+   *
+   * `visited` stops the walk at an entity already reached by the eager
+   * closure; a requested relation tree is followed whatever was visited,
+   * because a nested level can name a relation the eager walk skipped.
    */
   private visitReadClosure(
     entity: ClazzType<any>,
-    relations: readonly string[] | undefined,
+    relations: RelationTree | undefined,
     tables: Set<string>,
     visited: Set<ClazzType<any>>,
   ): void {
-    if (visited.has(entity)) return;
+    if (visited.has(entity) && !relations) return;
     visited.add(entity);
     this.addEntityTables(entity, tables);
 
     const resolver = this.ctx.getResolver();
-    const follow = (target: ClazzType<any> | undefined) => {
-      if (target) this.visitReadClosure(target, undefined, tables, visited);
+    const requested = (name: string) => relations?.nodes.has(name) === true;
+    const follow = (target: ClazzType<any> | undefined, name?: string) => {
+      if (!target) return;
+      const nested = name ? relations?.nodes.get(name)?.children : undefined;
+      if (nested && nested.names.length > 0) {
+        this.visitReadClosure(target, nested, tables, visited);
+      } else if (!visited.has(target)) {
+        this.visitReadClosure(target, undefined, tables, visited);
+      }
     };
 
     for (const rel of safeCall(() => resolver.resolveManyToOneMetadata(entity)) ?? []) {
-      if (rel.option?.eager === true || relations?.includes(rel.columnName)) {
-        follow(safeCall(() => rel.getMappingEntity() as ClazzType<any>));
+      if (rel.option?.eager === true || requested(rel.columnName)) {
+        follow(safeCall(() => rel.getMappingEntity() as ClazzType<any>), rel.columnName);
       }
     }
     for (const rel of safeCall(() => resolver.resolveOneToOneMetadata(entity)) ?? []) {
-      if (rel.option?.eager === true || relations?.includes(rel.propertyKey)) {
-        follow(safeCall(() => rel.getRelatedEntity() as ClazzType<any>));
+      if (rel.option?.eager === true || requested(rel.propertyKey)) {
+        follow(safeCall(() => rel.getRelatedEntity() as ClazzType<any>), rel.propertyKey);
       }
     }
     for (const rel of safeCall(() => resolver.resolveOneToManyMetadata(entity)) ?? []) {
-      if (relations?.includes(rel.propertyKey)) {
-        follow(safeCall(() => rel.getRelatedEntity() as ClazzType<any>));
+      if (requested(rel.propertyKey)) {
+        follow(safeCall(() => rel.getRelatedEntity() as ClazzType<any>), rel.propertyKey);
       }
     }
     for (const rel of safeCall(() => resolver.resolveManyToManyMetadata(entity)) ?? []) {
-      if (relations?.includes(rel.propertyKey)) {
+      if (requested(rel.propertyKey)) {
         const joinInfo = safeCall(() => resolver.resolveManyToManyJoinTable(rel));
         if (joinInfo?.joinTableName) tables.add(joinInfo.joinTableName);
-        follow(safeCall(() => rel.getRelatedEntity() as ClazzType<any>));
+        follow(safeCall(() => rel.getRelatedEntity() as ClazzType<any>), rel.propertyKey);
       }
     }
   }

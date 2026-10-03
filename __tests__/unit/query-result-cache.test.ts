@@ -12,6 +12,7 @@ import {
   QueryResultCache,
 } from "../../src/core/cache/QueryResultCache";
 import { transactionStorage } from "../../src/decorators/Transactional";
+import { parseRelationsOption } from "../../src/core/RelationTree";
 
 describe("InMemoryQueryCacheStore", () => {
   afterEach(() => {
@@ -258,7 +259,7 @@ describe("QueryResultCache", () => {
     // Read of users + posts relation → tagged with both tables.
     const policy = cache.policyForFind(FakeUser as any, {
       cache: true,
-      relations: ["posts"],
+      relations: parseRelationsOption(["posts"]),
     })!;
     expect([...policy.tags].sort()).toEqual(["t:posts", "t:users"]);
 

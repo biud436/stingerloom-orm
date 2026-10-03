@@ -10,7 +10,7 @@ import { ExplainResult } from "./ExplainResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
-import { validateRelationNames } from "./RelationNameValidator";
+import { resolveRelationTree } from "./RelationTree";
 import { buildEntityColumnScope, validateReadIdentifiers } from "./ColumnNameValidator";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 
@@ -46,7 +46,9 @@ export class ExplainQueryHandler {
 
     // Same guard as find(): explain() mirrors the read path, so an unresolvable
     // relation name must fail here too instead of silently planning fewer joins.
-    validateRelationNames(entity, findOption.relations, this.resolver);
+    // Only the top level shapes the statement; nested levels are follow-up reads.
+    const relationNames =
+      resolveRelationTree(entity, findOption.relations, this.resolver)?.names ?? [];
 
     const qb = RawQueryBuilderFactory.create();
     const selectMap: string[] = [];
@@ -56,9 +58,7 @@ export class ExplainQueryHandler {
     const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
     const eagerRelations = manyToOneRelations.filter((rel) => {
       const isEager = rel.option?.eager === true;
-      const isInRelations = findOption.relations?.includes(
-        rel.columnName,
-      );
+      const isInRelations = relationNames.includes(rel.columnName);
       return isEager || isInRelations;
     });
 
@@ -66,9 +66,7 @@ export class ExplainQueryHandler {
     const eagerOneToOneRelations = oneToOneRelations.filter((rel) => {
       if (!rel.joinColumn) return false;
       const isEager = rel.option?.eager === true;
-      const isInRelations = findOption.relations?.includes(
-        rel.propertyKey,
-      );
+      const isInRelations = relationNames.includes(rel.propertyKey);
       return isEager || isInRelations;
     });
 

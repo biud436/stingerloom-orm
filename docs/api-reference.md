@@ -245,7 +245,7 @@ interface FindOption<T> {
   orderBy?: Partial<Record<keyof T, "ASC" | "DESC">>;
   groupBy?: (keyof T)[];
   having?: Sql[];
-  relations?: (keyof T)[];
+  relations?: (keyof T | string)[] | RelationsObject<T>;  // dotted paths / object form nest
   withDeleted?: boolean;
   onlyDeleted?: boolean;         // Return ONLY soft-deleted rows (precedence over withDeleted)
   distinct?: boolean;            // SELECT DISTINCT

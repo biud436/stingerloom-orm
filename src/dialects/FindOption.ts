@@ -29,6 +29,81 @@ export enum LockMode {
  */
 export type RelationKeys<T> = Array<(keyof T & string) | (string & {})>;
 
+/**
+ * The entity a relation property holds: the element of a collection, the
+ * value of a single-valued (or lazy, Promise-typed) relation, without
+ * `null` / `undefined`.
+ */
+export type RelationTarget<V> =
+  NonNullable<V> extends Promise<infer U>
+    ? RelationTarget<U>
+    : NonNullable<V> extends ReadonlyArray<infer E>
+      ? NonNullable<E>
+      : NonNullable<V>;
+
+type NonRelationValue =
+  | string
+  | number
+  | bigint
+  | boolean
+  | symbol
+  | Date
+  | Uint8Array
+  | ((...args: never[]) => unknown);
+
+/**
+ * Property names of `T` that can hold a related entity. Anything typed as a
+ * scalar is left out; an object-typed column (a `json` column) is not told
+ * apart from a relation by type alone, so the read rejects it by name.
+ */
+export type RelationPropertyKeys<T> = {
+  [K in keyof T & string]-?: RelationTarget<T[K]> extends NonRelationValue
+    ? never
+    : RelationTarget<T[K]> extends object
+      ? K
+      : never;
+}[keyof T & string];
+
+/**
+ * What to load together with one relation in the object form of
+ * `relations`.
+ *
+ * @template R - The related entity.
+ */
+export interface RelationLoadOptions<R> {
+  /**
+   * Relations of the related entity to load on it, in any form `relations`
+   * accepts — names, dotted paths or another object.
+   *
+   * @example
+   * ```ts
+   * em.find(Post, {
+   *   relations: { comments: { relations: { author: true } } },
+   * })
+   * ```
+   */
+  relations?: RelationsOption<R>;
+}
+
+/**
+ * The object form of `relations`: one key per relation, `true` to load it,
+ * or {@link RelationLoadOptions} to also load relations nested under it.
+ */
+export type RelationsObject<T> = {
+  [K in RelationPropertyKeys<T>]?:
+    | boolean
+    | RelationLoadOptions<RelationTarget<T[K]>>;
+};
+
+/**
+ * The relations a read loads with each entity.
+ *
+ * - An array of relation names, where a dotted path (`"comments.author"`)
+ *   loads a relation of the related entity.
+ * - An object keyed by relation name (see {@link RelationsObject}).
+ */
+export type RelationsOption<T> = RelationKeys<T> | RelationsObject<T>;
+
 // ── Filter Types (Prisma-style) ─────────────────────────────
 
 /**
@@ -288,21 +363,26 @@ export type FindOption<T> = {
   /**
    * Specifies the relations to include in the query.
    *
-   * Each entry must name a relation property declared on the entity with
-   * `@ManyToOne` / `@OneToMany` / `@ManyToMany` / `@OneToOne`. A name no
-   * relation matches is rejected at query time with the list of valid ones —
-   * nested paths ("author.profile") are not supported.
+   * Each name must be a relation property declared on the entity with
+   * `@ManyToOne` / `@OneToMany` / `@ManyToMany` / `@OneToOne`; a name no
+   * relation matches is rejected at query time with the list of valid ones.
+   * A dotted path (`"comments.author"`) or the object form loads relations
+   * of the related entities as well, to any depth.
    *
    * @example
    * ```ts
    * // Type-safe — typos are caught at compile time
    * em.find(Post, { relations: ["author", "tags"] })
    *
+   * // Nested: each comment with its author
+   * em.find(Post, { relations: ["comments.author"] })
+   * em.find(Post, { relations: { comments: { relations: { author: true } } } })
+   *
    * // Throws InvalidQueryError: Unknown relation "autor" ... Did you mean "author"?
    * em.find(Post, { relations: ["autor"] })
    * ```
    */
-  relations?: RelationKeys<T>;
+  relations?: RelationsOption<T>;
 
   /**
    * If true, includes soft-deleted entities (@DeletedAt) in the results.

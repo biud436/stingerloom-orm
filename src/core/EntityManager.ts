@@ -428,6 +428,7 @@ export class EntityManager implements BaseEntityManager {
     warnTenantUpsertSuppressed: (e, c) =>
       this.tenantScope.warnTenantUpsertSuppressed(e, c),
     getComputedColumnNames: (e) => this.getComputedColumnNames(e),
+    getReadColumnNames: (e, m) => this.readExecutor.readColumnNames(e, m),
     validateCriteriaKeys: (m, c, n, clause) =>
       this.validateCriteriaKeys(m, c, n, clause),
     validateUpdateDataKeys: (m, d, n) => this.validateUpdateDataKeys(m, d, n),

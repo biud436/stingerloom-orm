@@ -10,6 +10,7 @@ import {
 } from "../../../decorators/TenantColumn";
 import { ColumnMetadata } from "../../../scanner/ColumnScanner";
 import { FindOption } from "../../../dialects/FindOption";
+import { requestedRelationNames } from "../../RelationTree";
 import { OrmError } from "../../../errors/OrmError";
 import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import { MetadataContext } from "../../../metadata/MetadataContext";
@@ -595,7 +596,7 @@ export class IdentityMapManager {
     option: FindOption<T>,
   ): string | null {
     if (
-      option.relations?.length ||
+      requestedRelationNames(option.relations)?.length ||
       option.select ||
       option.orderBy ||
       option.limit != null ||

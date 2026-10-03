@@ -591,7 +591,11 @@ export class ResultTransformer implements BaseResultTransformer {
           }
         }
 
-        // Recursively handle nested foreign-key relations.
+        // Recursively handle nested foreign-key relations, matching their
+        // prefix inside this relation's prefix-stripped columns as the
+        // OneToOne branch does (`author__team__id` → `team__id`). Matching it
+        // against the whole row picked up any JOIN of the reading entity that
+        // shares the name — a Post's own `team` became its author's `team`.
         const relatedManyToOneMappings =
           getCachedRelationInfo(ForeignClass).manyToOne;
 
@@ -602,7 +606,7 @@ export class ResultTransformer implements BaseResultTransformer {
           this.fillPropertiesToForeignObject(
             ForeignClass,
             foreignObject,
-            resultSet,
+            foreignObject,
             visited,
           );
         }

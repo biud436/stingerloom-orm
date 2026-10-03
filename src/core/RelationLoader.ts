@@ -22,6 +22,8 @@ import type {
   OneToManyMetadata,
   OneToOneMetadata,
 } from "../decorators";
+import type { RelationTree } from "./RelationTree";
+import { relationTargetOf } from "./RelationNameValidator";
 
 /**
  * A loaded entity instance viewed as a property-indexable record. Relation
@@ -96,11 +98,28 @@ export class RelationLoader {
       };
     }
     return {
-      columns: relatedMetadata.columns.map((col: any) => this.ctx.wrap(col.name)),
+      columns: this.readColumns(RelatedEntity, relatedMetadata).map((name) => this.ctx.wrap(name)),
       from: this.ctx.wrapTable(relatedMetadata.name ?? RelatedEntity.name),
       toEntities: (rows) =>
         transformer.toEntities(RelatedEntity, { results: rows } as QueryResult),
     };
+  }
+
+  /**
+   * The columns a relation read selects for `RelatedEntity`: the same set
+   * `find()` reads for it — every @Column, the join column of each of its
+   * own ManyToOne / owning OneToOne relations and its @ComputedColumns — so
+   * an entity reached through a relation carries the same properties, and
+   * the keys its own nested relations are loaded by.
+   */
+  private readColumns(
+    RelatedEntity: ClazzType<any>,
+    relatedMetadata: { name?: string; columns: ColumnMetadata[] },
+  ): readonly string[] {
+    return this.ctx.getReadColumnNames(RelatedEntity, {
+      name: relatedMetadata.name ?? RelatedEntity.name,
+      columns: relatedMetadata.columns,
+    });
   }
 
   /**
@@ -299,8 +318,8 @@ export class RelationLoader {
       const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
       const executeQuery = async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
-        const selectCols = relatedMetadata.columns.map((col: ColumnMetadata) =>
-          this.ctx.wrap(col.name),
+        const selectCols = this.readColumns(RelatedEntity, relatedMetadata).map(
+          (name) => this.ctx.wrap(name),
         );
         const whereConditions: Sql[] = [
           Conditions.in(this.ctx.wrap(relatedPk.name), fkValues),
@@ -366,7 +385,7 @@ export class RelationLoader {
   async loadOneToManyRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
-    relations: string[],
+    relations: readonly string[],
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
   ): Promise<void> {
@@ -505,7 +524,7 @@ export class RelationLoader {
   async loadManyToManyRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
-    relations: string[],
+    relations: readonly string[],
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
   ): Promise<void> {
@@ -552,9 +571,8 @@ export class RelationLoader {
 
       const executeQuery = async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
-        const selectCols = relatedMetadata.columns.map(
-          (col: any) =>
-            `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(col.name)}`,
+        const selectCols = this.readColumns(RelatedEntity, relatedMetadata).map(
+          (name) => `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(name)}`,
         );
         selectCols.push(
           `${this.ctx.wrap(joinInfo.joinTableName)}.${this.ctx.wrap(joinInfo.joinColumn)} AS ${this.ctx.wrap(fkAlias)}`,
@@ -659,7 +677,7 @@ export class RelationLoader {
   async loadOneToOneRelations<T>(
     entity: ClazzType<T>,
     parentResults: T | T[],
-    relations: string[],
+    relations: readonly string[],
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
   ): Promise<void> {
@@ -795,5 +813,87 @@ export class RelationLoader {
         }
       }
     }
+  }
+
+  /**
+   * Loads the relations nested under the ones a read already attached.
+   *
+   * The read itself attaches the top level of `tree` — JOINed or batched,
+   * as it always has. For every node that asks for more, the related
+   * entities it attached are collected across all parents and their own
+   * relations loaded the batched way: one query per relation per level,
+   * whatever the number of parents, then the next level down.
+   *
+   * Nested levels follow the read's `withDeleted` like the top level does,
+   * and each related entity is scoped by its own tenant predicate. They load
+   * only the relations asked for — `eager: true` applies to the entity a read
+   * queries, not to every entity it reaches.
+   */
+  async loadNestedRelations<T>(
+    entity: ClazzType<T>,
+    parentResults: T | T[],
+    tree: RelationTree | undefined,
+    existingSession?: TransactionSessionManager,
+    withDeleted?: boolean,
+  ): Promise<void> {
+    if (!tree) return;
+    const parents = this.toParentRecords(parentResults);
+    if (parents.length === 0) return;
+
+    for (const node of tree.nodes.values()) {
+      const children = node.children;
+      if (!children || children.names.length === 0) continue;
+      const target = relationTargetOf(entity, node.name, this.resolver);
+      if (!target) continue;
+      const related = RelationLoader.collectRelated(parents, node.name);
+      if (related.length === 0) continue;
+      await this.loadRelationLevel(target, related, children, existingSession, withDeleted);
+    }
+  }
+
+  /**
+   * Loads one level of `tree` onto `instances` of `entity`, then the levels
+   * below it.
+   */
+  private async loadRelationLevel(
+    entity: ClazzType<any>,
+    instances: EntityRecord[],
+    tree: RelationTree,
+    existingSession: TransactionSessionManager | undefined,
+    withDeleted: boolean | undefined,
+  ): Promise<void> {
+    const names = tree.names;
+    const manyToOne = this.resolver
+      .resolveManyToOneMetadata(entity)
+      .filter((rel) => names.includes(rel.columnName));
+    const owningOneToOne = this.resolver
+      .resolveOneToOneMetadata(entity)
+      .filter((rel) => !!rel.joinColumn && names.includes(rel.propertyKey));
+
+    await this.loadToOneRelations(entity, instances, manyToOne, owningOneToOne, existingSession, withDeleted);
+    await this.loadOneToManyRelations(entity, instances, names, existingSession, withDeleted);
+    await this.loadManyToManyRelations(entity, instances, names, existingSession, withDeleted);
+    await this.loadOneToOneRelations(entity, instances, names, existingSession, withDeleted);
+    await this.loadNestedRelations(entity, instances, tree, existingSession, withDeleted);
+  }
+
+  /**
+   * Every distinct entity the parents hold under `property` — the elements
+   * of a collection relation, the value of a single-valued one.
+   */
+  private static collectRelated(parents: EntityRecord[], property: string): EntityRecord[] {
+    const seen = new Set<object>();
+    const related: EntityRecord[] = [];
+    const add = (value: unknown) => {
+      if (value === null || typeof value !== "object" || seen.has(value)) return;
+      seen.add(value);
+      related.push(value as EntityRecord);
+    };
+    for (const parent of parents) {
+      const value = parent[property];
+      if (Array.isArray(value)) value.forEach(add);
+      else add(value);
+    }
+    return related;
   }
 }

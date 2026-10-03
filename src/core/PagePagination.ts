@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { WhereClause, RelationKeys } from "../dialects/FindOption";
+import { WhereClause, RelationsOption } from "../dialects/FindOption";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IOrderBy } from "../dialects/IOrderBy";
 import { Sql } from "../utils/sqlTag";
@@ -26,8 +26,8 @@ export type PagePaginationOption<T> = {
   /** Fields to select */
   select?: ISelectOption<T>;
 
-  /** Relations to load */
-  relations?: RelationKeys<T>;
+  /** Relations to load — the same forms `FindOption.relations` accepts. */
+  relations?: RelationsOption<T>;
 
   /** Include soft-deleted entities */
   withDeleted?: boolean;
