@@ -719,6 +719,50 @@ Each array element is an AND group. The groups are OR-combined. Think of it as: 
 
 This is functionally identical to using the `OR` key, but some people find the array syntax more readable for simple cases.
 
+### Filtering by Related Rows — some, none, every, is, isNot
+
+A relation property in `where` filters rows by their related rows. A collection relation (`@OneToMany`, `@ManyToMany`) takes `some`, `none` or `every`; a single-valued one (`@ManyToOne`, `@OneToOne`) takes `is` or `isNot`. Each takes a `where` of the related entity — every operator above, `OR` / `AND` / `NOT`, an array for OR, and relation filters of its own:
+
+```typescript
+// Posts with at least one approved comment written by alice
+await em.find(Post, {
+  where: { comments: { some: { approved: true, author: { is: { name: "alice" } } } } },
+});
+
+// Posts nobody commented on, and posts whose comments are all approved
+await em.find(Post, { where: { comments: { none: {} } } });
+await em.find(Post, { where: { comments: { every: { approved: true } } } });
+
+// Posts tagged "orm", posts without an author
+await em.find(Post, { where: { tags: { some: { label: "orm" } } } });
+await em.find(Post, { where: { author: { is: null } } });
+```
+
+| Filter | Matches a row when |
+|--------|--------------------|
+| `some: w` | at least one related row matches `w` (`some: {}` — it has any) |
+| `none: w` | no related row matches `w` (`none: {}` — it has none) |
+| `every: w` | no related row fails `w` — true when there are none |
+| `is: w` | the related row exists and matches `w` |
+| `is: null` | there is no related row |
+| `isNot: w` | no related row matches `w`, a missing one included |
+| `isNot: null` | there is a related row |
+
+Each filter compiles to a correlated `EXISTS`, so it never multiplies the parent rows:
+
+```sql
+-- where: { comments: { some: { approved: true } } }
+SELECT ... FROM "post"
+WHERE EXISTS (
+  SELECT 1 FROM "comment" AS "__rf0"
+  WHERE "__rf0"."post_id" = "post"."id" AND "__rf0"."deleted_at" IS NULL AND "__rf0"."approved" = $1
+)
+```
+
+The related rows are read the way a relation load reads them: soft-deleted ones are left out unless the read passes `withDeleted`, and each related entity is scoped by its own tenant predicate under `tenant_column`. A soft-deleted `author` therefore counts as no author for `is: null`.
+
+Relation filters work in every read: `find()`, `findOne()`, `findAndCount()`, `findWithPage()`, `findWithCursor()`, `count()`, `exists()`, the aggregates, `explain()`, and a relation's own `where` in [`relations`](./relations.md#filtering-ordering-and-limiting-a-relation). Their columns are checked against the related entity before the query runs. A filter that does not fit the relation (`some` on a ManyToOne, `is` on a collection) is rejected, and so is a relation filter in write criteria (`delete()`, `updateMany()`, ...) — read the matching keys first and filter the write by them.
+
 ### Type Safety
 
 Stingerloom's where filters are type-checked at compile time. The TypeScript compiler knows the type of each entity field and only allows operators that make sense:

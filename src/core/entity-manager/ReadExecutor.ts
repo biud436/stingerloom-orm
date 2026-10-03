@@ -52,6 +52,7 @@ import {
 } from "../ColumnNameValidator";
 import { RelationLoader } from "../RelationLoader";
 import { relationTargetOf } from "../RelationNameValidator";
+import { RelationWhereFilterBuilder, relationAwareScope } from "../RelationWhereFilter";
 import { AggregateQueryHandler } from "../AggregateQueryHandler";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -261,6 +262,19 @@ export class ReadExecutor {
   }
 
   /**
+   * The name a cursor page's FROM source is addressed by — see
+   * {@link findWithCursor}: the UNION ALL alias for a TABLE_PER_CLASS root,
+   * the derived table for a JOINED child or root, the table otherwise.
+   */
+  private cursorSourceName(entity: ClazzType<any>): string {
+    if (isTpcPolymorphicRoot(this.inheritanceResolver, entity)) return TPC_UNION_ALIAS;
+    if (isJoinedChild(this.inheritanceResolver, entity) || this.isTptPolymorphicRoot(entity)) {
+      return JOINED_CHILD_ALIAS;
+    }
+    return this.resolver.resolveEntityMetadata(entity)?.name ?? entity.name;
+  }
+
+  /**
    * Rejects a `where` / `orderBy` key in a relation's options that names no
    * column of the related entity — the guard the read's own options get —
    * before any statement runs, at every level of the tree.
@@ -277,17 +291,7 @@ export class ReadExecutor {
       const metadata =
         where !== undefined || orderBy ? this.resolver.resolveEntityMetadata(target) : undefined;
       if (metadata) {
-        validateReadIdentifiers(
-          { where, orderBy },
-          undefined,
-          buildEntityColumnScope({
-            entity: target,
-            metadata,
-            propertyToColumn: this.ctx.buildPropertyToColumnMap(metadata),
-            computedColumns: this.ctx.getComputedColumnNames(target),
-            inheritanceResolver: this.inheritanceResolver,
-          }),
-        );
+        validateReadIdentifiers({ where, orderBy }, undefined, relationAwareScope(this.ctx, this.resolver, target, metadata));
       }
       this.validateRelationOptionIdentifiers(target, node.children);
     }
@@ -607,13 +611,7 @@ export class ReadExecutor {
     validateReadIdentifiers(
       findOption,
       selectColumns,
-      buildEntityColumnScope({
-        entity,
-        metadata,
-        propertyToColumn: propToCol,
-        computedColumns: this.ctx.getComputedColumnNames(entity),
-        inheritanceResolver: this.inheritanceResolver,
-      }),
+      relationAwareScope(this.ctx, this.resolver, entity, metadata),
     );
 
     op.addedKeyColumns = this.resolveAddedKeyColumns(op, selectColumns);
@@ -983,6 +981,13 @@ export class ReadExecutor {
     const { entity, findOption, tableName, propToCol, hasEagerJoins } = op;
     const whereMap: Sql[] = [];
 
+    // A relation filter's subquery reads the current row by qualified name
+    // whether or not the statement JOINs: an unqualified column would bind
+    // to the subquery's own table.
+    const outerColumn = (column: string) =>
+      op.tptQualifyColumn
+        ? op.tptQualifyColumn(column)
+        : `${this.ctx.wrap(tableName)}.${this.ctx.wrap(column)}`;
     whereMap.push(
       ...resolveWhereClause(findOption.where, {
         wrapColumn: (n) => this.ctx.wrap(n),
@@ -992,6 +997,10 @@ export class ReadExecutor {
         dialectExpression: createDialectExpression(this.ctx.getDialect()),
         propertyToColumn: propToCol,
         qualifyColumn: op.tptQualifyColumn,
+        relationFilter: new RelationWhereFilterBuilder(this.ctx, this.resolver, findOption.withDeleted).hookFor(
+          entity,
+          outerColumn,
+        ),
       }),
     );
 
@@ -1817,13 +1826,7 @@ export class ReadExecutor {
     validateReadIdentifiers(
       { where, orderBy: { [order.orderByColumn]: order.direction } },
       undefined,
-      buildEntityColumnScope({
-        entity,
-        metadata,
-        propertyToColumn: propToCol,
-        computedColumns: this.ctx.getComputedColumnNames(entity),
-        inheritanceResolver: this.inheritanceResolver,
-      }),
+      relationAwareScope(this.ctx, this.resolver, entity, metadata),
     );
 
     const dbOrderByColumn = propToCol.get(order.orderByColumn) ?? order.orderByColumn;
@@ -2025,11 +2028,16 @@ export class ReadExecutor {
     propToCol: Map<string, string>,
     option: CursorPaginationOption<T>,
   ): Sql[] {
+    const source = this.cursorSourceName(entity);
     const whereMap: Sql[] = resolveWhereClause(where, {
       wrapColumn: (n) => this.ctx.wrap(n),
       dialect: this.ctx.getDialect(),
       dialectExpression: createDialectExpression(this.ctx.getDialect()),
       propertyToColumn: propToCol,
+      relationFilter: new RelationWhereFilterBuilder(this.ctx, this.resolver, option.withDeleted).hookFor(
+        entity,
+        (column) => `${this.ctx.wrap(source)}.${this.ctx.wrap(column)}`,
+      ),
     });
 
     const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);

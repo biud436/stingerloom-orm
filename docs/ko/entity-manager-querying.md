@@ -719,6 +719,50 @@ WHERE ("name" = $1 AND "status" = $2) OR ("age" > $3 AND "role" = $4)
 
 `OR` 키를 사용하는 것과 기능적으로 동일하지만, 단순한 경우에는 배열 문법이 더 읽기 편할 수 있어요.
 
+### 관련 행으로 거르기 -- some, none, every, is, isNot
+
+`where`에 관계 프로퍼티를 쓰면 관련 행을 기준으로 행을 거릅니다. 컬렉션 관계(`@OneToMany`, `@ManyToMany`)는 `some`, `none`, `every`를, 단일 값 관계(`@ManyToOne`, `@OneToOne`)는 `is`, `isNot`을 받아요. 각각 관련 엔티티의 `where`를 받으며, 위의 연산자, `OR` / `AND` / `NOT`, OR를 뜻하는 배열, 그리고 그 엔티티의 관계 필터까지 모두 쓸 수 있습니다.
+
+```typescript
+// alice가 쓴 승인된 댓글이 하나라도 있는 글
+await em.find(Post, {
+  where: { comments: { some: { approved: true, author: { is: { name: "alice" } } } } },
+});
+
+// 댓글이 하나도 없는 글, 댓글이 모두 승인된 글
+await em.find(Post, { where: { comments: { none: {} } } });
+await em.find(Post, { where: { comments: { every: { approved: true } } } });
+
+// "orm" 태그가 붙은 글, 작성자가 없는 글
+await em.find(Post, { where: { tags: { some: { label: "orm" } } } });
+await em.find(Post, { where: { author: { is: null } } });
+```
+
+| 필터 | 행이 걸리는 조건 |
+|------|----------------|
+| `some: w` | 관련 행 중 하나라도 `w`에 맞음 (`some: {}` — 하나라도 있음) |
+| `none: w` | `w`에 맞는 관련 행이 없음 (`none: {}` — 하나도 없음) |
+| `every: w` | `w`에 맞지 않는 관련 행이 없음 — 관련 행이 없어도 참 |
+| `is: w` | 관련 행이 있고 `w`에 맞음 |
+| `is: null` | 관련 행이 없음 |
+| `isNot: w` | `w`에 맞는 관련 행이 없음 (관련 행이 아예 없는 경우 포함) |
+| `isNot: null` | 관련 행이 있음 |
+
+필터마다 상관 `EXISTS`로 컴파일되므로 부모 행이 곱해지지 않습니다.
+
+```sql
+-- where: { comments: { some: { approved: true } } }
+SELECT ... FROM "post"
+WHERE EXISTS (
+  SELECT 1 FROM "comment" AS "__rf0"
+  WHERE "__rf0"."post_id" = "post"."id" AND "__rf0"."deleted_at" IS NULL AND "__rf0"."approved" = $1
+)
+```
+
+관련 행은 관계 로드와 같은 방식으로 읽어요. soft-delete된 행은 조회에 `withDeleted`를 넘기지 않는 한 빠지고, `tenant_column` 전략에서는 관련 엔티티마다 자기 테넌트 조건이 붙습니다. 그래서 soft-delete된 `author`는 `is: null`에서 "작성자 없음"으로 취급됩니다.
+
+관계 필터는 모든 조회에서 동작합니다. `find()`, `findOne()`, `findAndCount()`, `findWithPage()`, `findWithCursor()`, `count()`, `exists()`, 집계 메서드, `explain()`, 그리고 [`relations`](./relations.md#관계-필터링-정렬-개수-제한)에서 관계마다 주는 `where`까지 포함돼요. 필터의 컬럼은 쿼리를 실행하기 전에 관련 엔티티 기준으로 검사합니다. 관계에 맞지 않는 필터(ManyToOne에 `some`, 컬렉션에 `is`)는 거부하고, 쓰기 조건(`delete()`, `updateMany()` 등)에 관계 필터를 넣어도 거부합니다. 쓰기에는 먼저 조회로 키를 구한 뒤 그 키로 거르세요.
+
 ### 타입 안전성
 
 Stingerloom의 where 필터는 컴파일 타임에 타입 체크돼요. TypeScript 컴파일러가 각 엔티티 필드의 타입을 알고 있어서 유효한 연산자만 허용해요:

@@ -5,11 +5,8 @@ import { TransactionSessionManager } from "../dialects/TransactionSessionManager
 import sql, { Sql, join, raw } from "../utils/sqlTag";
 import { Conditions } from "./Conditions";
 import { resolveWhereClause } from "./WhereResolver";
-import {
-  assertKnownColumn,
-  buildEntityColumnScope,
-  validateWhereIdentifiers,
-} from "./ColumnNameValidator";
+import { assertKnownColumn, validateWhereIdentifiers } from "./ColumnNameValidator";
+import { RelationWhereFilterBuilder, relationAwareScope } from "./RelationWhereFilter";
 import { createDialectExpression } from "../dialects/DialectExpression";
 import { QueryResult } from "../types/QueryResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
@@ -17,9 +14,10 @@ import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import {
   buildTpcFromSource,
   isTpcPolymorphicRoot,
+  TPC_UNION_ALIAS,
   tpcSourceContextOf,
 } from "./TpcUnionSource";
-import { buildJoinedChildFromSource, isJoinedChild } from "./JoinedChildSource";
+import { buildJoinedChildFromSource, isJoinedChild, JOINED_CHILD_ALIAS } from "./JoinedChildSource";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { aggregateToNumber } from "./BigintColumnTransformer";
 import { aggregateFromStored } from "./WhereValueTransform";
@@ -87,24 +85,28 @@ export class AggregateQueryHandler {
       // Same identifier guard as findInternal — count()/sum()/avg()/min()/max()
       // must accept exactly the columns find() accepts, and reject the rest
       // with the valid list instead of a raw driver error.
-      const scope = buildEntityColumnScope({
-        entity,
-        metadata,
-        propertyToColumn: propToCol,
-        computedColumns: this.ctx.getComputedColumnNames(entity),
-        inheritanceResolver,
-      });
+      const scope = relationAwareScope(this.ctx, this.resolver, entity, metadata);
       validateWhereIdentifiers(where, scope);
       if (field !== "*") assertKnownColumn(field, "select", scope);
       for (const col of groupOptions?.groupBy ?? []) {
         assertKnownColumn(String(col), "groupBy", scope);
       }
 
+      // A relation filter's subquery names the aggregated row by its source.
+      const sourceName = isTpcPolymorphicRoot(inheritanceResolver, entity)
+        ? TPC_UNION_ALIAS
+        : isJoinedChild(inheritanceResolver, entity)
+          ? JOINED_CHILD_ALIAS
+          : metadata.name;
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.ctx.wrap(n),
         dialect: this.ctx.getDialect(),
         dialectExpression: createDialectExpression(this.ctx.getDialect()),
         propertyToColumn: propToCol,
+        relationFilter: new RelationWhereFilterBuilder(this.ctx, this.resolver, withDeleted).hookFor(
+          entity,
+          (column) => `${this.ctx.wrap(sourceName)}.${this.ctx.wrap(column)}`,
+        ),
       });
 
       // If an @DeletedAt column exists, exclude soft-deleted rows by default,
