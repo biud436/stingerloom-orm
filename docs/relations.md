@@ -1008,7 +1008,9 @@ await em.save(User, { name: "alice", profile: { bio: "hi" }, avatar: { url: "a.p
 | `delete()` / `deleteMany()` | The target is deleted **after** the user rows, which reference it. | The counterpart is deleted **before** the user, like a OneToMany child. |
 | `softDelete()` / `restore()` | Follows the user, for a target with `@DeletedAt`. | Same. |
 
-`restore()` only revives the targets of users that were soft-deleted, as with OneToMany children.
+`restore()` only revives the targets of users that were soft-deleted, as with OneToMany children. `delete()` removes a soft-deleted user as well, and its cascaded rows go with it — on both OneToOne sides and for OneToMany children alike.
+
+Cascading on both sides is safe for an object graph that points back at the row being saved — `profile.user` set to the user itself, or each post in `user.posts` carrying `user`. A row already being saved further up the cascade is not saved again; the related row takes its key, and every row is written once.
 
 ### What Happens Without Cascade
 

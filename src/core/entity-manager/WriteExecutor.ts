@@ -1709,13 +1709,23 @@ export class WriteExecutor {
         const relatedPk = relatedMeta?.columns.find(
           (col: ColumnMetadata) => col.options?.primary,
         );
-        return relatedPk
-          ? (fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)] ?? undefined)
+        const key = relatedPk
+          ? fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)]
           : undefined;
+        if (key !== undefined && key !== null) return key;
+        // An object without its key yet — the parent a cascade is saving
+        // up the stack, which a child or counterpart points back at — takes
+        // the shadow key the cascade wrote for it.
+        return this.shadowFkValue(rel, itemFields);
       }
       return relatedValue;
     }
 
+    return this.shadowFkValue(rel, itemFields);
+  }
+
+  /** The `${property}Id` (or configured `fkProperty`) value of a relation. */
+  private shadowFkValue(rel: ForeignKeyRelation, itemFields: EntityFields): unknown {
     let idPropValue = itemFields[`${rel.propertyKey}Id`];
     if (idPropValue === undefined && rel.fkProperty) {
       idPropValue = itemFields[rel.fkProperty];

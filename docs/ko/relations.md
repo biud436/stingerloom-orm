@@ -1008,7 +1008,9 @@ await em.save(User, { name: "alice", profile: { bio: "hi" }, avatar: { url: "a.p
 | `delete()` / `deleteMany()` | 대상을 참조하는 user 행을 지운 **뒤에** 대상을 삭제합니다. | OneToMany 자식처럼 user보다 **먼저** 삭제합니다. |
 | `softDelete()` / `restore()` | 대상에 `@DeletedAt`이 있으면 user를 따라갑니다. | 같습니다. |
 
-`restore()`는 OneToMany 자식과 마찬가지로 soft-delete되어 있던 user의 대상만 되살려요.
+`restore()`는 OneToMany 자식과 마찬가지로 soft-delete되어 있던 user의 대상만 되살려요. `delete()`는 soft-delete된 user도 지우며, 그 user의 cascade 대상도 함께 삭제합니다. OneToOne 양쪽과 OneToMany 자식 모두 마찬가지입니다.
+
+저장 중인 행을 다시 가리키는 객체 그래프(`profile.user`에 user 자신을 넣거나, `user.posts`의 각 post가 `user`를 들고 있는 경우)에서도 양쪽에 cascade를 걸어 안전하게 저장할 수 있습니다. cascade 상위에서 이미 저장 중인 행은 다시 저장하지 않고, 관련 행이 그 키를 받아 갑니다. 모든 행은 한 번씩만 쓰여요.
 
 ### Cascade 없이 발생하는 일
 

@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { ClazzType } from "../utils";
 import { WhereClause } from "../dialects/FindOption";
 import { HOOK_TOKEN, HookEvent, HookMetadata } from "../decorators";
@@ -29,6 +30,17 @@ interface DependentRelation {
   /** The join column on the related table that holds the parent's key. */
   fkColumn: string;
 }
+
+/**
+ * The objects whose save started the cascade the current call runs in,
+ * outermost first. An object graph can point back at an ancestor —
+ * `user.profile.user === user` with `cascade` on both sides, or a post in
+ * `owner.posts` whose `user` is the owner — and following that edge saved
+ * the ancestor again, which cascaded to the child again, without end. An
+ * object already on the chain is being saved by a caller up the stack, so
+ * the cascade leaves it to that caller.
+ */
+const cascadeChain = new AsyncLocalStorage<ReadonlySet<object>>();
 
 /**
  * Handler for cascade save/delete operations and lifecycle hooks.
@@ -98,9 +110,26 @@ export class CascadeHandler {
     savedParentId: any,
     session?: TransactionSessionManager,
   ): Promise<void> {
-    return runScopeExempt(() =>
-      this.cascadeSaveOneToManyInner(entity, item, savedParentId, session),
+    return CascadeHandler.withinChain(item, () =>
+      runScopeExempt(() =>
+        this.cascadeSaveOneToManyInner(entity, item, savedParentId, session),
+      ),
     );
+  }
+
+  /** Runs `run` with `item` added to the cascade chain — see {@link cascadeChain}. */
+  private static withinChain<R>(item: unknown, run: () => Promise<R>): Promise<R> {
+    if (!item || typeof item !== "object") return run();
+    const current = cascadeChain.getStore();
+    if (current?.has(item)) return run();
+    const next = new Set(current ?? []);
+    next.add(item);
+    return cascadeChain.run(next, run);
+  }
+
+  /** Whether `value` is being saved by a caller up the cascade. */
+  private static isAncestor(value: unknown): boolean {
+    return !!value && typeof value === "object" && cascadeChain.getStore()?.has(value) === true;
   }
 
   private async cascadeSaveOneToManyInner<T>(
@@ -141,6 +170,7 @@ export class CascadeHandler {
       const fkKeys = fkWriteKeysFromManyToOne(matchingRelation, rel.mappedBy);
 
       for (const child of children) {
+        if (CascadeHandler.isAncestor(child)) continue;
         // Set the FK to the parent's PK.
         assignFkValue(child, fkKeys, savedParentId);
         if (session) {
@@ -161,6 +191,7 @@ export class CascadeHandler {
         continue;
       const counterpart = (item as any)[rel.propertyKey];
       if (!counterpart || typeof counterpart !== "object") continue;
+      if (CascadeHandler.isAncestor(counterpart)) continue;
 
       const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
       const owner = this.owningOneToOneFor(RelatedEntity, rel.inverseSide);
@@ -200,7 +231,9 @@ export class CascadeHandler {
     entity: ClazzType<T>,
     item: Partial<T>,
   ): Promise<void> {
-    return runScopeExempt(() => this.cascadeSaveManyToOneInner(entity, item));
+    return CascadeHandler.withinChain(item, () =>
+      runScopeExempt(() => this.cascadeSaveManyToOneInner(entity, item)),
+    );
   }
 
   private async cascadeSaveManyToOneInner<T>(
@@ -212,6 +245,9 @@ export class CascadeHandler {
     for (const rel of manyToOneRelations) {
       const relatedValue = (item as any)[rel.columnName];
       if (!relatedValue || typeof relatedValue !== "object") continue;
+      // The parent is being saved up the stack; it writes this row's key
+      // through its own cascade.
+      if (CascadeHandler.isAncestor(relatedValue)) continue;
 
       if (
         !hasCascade(rel.option?.cascade, "insert") &&
@@ -246,6 +282,7 @@ export class CascadeHandler {
         continue;
       const target = (item as any)[rel.propertyKey];
       if (!target || typeof target !== "object") continue;
+      if (CascadeHandler.isAncestor(target)) continue;
 
       const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
       const saved = await this.ctx.save(RelatedEntity, target);
@@ -391,10 +428,21 @@ export class CascadeHandler {
   }
 
   /**
-   * The PKs of the parents a removal acts on. `delete` and `softDelete` act
-   * on live parents — the parent statement that follows only touches those;
-   * `restore` reads `withDeleted` and keeps the soft-deleted parents, since a
-   * default read would return none of the rows being restored.
+   * Whether the parent read of a removal includes soft-deleted rows: a hard
+   * `delete` removes a trashed parent too, so its dependents must go with
+   * it (a default read skipped them and left them orphaned); `restore` acts
+   * on trashed parents only; `softDelete` acts on live ones.
+   */
+  private static readsTrashedParents(mode: "delete" | "softDelete" | "restore"): boolean {
+    return mode !== "softDelete";
+  }
+
+  /**
+   * The PKs of the parents a removal acts on. `softDelete` acts on live
+   * parents — the parent statement that follows only touches those; `delete`
+   * reads `withDeleted` because the hard delete removes trashed rows as
+   * well; `restore` reads `withDeleted` and keeps the soft-deleted parents,
+   * since a default read would return none of the rows being restored.
    */
   private async removedParentIds<T>(
     entity: ClazzType<T>,
@@ -417,7 +465,7 @@ export class CascadeHandler {
         [pk.name]: true,
         ...(parentDeletedAt ? { [parentDeletedAt]: true } : {}),
       },
-      ...(mode === "restore" ? { withDeleted: true } : {}),
+      ...(CascadeHandler.readsTrashedParents(mode) ? { withDeleted: true } : {}),
     } as any);
     if (!parents) return [];
 
@@ -450,9 +498,20 @@ export class CascadeHandler {
 
     const parentDeletedAt =
       mode === "restore" ? this.resolver.getDeletedAtColumn(entity) : null;
+    // Only the columns read below — the key, each join column and, for
+    // restore, the soft-delete stamp — like removedParentIds; reading whole
+    // rows hydrated every column and fired afterLoad for a key lookup.
+    const pk = this.resolver
+      .resolveEntityMetadata(entity)
+      ?.columns.find((col: any) => col.options?.primary);
+    const select: Record<string, true> = {};
+    if (pk) select[pk.name] = true;
+    for (const rel of owning) select[rel.joinColumn!] = true;
+    if (parentDeletedAt) select[parentDeletedAt] = true;
     const rows = await this.ctx.find(entity, {
       where: criteria,
-      ...(mode === "restore" ? { withDeleted: true } : {}),
+      select,
+      ...(CascadeHandler.readsTrashedParents(mode) ? { withDeleted: true } : {}),
     } as any);
     const rowArray = (Array.isArray(rows) ? rows : rows ? [rows] : []).filter(
       (row: any) =>
