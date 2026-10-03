@@ -1192,7 +1192,7 @@ export class ReadExecutor {
       );
 
       qb.leftJoin(
-        this.ctx.wrapTable(relatedTableName),
+        this.relationJoinSource(RelatedEntity, relatedTableName, relAlias),
         this.ctx.wrap(relAlias),
         joinCondition,
       );
@@ -1226,11 +1226,29 @@ export class ReadExecutor {
       );
 
       qb.leftJoin(
-        this.ctx.wrapTable(relatedTableName),
+        this.relationJoinSource(RelatedEntity, relatedTableName, relAlias),
         this.ctx.wrap(relAlias),
         joinCondition,
       );
     }
+  }
+
+  /**
+   * What a to-one relation is JOINed from: the related table, or — for a
+   * JOINED child, whose inherited columns live on the root's table — the
+   * child's table joined to the root's, as a derived table under the
+   * relation's alias, so `alias.column` reads every column of the child.
+   */
+  private relationJoinSource(
+    RelatedEntity: ClazzType<any>,
+    relatedTableName: string,
+    relAlias: string,
+  ): string | Sql {
+    if (isJoinedChild(this.inheritanceResolver, RelatedEntity)) {
+      const select = buildJoinedChildSelect(this.tpcSourceContext(), RelatedEntity);
+      if (select) return sql`(${select}) AS ${raw(this.ctx.wrap(relAlias))}`;
+    }
+    return this.ctx.wrapTable(relatedTableName);
   }
 
   /**

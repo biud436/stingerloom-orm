@@ -421,6 +421,18 @@ export class CreditCardPayment extends Payment {
 const cards = await em.find(CreditCardPayment, { relations: ["store", "issuer"] });
 ```
 
+### 계층을 대상으로 하는 관계
+
+다른 엔티티의 관계는 루트를 가리킬 수도, 서브타입 하나를 가리킬 수도 있습니다. 서브타입을 가리키는 관계는 그 서브타입의 행만 읽습니다. `find(CreditCardPayment)`처럼 JOIN이나 배치 읽기에 판별자 조건을 붙이기 때문에 `Store.cardPayments`에는 계좌 이체가 섞이지 않아요. 루트를 가리키는 관계는 `find(Payment)`처럼 각 행을 그 서브클래스의 모양으로 만듭니다.
+
+```typescript
+@Entity()
+export class Store {
+  @OneToMany(() => Payment, (p) => p.store) payments!: Payment[];                         // 모든 서브타입, 각자의 클래스로
+  @OneToMany(() => CreditCardPayment, (p) => p.store) cardPayments!: CreditCardPayment[]; // credit_card 행만
+}
+```
+
 ## SELECT -- findOne 사용
 
 `findOne`은 `find`와 완전히 동일하게 작동하지만 단일 엔티티 또는 `null`을 반환해요.

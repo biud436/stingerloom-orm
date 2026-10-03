@@ -433,6 +433,17 @@ const cards = await em.find(CreditCardPayment, {
 });
 ```
 
+### A relation that targets a child
+
+A relation of another entity can point at a child -- `Refund.payment` typed `CreditCardPayment`, `Bank.cards`, a ManyToMany of card payments. The child's row is split between its table and the root's, so every read of the relation -- the JOIN of a ManyToOne or owning OneToOne, the batched OneToMany, ManyToMany and inverse OneToOne reads, a cursor page's to-one reads -- reads the child's table joined to the root's, the way `find(CreditCardPayment)` does. The inherited columns are there, and a relation's `where` / `orderBy` / `take` can name them.
+
+```sql
+LEFT JOIN (SELECT "credit_card_payment"."id", "credit_card_payment"."cardNumber", "payment"."amount", ...
+           FROM "credit_card_payment" AS "credit_card_payment"
+           INNER JOIN "payment" AS "payment" ON "credit_card_payment"."id" = "payment"."id") AS "payment"
+  ON "refund"."payment_id" = "payment"."id"
+```
+
 ## 7. SELECT -- With findOne
 
 `findOne` works identically to `find` but returns a single entity or `null`.

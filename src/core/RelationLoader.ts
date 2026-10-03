@@ -30,6 +30,7 @@ import { createDialectExpression } from "../dialects/DialectExpression";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { singleTableRowShape } from "./SingleTableRows";
+import { buildJoinedChildSelect, isJoinedChild } from "./JoinedChildSource";
 
 /** Alias of the per-parent row number a paged collection read ranks by. */
 const ROW_NUMBER_ALIAS = "__stg_rn";
@@ -93,6 +94,8 @@ export class RelationLoader {
     columns: string[];
     from: Sql | string;
     alias?: string;
+    /** The name the statement qualifies the related entity's columns by. */
+    qualifier: string;
     toEntities: (rows: any[]) => any[];
   } {
     const transformer = ResultTransformerFactory.create();
@@ -106,6 +109,7 @@ export class RelationLoader {
         columns: [`${this.ctx.wrap(TPC_UNION_ALIAS)}.*`],
         from: sql`(${buildTpcUnionSource(tpcContext, RelatedEntity)})`,
         alias: this.ctx.wrap(TPC_UNION_ALIAS),
+        qualifier: TPC_UNION_ALIAS,
         toEntities: (rows) =>
           transformer.toPolymorphicEntities(
             RelatedEntity,
@@ -117,11 +121,31 @@ export class RelationLoader {
           ),
       };
     }
+    const tableName = relatedMetadata.name ?? RelatedEntity.name;
     return {
       columns: this.readColumns(RelatedEntity, relatedMetadata).map((name) => this.ctx.wrap(name)),
-      from: this.ctx.wrapTable(relatedMetadata.name ?? RelatedEntity.name),
+      ...this.relatedTable(RelatedEntity, tableName),
+      qualifier: tableName,
       toEntities: (rows) => this.hydrateRelated(RelatedEntity, rows),
     };
+  }
+
+  /**
+   * The FROM of a batched read of `RelatedEntity` rows under `tableName`.
+   * A JOINED child keeps its inherited columns on the root's table, so it is
+   * read as its table joined to the root's — a derived table aliased by the
+   * child's table name, so a column qualified by that name, or left
+   * unqualified, reads every column of the child as find(Child) does.
+   */
+  private relatedTable(
+    RelatedEntity: ClazzType<any>,
+    tableName: string,
+  ): { from: Sql | string; alias?: string } {
+    if (isJoinedChild(this.ctx.getInheritanceResolver(), RelatedEntity)) {
+      const select = buildJoinedChildSelect(tpcSourceContextOf(this.ctx, this.resolver), RelatedEntity);
+      if (select) return { from: sql`(${select})`, alias: this.ctx.wrap(tableName) };
+    }
+    return { from: this.ctx.wrapTable(tableName) };
   }
 
   /**
@@ -528,8 +552,9 @@ export class RelationLoader {
         if (tenantPredicate) {
           whereConditions.push(tenantPredicate);
         }
+        const { from, alias } = this.relatedTable(RelatedEntity, relatedTableName);
         qb.select(selectCols)
-          .from(this.ctx.wrapTable(relatedTableName))
+          .from(from, alias)
           .where(whereConditions);
 
         const resultQuery = qb.build();
@@ -662,7 +687,7 @@ export class RelationLoader {
             relatedMetadata,
             options,
             relationWithDeleted,
-            source.alias !== undefined ? TPC_UNION_ALIAS : relatedTableName,
+            source.qualifier,
           ),
         ];
 
@@ -859,8 +884,9 @@ export class RelationLoader {
           whereConditions.push(tenantPredicate);
         }
 
+        const { from, alias } = this.relatedTable(RelatedEntity, relatedTableName);
         qb.select(selectCols)
-          .from(this.ctx.wrapTable(relatedTableName))
+          .from(from, alias)
           .innerJoin(
             this.ctx.wrapTable(joinInfo.joinTableName),
             this.ctx.wrap(joinInfo.joinTableName),
