@@ -1,5 +1,5 @@
 /**
- * SQLite In-Memory: stream() / streamBatch() contract (V4-T1-2 ③).
+ * SQLite In-Memory: stream() / streamBatch() contract.
  *
  * The streaming pair had zero integration coverage — no test anywhere ran the
  * AsyncGenerator against a real table. Beyond pinning the basic contract

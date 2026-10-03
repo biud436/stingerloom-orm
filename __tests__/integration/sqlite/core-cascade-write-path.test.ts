@@ -304,7 +304,7 @@ describe("[Integration] SQLite: core cascade write paths (non-buffer)", () => {
     expect(children[1].parentId).toBe(parents[1].id);
   });
 
-  // V4-T1-1: the save direction of #414. unit/cascade-handler.test.ts asserts
+  // The save direction of #414. unit/cascade-handler.test.ts asserts
   // only that ctx.saveWithSession was CALLED — never that the session argument
   // reaches the child INSERT, i.e. that the children share the parent's
   // transaction. These three exercise that with real SQL.

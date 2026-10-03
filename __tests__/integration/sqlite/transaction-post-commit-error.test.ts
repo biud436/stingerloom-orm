@@ -1,6 +1,6 @@
 /**
  * SQLite In-Memory: a throwing afterTransactionCommit subscriber must not
- * enter the rollback path (V4-T0-2 c).
+ * enter the rollback path.
  *
  * Before the fix, the post-commit notifications ran inside the same try as
  * the transaction body, so an exception thrown after a successful COMMIT

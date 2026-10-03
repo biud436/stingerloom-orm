@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * SQLite In-Memory: `undefined` values in where / criteria (V6-T0-6 fix 1).
+ * SQLite In-Memory: `undefined` values in where / criteria.
  *
  * The resolver drops a top-level field whose value is `undefined`. On a
  * single-row read that turned `findOne({ where: { id: maybeId } })` into

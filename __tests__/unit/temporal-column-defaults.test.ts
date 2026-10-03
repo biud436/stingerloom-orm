@@ -1,5 +1,5 @@
 /**
- * defaultTemporalColumnRead / isTemporalColumnType (V3-T1-1).
+ * defaultTemporalColumnRead / isTemporalColumnType.
  *
  * The default read conversion for datetime/timestamp/timestamptz/date
  * columns must invert exactly the formats the ORM writes to SQLite —

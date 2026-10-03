@@ -1,5 +1,5 @@
 /**
- * `migrate:generate` with glob entity patterns (V4-T2-1).
+ * `migrate:generate` with glob entity patterns.
  *
  * `entities` accepts glob strings everywhere else in the ORM (the runtime
  * EntityManager resolves them through `resolveEntityGlobs`), but the CLI cast

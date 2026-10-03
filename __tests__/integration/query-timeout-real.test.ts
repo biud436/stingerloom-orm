@@ -1,5 +1,5 @@
 /**
- * queryTimeout on a real server (V4-T1-2 ①).
+ * queryTimeout on a real server.
  *
  * `queryTimeout` / `FindOption.timeout` had zero integration coverage: the
  * unit suite only asserted the SQL string each driver returns from
@@ -62,7 +62,7 @@ interface LockHolder {
 }
 
 describe.each(drivers)(
-  "[Integration] $label: queryTimeout (V4-T1-2)",
+  "[Integration] $label: queryTimeout",
   ({ options }) => {
     describe.each([
       {

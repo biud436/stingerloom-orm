@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * SQLite In-Memory: `tenantStrategy: "tenant_column"` on inheritance
- * hierarchies (V6-T0-2).
+ * hierarchies.
  *
  * The injected tenant column skipped every child entity, though only a
  * SINGLE_TABLE child shares its root's table:

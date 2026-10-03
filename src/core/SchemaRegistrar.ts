@@ -596,7 +596,7 @@ export class SchemaRegistrar {
               }
               // @ComputedColumn metadata lives outside metadata.columns —
               // pass it explicitly so the generated columns are part of the
-              // CREATE TABLE statement (V5-T0-3).
+              // CREATE TABLE statement.
               const computedColumns = this.getComputedColumns(TargetEntity);
               await driver?.createTable(
                 tableName,

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * SQLite In-Memory: TPT (JOINED) delete, whatever the criteria names and
- * whichever class of the hierarchy it is called on (V6-T1-6).
+ * whichever class of the hierarchy it is called on.
  *
  * A JOINED row lives in two tables — the root holds the inherited columns,
  * the child table its own columns and the shared PK. delete() used to run

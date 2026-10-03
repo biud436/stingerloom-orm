@@ -1,5 +1,5 @@
 /**
- * SQLite In-Memory: SeederRunner tracking-table regression (V3-T2-1 probe).
+ * SQLite In-Memory: SeederRunner tracking-table regression.
  *
  * Before the fix, `ensureSeedTable()` shared the PostgreSQL DDL with SQLite:
  * `"id" SERIAL PRIMARY KEY`. On SQLite a non-INTEGER PK is not a rowid alias,

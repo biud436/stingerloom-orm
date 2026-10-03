@@ -1,6 +1,6 @@
 /**
  * SQLite In-Memory: relation paths agree with find()/relations on soft-delete,
- * eager loading and cascade (backlog V6-T1-5).
+ * eager loading and cascade.
  *
  * Four paths diverged from `find(Entity, { relations })`:
  *
@@ -53,7 +53,7 @@ function clearScanners(): void {
   getScannerInstance(OneToOneScanner).clear();
 }
 
-describe("[Integration] SQLite: relation paths mirror find()/relations (V6-T1-5)", () => {
+describe("[Integration] SQLite: relation paths mirror find()/relations", () => {
   let conn: TestConnectionResult;
   let Author: new () => any;
   let Book: new () => any;

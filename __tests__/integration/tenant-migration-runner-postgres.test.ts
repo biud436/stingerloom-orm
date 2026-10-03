@@ -1,5 +1,5 @@
 /**
- * PostgresTenantMigrationRunner on a real server (V4-T1-2, optional item).
+ * PostgresTenantMigrationRunner on a real server.
  *
  * The runner — the piece that actually provisions tenant schemas for the
  * multitenancy strategy — was covered only by unit tests whose driver is a

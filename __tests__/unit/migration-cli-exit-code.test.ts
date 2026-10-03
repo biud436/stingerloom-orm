@@ -1,5 +1,5 @@
 /**
- * CLI failure propagation (V4-T2-1).
+ * CLI failure propagation.
  *
  * `MigrationRunner.runUp()` reports a failed migration as
  * `{ success: false }` instead of throwing, so `stingerloom migrate:run` used

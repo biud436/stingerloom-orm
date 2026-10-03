@@ -1,5 +1,5 @@
 /**
- * `@Column({ transformer })` on the read side (V6-T0-3).
+ * `@Column({ transformer })` on the read side.
  *
  * A column written through `transformer.to` stores another value than the
  * one the caller holds. Where operands were bound as written, so an equality

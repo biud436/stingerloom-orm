@@ -204,7 +204,7 @@ describe.each(getTestDrivers())(
         expect(child.parent.name).toBe("Named Parent");
       });
 
-      it("양쪽 테이블에 있는 컬럼명(id)으로 orderBy해도 eager JOIN과 함께 동작해야 한다 (V3-T0-1)", async () => {
+      it("양쪽 테이블에 있는 컬럼명(id)으로 orderBy해도 eager JOIN과 함께 동작해야 한다", async () => {
         const parent = await parentRepo.save({ name: "OrderBy Parent" });
         await childRepo.save({ title: "ob-1", parentFk: parent.id });
         await childRepo.save({ title: "ob-2", parentFk: parent.id });

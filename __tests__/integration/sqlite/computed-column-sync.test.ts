@@ -1,5 +1,5 @@
 /**
- * @ComputedColumn 런타임 synchronize 통합 테스트 (V5-T0-3)
+ * @ComputedColumn 런타임 synchronize 통합 테스트
  *
  * 결함(2026-08-31 재현): GENERATED ALWAYS AS DDL은 migrate:generate 전용
  * SchemaGenerator에만 있었고, 런타임 synchronize의 driver.createTable()은

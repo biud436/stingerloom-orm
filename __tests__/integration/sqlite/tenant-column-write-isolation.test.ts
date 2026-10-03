@@ -3,7 +3,7 @@
  * SQLite In-Memory: no write path may touch a row owned by another tenant
  * under `tenantStrategy: "tenant_column"`.
  *
- * Regression (V6-T0-1): the read paths and the criteria-based writes carried
+ * Regression: the read paths and the criteria-based writes carried
  * the tenant predicate, but four paths did not —
  *
  *   - `upsert()` / `batchUpsert()`: `ON CONFLICT … DO UPDATE` had no WHERE, and

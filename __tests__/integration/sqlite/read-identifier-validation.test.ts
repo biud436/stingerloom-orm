@@ -1,5 +1,5 @@
 /**
- * Read-path column identifier validation (V4-T2-3).
+ * Read-path column identifier validation.
  *
  * `where` / `orderBy` / `select` / `groupBy` resolve a key through the
  * property-to-column map and fall back to the raw key when it is not there, so

@@ -1,5 +1,5 @@
 /**
- * SQLite temporal column hydration → Date contract (V3-T1-1).
+ * SQLite temporal column hydration → Date contract.
  *
  * better-sqlite3 has no column type information, so temporal columns
  * (datetime/timestamp/timestamptz/date) came back from find()/findOne() as

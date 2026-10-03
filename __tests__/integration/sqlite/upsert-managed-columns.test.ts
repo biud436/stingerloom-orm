@@ -3,7 +3,7 @@
  * SQLite In-Memory: the upsert family and the bulk INSERT paths maintain the
  * ORM-managed columns the way save() / saveMany() do.
  *
- * Regression (V6-T0-4):
+ * Regression:
  *
  *   - `upsert()` / `insertIgnore()` / `batchUpsert()` never seeded `@Version`,
  *     `@CreateTimestamp` or `@UpdateTimestamp`, so every call on such an

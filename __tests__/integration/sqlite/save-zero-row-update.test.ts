@@ -1,5 +1,5 @@
 /**
- * SQLite In-Memory: save() must not report a 0-row UPDATE as success (V4-T0-2 b).
+ * SQLite In-Memory: save() must not report a 0-row UPDATE as success.
  *
  * Before the fix, saving an entity whose primary key matched no row ran an
  * UPDATE affecting 0 rows, then still fired afterUpdate hooks/events/

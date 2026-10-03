@@ -204,7 +204,7 @@ describe.each(drivers)(
       expect(allArr.find((p: any) => p.id === saved.id)).toBeUndefined();
     });
 
-    // V6-T1-6: criteria naming non-PK columns, and deletes called on the root.
+    // Criteria naming non-PK columns, and deletes called on the root.
     describe("delete by criteria across the hierarchy", () => {
       const q = (t: string) => (type === "mysql" ? `\`${t}\`` : `"${t}"`);
 

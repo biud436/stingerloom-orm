@@ -1,5 +1,5 @@
 /**
- * Unit coverage for the write-payload key check (V5-T1-1): the pure
+ * Unit coverage for the write-payload key check: the pure
  * collector in ColumnNameValidator and the `unknownWriteKeys` option guard.
  * The policy behavior on the real write paths is pinned by
  * `__tests__/integration/sqlite/write-input-unknown-keys.test.ts`.

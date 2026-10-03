@@ -54,8 +54,8 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 │   ├── utils/                  # Logger, ReflectManager, uuid-v7, camelToSnakeCase 등
 │   └── errors/                 # OrmError, OrmErrorCode + 16개 커스텀 에러 클래스
 ├── __tests__/
-│   ├── unit/                   # 302개 유닛 테스트 파일 (5,600 tests)
-│   └── integration/            # 160개 통합 테스트 파일 (sqlite/ 103개 포함, INTEGRATION_TEST=true 필요)
+│   ├── unit/                   # 331개 유닛 테스트 파일 (6,424 tests)
+│   └── integration/            # 235개 통합 테스트 파일 (sqlite/ 153개 포함, INTEGRATION_TEST=true 필요)
 ├── examples/
 │   ├── nestjs-cats/            # NestJS 기본 예제 (CRUD, EntitySubscriber, cursor pagination)
 │   ├── nestjs-blog/            # NestJS 블로그 예제 (M2M, soft delete, upsert, 57 e2e tests)
@@ -66,8 +66,8 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 │   ├── vanilla-todo-sqlite/    # 비 NestJS code-first 스크립트 예제 (defineEntity, SQLite in-memory)
 │   └── prisma-import-demo/     # Prisma 스키마 → Stingerloom 마이그레이션 예제
 ├── mcp/                        # MCP 서버 (MySQL, PostgreSQL 직접 접근)
-├── docs/                       # 영어 문서 (50개 파일)
-│   └── ko/                     # 한국어 문서 (47개 파일)
+├── docs/                       # 영어 문서 (51개 파일)
+│   └── ko/                     # 한국어 문서 (51개 파일)
 ├── .claude/agents/             # 에이전트 전문가 정의 (5개)
 ├── dist/                       # 빌드 결과물 (gitignored)
 ├── package.json
@@ -244,14 +244,14 @@ pnpm start          # NestJS 서버 시작
 ## 테스트 구조
 
 ### 유닛 테스트 (`__tests__/unit/`)
-302개 파일, 5,600개 테스트 (2026-08-28 기준, 0 failures)
+331개 파일, 6,424개 테스트 (2026-10-03 기준, 0 failures)
 
 ### 통합 테스트 (`__tests__/integration/`)
-160개 파일 (2026-08-28 기준, `INTEGRATION_TEST=true` 필요)
+235개 파일 (2026-10-03 기준, `INTEGRATION_TEST=true` 필요)
 - MySQL/PostgreSQL 듀얼 드라이버: `crud-basic`, `relations-one-to-many`, `soft-delete`, `aggregate`, `batch-operations`, `lifecycle-hooks`, `one-to-one`, `many-to-many`, `schema-generator`, `entity-subscriber`, `upsert`, `complex-queries`
 - PostgreSQL 전용: `postgres-driver.test.ts`, `postgres-driver-ddl.test.ts`, `multi-tenancy-postgres.test.ts`
 - MySQL 전용: `mysql-driver-ddl.test.ts`
-- SQLite (in-memory): `sqlite/` 103개 파일, 835 tests (crud, relations, DDL, transactions, soft-delete, batch, hooks, queries 등)
+- SQLite (in-memory): `sqlite/` 153개 파일, 1,619 tests (crud, relations, DDL, transactions, soft-delete, batch, hooks, queries 등)
 - `snake-naming-strategy.test.ts` — NamingStrategy 통합 테스트
 
 ### e2e 테스트 (`examples/`)
@@ -335,7 +335,7 @@ pnpm start          # NestJS 서버 시작
 - distinct, DISTINCT ON (PostgreSQL)
 - validate() / validateArray() 결과 검증 훅
 - Dual CJS/ESM 빌드
-- 영어 문서 (50페이지) + 한국어 문서 (47페이지)
+- 영어 문서 (51페이지) + 한국어 문서 (51페이지)
 - SQL Injection 전 드라이버 감사 완료
 - WriteBuffer 1차 캐시 (PK findOne → Identity Map 히트 시 DB 스킵)
 - SelectQueryBuilder 14개 생산성 메서드 (when, pipe, whereHas, whereInSubquery, applyScope 등)
@@ -349,9 +349,9 @@ pnpm start          # NestJS 서버 시작
 - Index hints (MySQL / PostgreSQL)
 - assertTenantContext() 테넌트 컨텍스트 경고
 
-### 현재 안정성 상태 (v2.0.0, 2026-09-01 기준)
-- **테스트:** 0 failures — 유닛 5,600 + SQLite 통합 840 + 실 PostgreSQL 620 / 실 MariaDB 523 (2026-09-01 검증, MySQL은 192.168.35.227:3306 원격 MariaDB) + stress 19 + temporal TZ 매트릭스 88×4존
-- **예제:** 8개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-linear-clone, nestjs-multitenant, nestjs-todo, nestjs-todo-sqlite, vanilla-todo-sqlite, prisma-import-demo) — NestJS 예제는 전부 NestJS 11, 타입 체크 8/8 통과 (2026-09-01 검증)
+### 현재 안정성 상태 (v2.0.0 이후 main, 2026-10-03 기준)
+- **테스트:** 0 failures — 유닛 6,424 + SQLite 통합 1,619 + 실 PostgreSQL 777 / 실 MariaDB 629 (2026-10-03 검증, MySQL은 192.168.35.227:3306 원격 MariaDB) + stress 19 + temporal TZ 매트릭스 88×4존
+- **예제:** 8개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-linear-clone, nestjs-multitenant, nestjs-todo, nestjs-todo-sqlite, vanilla-todo-sqlite, prisma-import-demo) — NestJS 예제는 전부 NestJS 11, 타입 체크 8/8 통과 (2026-10-03 검증)
 - **보안:** SQL Injection 취약점 수정 완료, 전 드라이버 감사 완료
 - **격리:** 테넌트 간 메타데이터 유출 차단, AsyncLocalStorage 동시성 안전 확보
 

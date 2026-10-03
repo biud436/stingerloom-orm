@@ -538,7 +538,7 @@ describe("defineEntity — type inference", () => {
   });
 });
 
-describe("defineEntity — unrecognized field values fail fast (V4-T2-4)", () => {
+describe("defineEntity — unrecognized field values fail fast", () => {
   beforeEach(clearScanners);
 
   it("throws on an uncalled builder factory with the field name and a parentheses hint", () => {
@@ -575,7 +575,7 @@ describe("defineEntity — unrecognized field values fail fast (V4-T2-4)", () =>
   });
 });
 
-describe("defineEntity — class-name sanitization (V4-T2-4)", () => {
+describe("defineEntity — class-name sanitization", () => {
   beforeEach(clearScanners);
 
   it("keeps identifier table names as the class name", () => {

@@ -1,5 +1,5 @@
 /**
- * Entity-argument guard (V5-T2-3).
+ * Entity-argument guard.
  *
  * `em.find(new User())`, `em.find(Plain)`, `em.find(undefined)` and
  * `em.find(() => User)` all used to reach metadata resolution and die with

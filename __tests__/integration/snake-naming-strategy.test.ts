@@ -31,7 +31,7 @@ import { DatabaseClient } from "../../src/DatabaseClient";
 
 // Dual-driver: the suite body was always driver-agnostic (information_schema
 // vs SHOW COLUMNS, quote style), but a leftover MySQL-only gate kept
-// PostgreSQL at zero coverage for SnakeNamingStrategy (V4-T1-2 ④). The
+// PostgreSQL at zero coverage for SnakeNamingStrategy. The
 // INTEGRATION_TEST gate itself lives in jest.config's ignore patterns, like
 // every other dual-driver suite.
 describe.each(getTestDrivers())("[Integration] $label: SnakeNamingStrategy", ({ options }) => {

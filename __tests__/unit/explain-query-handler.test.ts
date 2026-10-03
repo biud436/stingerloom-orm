@@ -288,7 +288,7 @@ describe("ExplainQueryHandler", () => {
       await handler.explain(TestEntity, { limit: [0, 0] });
 
       // An explicit 0 means "no rows", not "unbounded" — the read path was
-      // fixed to the same contract in V4-T0-2.
+      // fixed to the same contract.
       expect(lastQb().calls.limit).toEqual([[0, 0]]);
     });
 

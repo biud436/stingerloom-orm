@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Golden SQL — the ORM-managed assignments of the upsert conflict branch,
- * per dialect (V6-T0-4).
+ * per dialect.
  *
  * - `@Version` counts up from the stored row. PostgreSQL requires the stored
  *   column to be table-qualified (a bare one is ambiguous against

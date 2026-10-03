@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * SchemaDiff × @ComputedColumn (V5-T0-3)
+ * SchemaDiff × @ComputedColumn
  *
  * Before the fix the diff was blind to computed-column metadata:
  *  - a generated column present in the DB (created by a migration or by the

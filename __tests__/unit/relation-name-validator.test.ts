@@ -1,5 +1,5 @@
 /**
- * Unit coverage for the read-path `relations` guard (V4-T2-3).
+ * Unit coverage for the read-path `relations` guard.
  *
  * The SQLite integration suite pins the end-to-end behavior; these cases pin
  * the pieces that are awkward to reach through a live query — an entity with

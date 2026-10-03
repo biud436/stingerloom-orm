@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Integration test — NestJS shutdown actually releases connection pools
- * (V4-T2-2).
+ *.
  *
  * `StingerloomOrmService.onApplicationShutdown()` called
  * `propagateShutdown()` with no arguments, and `closeConnections` defaults to
