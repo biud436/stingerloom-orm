@@ -7,7 +7,9 @@ import type { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { Conditions } from "./Conditions";
 import { resolveWhereClause } from "./WhereResolver";
 import { createDialectExpression } from "../dialects/DialectExpression";
-import { buildEntityColumnScope, type ColumnNameScope } from "./ColumnNameValidator";
+import { buildEntityColumnScope, validateReadIdentifiers, type ColumnNameScope } from "./ColumnNameValidator";
+import { relationTargetOf } from "./RelationNameValidator";
+import type { RelationTree } from "./RelationTree";
 import { buildTpcUnionSource, isTpcPolymorphicRoot, tpcSourceContextOf } from "./TpcUnionSource";
 import { buildJoinedChildSelect, isJoinedChild } from "./JoinedChildSource";
 
@@ -348,6 +350,32 @@ export function relationFilterTargetOf(
   const o2o = resolver.resolveOneToOneMetadata(entity).find((r) => r.propertyKey === property);
   if (o2o) return { entity: o2o.getRelatedEntity() as ClazzType<any> };
   return undefined;
+}
+
+/**
+ * Rejects a `where` / `orderBy` key in a relation's options under
+ * `relations` that names no column of the related entity — the guard the
+ * read's own options get — before any statement runs, at every level of
+ * the tree. Shared by every read that takes the object form, `explain()`
+ * included.
+ */
+export function validateRelationOptionIdentifiers(
+  ctx: EntityManagerInternals,
+  resolver: RelationMetadataResolver,
+  entity: ClazzType<any>,
+  tree: RelationTree | undefined,
+): void {
+  if (!tree) return;
+  for (const node of tree.nodes.values()) {
+    const target = relationTargetOf(entity, node.name, resolver);
+    if (!target) continue;
+    const { where, orderBy } = node.options ?? {};
+    const metadata = where !== undefined || orderBy ? resolver.resolveEntityMetadata(target) : undefined;
+    if (metadata) {
+      validateReadIdentifiers({ where, orderBy }, undefined, relationAwareScope(ctx, resolver, target, metadata));
+    }
+    validateRelationOptionIdentifiers(ctx, resolver, target, node.children);
+  }
 }
 
 /**

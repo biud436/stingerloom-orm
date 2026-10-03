@@ -12,7 +12,11 @@ import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { resolveRelationTree } from "./RelationTree";
 import { validateReadIdentifiers } from "./ColumnNameValidator";
-import { RelationWhereFilterBuilder, relationAwareScope } from "./RelationWhereFilter";
+import {
+  RelationWhereFilterBuilder,
+  relationAwareScope,
+  validateRelationOptionIdentifiers,
+} from "./RelationWhereFilter";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 
 /**
@@ -46,10 +50,13 @@ export class ExplainQueryHandler {
     }
 
     // Same guard as find(): explain() mirrors the read path, so an unresolvable
-    // relation name must fail here too instead of silently planning fewer joins.
-    // Only the top level shapes the statement; nested levels are follow-up reads.
-    const relationNames =
-      resolveRelationTree(entity, findOption.relations, this.resolver)?.names ?? [];
+    // relation name — or an unknown column in a relation's own where /
+    // orderBy — must fail here too instead of silently planning fewer joins.
+    // Only the top level shapes the statement; nested levels and the
+    // per-relation options are follow-up reads.
+    const relationTree = resolveRelationTree(entity, findOption.relations, this.resolver);
+    validateRelationOptionIdentifiers(this.ctx, this.resolver, entity, relationTree);
+    const relationNames = relationTree?.names ?? [];
 
     const qb = RawQueryBuilderFactory.create();
     const selectMap: string[] = [];

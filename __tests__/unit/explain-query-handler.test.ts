@@ -244,6 +244,25 @@ describe("ExplainQueryHandler", () => {
       expect(resolver.resolveManyToOneMetadata).toHaveBeenCalled();
     });
 
+    it("rejects an unknown column in a relation's where / orderBy the way find() does", async () => {
+      resolver.resolveOneToManyMetadata.mockReturnValue([
+        { propertyKey: "comments", mappedBy: "post", getRelatedEntity: () => TestEntity },
+      ] as any);
+
+      await expect(
+        handler.explain(TestEntity, { relations: { comments: { where: { nmae: "x" } } } }),
+      ).rejects.toThrow(InvalidQueryError);
+      await expect(
+        handler.explain(TestEntity, { relations: { comments: { orderBy: { nmae: "ASC" } } } }),
+      ).rejects.toThrow(InvalidQueryError);
+      expect(mockQbInstances).toHaveLength(0);
+
+      // The per-relation options shape the follow-up reads, not the planned
+      // statement: a valid one plans the top level as before.
+      await handler.explain(TestEntity, { relations: { comments: { where: { name: "x" }, take: 1 } } });
+      expect(mockQbInstances).toHaveLength(1);
+    });
+
     it("should pass limit array [offset, count] through unchanged", async () => {
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
       ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));

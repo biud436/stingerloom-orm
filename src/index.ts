@@ -543,6 +543,7 @@ export {
   RelationsObject,
   RelationsOption,
   SingleRelationFilter,
+  SingleRelationLoadOptions,
   StringFilter,
   UpdateData,
   UpdateManyOptions,

@@ -92,6 +92,7 @@ function createMockCtx(): jest.Mocked<EntityManagerInternals> {
     getInheritanceResolver: jest.fn(() => new InheritanceResolver()),
     isMySqlFamily: jest.fn().mockReturnValue(false),
     isPostgres: jest.fn().mockReturnValue(true),
+    getDbType: jest.fn().mockReturnValue("postgres"),
     getDriver: jest.fn(),
     getSynchronize: jest.fn(),
     getDialect: jest.fn(),
