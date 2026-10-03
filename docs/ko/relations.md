@@ -982,6 +982,34 @@ cats!: Cat[];
 comments!: Comment[];
 ```
 
+### @OneToOne의 cascade
+
+`cascade`는 `@OneToOne`의 양쪽 모두에서 같은 옵션으로 동작합니다. 어느 행을 먼저 쓰는지는 조인 컬럼의 위치가 정해요.
+
+```typescript
+@Entity()
+class User {
+  // 소유 측 — 조인 컬럼(profile_id)이 user에 있음
+  @OneToOne(() => Profile, { cascade: true })
+  @RelationColumn({ name: "profile_id" })
+  profile!: Relation<Profile> | null;
+
+  // 역방향 — 조인 컬럼(owner_id)이 avatar에 있음
+  @OneToOne(() => Avatar, { inverseSide: "owner", cascade: true })
+  avatar!: Relation<Avatar> | null;
+}
+
+await em.save(User, { name: "alice", profile: { bio: "hi" }, avatar: { url: "a.png" } });
+```
+
+| | 소유 측 (`profile`) | 역방향 (`avatar`) |
+|---|---|---|
+| `save()` / `saveMany()` | 대상을 **먼저** 저장하고, 그 키를 user의 조인 컬럼에 넣습니다. | user를 저장한 **뒤에**, user의 키를 조인 컬럼에 넣어 저장합니다. |
+| `delete()` / `deleteMany()` | 대상을 참조하는 user 행을 지운 **뒤에** 대상을 삭제합니다. | OneToMany 자식처럼 user보다 **먼저** 삭제합니다. |
+| `softDelete()` / `restore()` | 대상에 `@DeletedAt`이 있으면 user를 따라갑니다. | 같습니다. |
+
+`restore()`는 OneToMany 자식과 마찬가지로 soft-delete되어 있던 user의 대상만 되살려요.
+
 ### Cascade 없이 발생하는 일
 
 `cascade: ["delete"]` 없이 자식이 있는 부모를 삭제하면, FK 제약 조건이 적용되어 있는 경우 실패해요:

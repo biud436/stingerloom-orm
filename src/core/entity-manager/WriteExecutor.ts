@@ -3005,7 +3005,7 @@ export class WriteExecutor {
       // they reuse it instead of opening a second one: a nested BEGIN crashes
       // SQLite's single shared connection, and on pooled drivers the children
       // would commit independently of the parent delete (#414).
-      await transactionStorage.run(session, () =>
+      const afterParentDelete = await transactionStorage.run(session, () =>
         this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria),
       );
 
@@ -3022,6 +3022,11 @@ export class WriteExecutor {
           this.buildDeleteWhereSql(entity, metadata, criteria, deleteStrategy),
           session,
         ));
+
+      // Owning-side OneToOne targets the deleted rows referenced.
+      if (afterParentDelete) {
+        await transactionStorage.run(session, afterParentDelete);
+      }
 
       await this.emitAfterDelete(entity, criteria);
 
@@ -3064,7 +3069,7 @@ export class WriteExecutor {
       // cascade remove — same as delete(): the children go first, on this
       // transaction's session (#414). Without it a bulk delete either failed
       // on the FK or, with constraints off, orphaned every child.
-      await transactionStorage.run(session, () =>
+      const afterParentDelete = await transactionStorage.run(session, () =>
         this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria),
       );
 
@@ -3075,6 +3080,7 @@ export class WriteExecutor {
         ? await this.deleteJoinedRows(entity, metadata, criteria, session)
         : null;
       if (joinedAffected !== null) {
+        if (afterParentDelete) await transactionStorage.run(session, afterParentDelete);
         await this.emitAfterDelete(entity, criteria);
         return { affected: joinedAffected };
       }
@@ -3101,6 +3107,7 @@ export class WriteExecutor {
         session,
       );
 
+      if (afterParentDelete) await transactionStorage.run(session, afterParentDelete);
       await this.emitAfterDelete(entity, criteria);
 
       return { affected };
