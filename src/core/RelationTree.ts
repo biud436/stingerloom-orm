@@ -2,16 +2,31 @@
 import { ClazzType } from "../utils/types";
 import { InvalidQueryError } from "../errors";
 import type { RelationMetadataResolver } from "./RelationMetadataResolver";
-import { relationTargetOf, validateRelationNames } from "./RelationNameValidator";
+import { relationEntryOf, validateRelationNames } from "./RelationNameValidator";
 
 /**
- * One requested relation and the relations to load on the entities it
- * reaches.
+ * How one relation's rows are read, from its entry in the object form of
+ * `relations`. `where` is the related entity's own where clause, resolved
+ * against its columns when the relation is loaded.
+ */
+export interface RelationQueryOptions {
+  readonly where?: unknown;
+  readonly orderBy?: Readonly<Record<string, "ASC" | "DESC">>;
+  readonly take?: number;
+  readonly skip?: number;
+  readonly withDeleted?: boolean;
+}
+
+/**
+ * One requested relation, how its rows are read, and the relations to load
+ * on the entities it reaches.
  */
 export interface RelationTreeNode {
   readonly name: string;
   /** Relations nested under this one; undefined when none were asked for. */
   readonly children: RelationTree | undefined;
+  /** The relation's own query options; undefined when it has none. */
+  readonly options: RelationQueryOptions | undefined;
 }
 
 /**
@@ -28,6 +43,7 @@ export interface RelationTree {
 interface MutableNode {
   name: string;
   children: MutableTree | undefined;
+  options: RelationQueryOptions | undefined;
 }
 
 interface MutableTree {
@@ -36,7 +52,17 @@ interface MutableTree {
 }
 
 /** Option keys a relation accepts in the object form of `relations`. */
-const RELATION_OPTION_KEYS: ReadonlySet<string> = new Set(["relations"]);
+const RELATION_OPTION_KEYS: ReadonlySet<string> = new Set([
+  "relations",
+  "where",
+  "orderBy",
+  "take",
+  "skip",
+  "withDeleted",
+]);
+
+/** Options that shape a collection — meaningless on a single-valued relation. */
+const COLLECTION_OPTION_KEYS = ["where", "orderBy", "take", "skip"] as const;
 
 function emptyTree(): MutableTree {
   return { names: [], nodes: new Map() };
@@ -45,7 +71,7 @@ function emptyTree(): MutableTree {
 function nodeOf(tree: MutableTree, name: string): MutableNode {
   let node = tree.nodes.get(name);
   if (!node) {
-    node = { name, children: undefined };
+    node = { name, children: undefined, options: undefined };
     tree.nodes.set(name, node);
     tree.names.push(name);
   }
@@ -128,6 +154,7 @@ function addRelations(tree: MutableTree, relations: unknown, prefix: string): vo
         }
       }
       const node = nodeOf(tree, name);
+      node.options = parseQueryOptions(spec, path);
       if (spec.relations !== undefined && spec.relations !== null) {
         addRelations(childTreeOf(node), spec.relations, path);
       }
@@ -139,6 +166,80 @@ function addRelations(tree: MutableTree, relations: unknown, prefix: string): vo
     `${capitalize(where)} must be an array of relation names or an object keyed by relation name, got ${describe(relations)}.`,
     'Write relations: ["author"] or relations: { author: true }.',
   );
+}
+
+/**
+ * The query options of one relation's entry, checked for shape. Undefined
+ * when the entry sets none of them.
+ */
+function parseQueryOptions(
+  spec: Record<string, unknown>,
+  path: string,
+): RelationQueryOptions | undefined {
+  const { where, orderBy, take, skip, withDeleted } = spec;
+  const options: {
+    where?: unknown;
+    orderBy?: Record<string, "ASC" | "DESC">;
+    take?: number;
+    skip?: number;
+    withDeleted?: boolean;
+  } = {};
+
+  if (where !== undefined) {
+    const clauses = Array.isArray(where) ? where : [where];
+    if (clauses.length === 0 || !clauses.every(isPlainObject)) {
+      throw new InvalidQueryError(
+        `"where" of relation "${path}" in "relations" must be a where clause or a non-empty array of them, got ${describe(where)}.`,
+        `Write { ${lastSegment(path)}: { where: { column: value } } }.`,
+      );
+    }
+    options.where = where;
+  }
+
+  if (orderBy !== undefined) {
+    if (!isPlainObject(orderBy)) {
+      throw new InvalidQueryError(
+        `"orderBy" of relation "${path}" in "relations" must be an object keyed by property, got ${describe(orderBy)}.`,
+        `Write { ${lastSegment(path)}: { orderBy: { createdAt: "DESC" } } }.`,
+      );
+    }
+    for (const [key, direction] of Object.entries(orderBy)) {
+      if (direction !== "ASC" && direction !== "DESC") {
+        throw new InvalidQueryError(
+          `"orderBy.${key}" of relation "${path}" in "relations" is ${describe(direction)}; expected "ASC" or "DESC".`,
+          'Sort directions are written in upper case: "ASC" or "DESC".',
+        );
+      }
+    }
+    options.orderBy = orderBy as Record<string, "ASC" | "DESC">;
+  }
+
+  for (const [key, value] of [["take", take], ["skip", skip]] as const) {
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+      throw new InvalidQueryError(
+        `"${key}" of relation "${path}" in "relations" must be a non-negative integer, got ${describe(value)}.`,
+        `"${key}" counts related rows per parent.`,
+      );
+    }
+    options[key] = value;
+  }
+
+  if (withDeleted !== undefined) {
+    if (typeof withDeleted !== "boolean") {
+      throw new InvalidQueryError(
+        `"withDeleted" of relation "${path}" in "relations" must be a boolean, got ${describe(withDeleted)}.`,
+        "Pass true to include soft-deleted related rows, false to hide them.",
+      );
+    }
+    options.withDeleted = withDeleted;
+  }
+
+  return Object.keys(options).length > 0 ? options : undefined;
+}
+
+function lastSegment(path: string): string {
+  return path.slice(path.lastIndexOf(".") + 1);
 }
 
 function capitalize(text: string): string {
@@ -169,10 +270,22 @@ function validateRelationTree(
 ): void {
   validateRelationNames(entity, tree.names, resolver, path || undefined);
   for (const node of tree.nodes.values()) {
+    const entry = relationEntryOf(entity, node.name, resolver);
+    if (!entry) continue;
+    if (node.options && entry.kind !== "OneToMany" && entry.kind !== "ManyToMany") {
+      const misplaced = COLLECTION_OPTION_KEYS.filter((key) => node.options![key] !== undefined);
+      if (misplaced.length > 0) {
+        const keys = misplaced.map((key) => `"${key}"`).join(", ");
+        throw new InvalidQueryError(
+          `${keys} cannot be set on relation "${pathOf(path, node.name)}" in "relations": ` +
+            `it is a ${entry.kind} of "${entity.name}", and ${misplaced.length > 1 ? "these options shape" : "this option shapes"} ` +
+            "the rows of a collection relation (OneToMany, ManyToMany).",
+          `Filter "${entity.name}" itself instead, or load "${node.name}" without ${keys}.`,
+        );
+      }
+    }
     if (!node.children || node.children.names.length === 0) continue;
-    const target = relationTargetOf(entity, node.name, resolver);
-    if (!target) continue;
-    validateRelationTree(target, node.children, resolver, pathOf(path, node.name));
+    validateRelationTree(entry.target, node.children, resolver, pathOf(path, node.name));
   }
 }
 

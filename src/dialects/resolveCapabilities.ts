@@ -28,6 +28,7 @@ const MYSQL_FEATURES: FeatureTable<MySqlCapabilities> = {
   supportsDropColumn:        true,
   supportsUpsert:            true,
   supportsAlterAddForeignKey: true,
+  supportsWindowFunctions:   { major: 8, minor: 0 },
 };
 
 // ─── MariaDB ───────────────────────────────────────────────────────
@@ -52,6 +53,7 @@ const MARIADB_FEATURES: FeatureTable<MySqlCapabilities> = {
   supportsDropColumn:        true,
   supportsUpsert:            true,
   supportsAlterAddForeignKey: true,
+  supportsWindowFunctions:   { major: 10, minor: 2 },
 };
 
 // ─── PostgreSQL ────────────────────────────────────────────────────
@@ -71,6 +73,7 @@ const POSTGRES_FEATURES: FeatureTable<PostgresCapabilities> = {
   supportsDropColumn:            true,
   supportsUpsert:                true,
   supportsAlterAddForeignKey:    true,
+  supportsWindowFunctions:       true,
 };
 
 // ─── SQLite ────────────────────────────────────────────────────────
@@ -87,6 +90,7 @@ const SQLITE_FEATURES: FeatureTable<SqliteCapabilities> = {
   supportsDropColumn:             { major: 3, minor: 35 },
   supportsUpsert:                 { major: 3, minor: 24 },
   supportsAlterAddForeignKey:     false,
+  supportsWindowFunctions:        { major: 3, minor: 25 },
 };
 
 // ─── Public resolvers ──────────────────────────────────────────────

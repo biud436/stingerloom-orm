@@ -148,18 +148,29 @@ export function validateRelationNames(
 }
 
 /**
- * The entity class the relation `name` of `entity` points at, resolved the
- * way the loaders resolve it. Undefined when `entity` declares no such
- * relation or its target thunk yields nothing.
+ * The kind of the relation `name` of `entity` and the entity class it points
+ * at, resolved the way the loaders resolve them. Undefined when `entity`
+ * declares no such relation or its target thunk yields nothing.
  */
+export function relationEntryOf(
+  entity: ClazzType<any>,
+  name: string,
+  resolver: RelationMetadataResolver,
+): { kind: RelationEntry["kind"]; target: ClazzType<any> } | undefined {
+  const entry = collectRelationEntries(entity, resolver).find((e) => e.name === name);
+  const target = entry?.readTarget();
+  return entry && typeof target === "function"
+    ? { kind: entry.kind, target: target as ClazzType<any> }
+    : undefined;
+}
+
+/** The entity class the relation `name` of `entity` points at — see {@link relationEntryOf}. */
 export function relationTargetOf(
   entity: ClazzType<any>,
   name: string,
   resolver: RelationMetadataResolver,
 ): ClazzType<any> | undefined {
-  const entry = collectRelationEntries(entity, resolver).find((e) => e.name === name);
-  const target = entry?.readTarget();
-  return typeof target === "function" ? (target as ClazzType<any>) : undefined;
+  return relationEntryOf(entity, name, resolver)?.target;
 }
 
 /**

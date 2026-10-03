@@ -407,7 +407,7 @@ describe("[Integration] SQLite: nested relations in find()", () => {
 
     it("rejects an unknown option key in the object form", async () => {
       await expect(
-        em.find(FnrPost, { relations: { comments: { where: { body: "c1" } } } as any }),
+        em.find(FnrPost, { relations: { comments: { limit: 3 } } as any }),
       ).rejects.toThrow(InvalidQueryError);
     });
 

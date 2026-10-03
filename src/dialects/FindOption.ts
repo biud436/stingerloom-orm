@@ -83,6 +83,52 @@ export interface RelationLoadOptions<R> {
    * ```
    */
   relations?: RelationsOption<R>;
+
+  /**
+   * Loads only the related rows that match — the same operators as the
+   * read's own `where`. Collection relations (`@OneToMany`, `@ManyToMany`)
+   * only; it filters the relation, not the parents.
+   *
+   * @example
+   * ```ts
+   * em.find(Post, { relations: { comments: { where: { approved: true } } } })
+   * ```
+   */
+  where?: WhereClause<R> | WhereClause<R>[];
+
+  /**
+   * Orders each parent's related rows. Collection relations only.
+   */
+  orderBy?: IOrderBy<Partial<R>>;
+
+  /**
+   * Loads at most this many related rows per parent, in `orderBy` order
+   * (the related primary key when no `orderBy` is given). Collection
+   * relations only. Needs window functions: MySQL 8.0+, MariaDB 10.2+,
+   * SQLite 3.25+.
+   *
+   * @example
+   * ```ts
+   * // Each post with its three newest comments
+   * em.find(Post, {
+   *   relations: { comments: { orderBy: { createdAt: "DESC" }, take: 3 } },
+   * })
+   * ```
+   */
+  take?: number;
+
+  /**
+   * Skips this many related rows per parent before `take` applies.
+   * Collection relations only.
+   */
+  skip?: number;
+
+  /**
+   * Includes soft-deleted related rows for this relation, whatever the
+   * read's own `withDeleted` says. Relations nested under it follow their
+   * own setting, or the read's.
+   */
+  withDeleted?: boolean;
 }
 
 /**

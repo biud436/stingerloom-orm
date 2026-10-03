@@ -48,6 +48,12 @@ export interface CommonCapabilities {
    * so schema sync passes inline FK definitions to `createTable()` instead.
    */
   readonly supportsAlterAddForeignKey: boolean;
+  /**
+   * Window functions (`ROW_NUMBER() OVER (PARTITION BY ...)`): MySQL 8.0+,
+   * MariaDB 10.2+, SQLite 3.25+, every supported PostgreSQL. Relation loads
+   * that page each parent's rows (`take` / `skip`) depend on them.
+   */
+  readonly supportsWindowFunctions: boolean;
 }
 
 /** MySQL / MariaDB specific capabilities. */
@@ -107,6 +113,7 @@ export const ALL_COMMON: Readonly<CommonCapabilities> = Object.freeze({
   supportsRenameColumn: true,
   supportsGeneratedColumns: true,
   supportsAlterAddForeignKey: true,
+  supportsWindowFunctions: true,
 });
 
 export const ALL_MYSQL: Readonly<MySqlCapabilities> = Object.freeze({
