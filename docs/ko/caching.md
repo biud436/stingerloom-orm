@@ -47,7 +47,7 @@ const top = await em
 
 ## 무효화
 
-캐시된 행 집합은 그 읽기가 접근할 수 있었던 테이블들로 인덱싱됩니다: 엔티티 자신의 테이블, 상속 패밀리(STI/TPT/TPC), eager·요청된 관계의 대상, 다대다 조인 테이블까지요.
+캐시된 행 집합은 그 읽기가 접근할 수 있었던 테이블들로 인덱싱됩니다: 엔티티 자신의 테이블, 상속 패밀리(STI/TPT/TPC), eager·요청된 관계의 대상, 다대다 조인 테이블, 그리고 읽기의 `where`나 관계 자체의 `where`에 쓴 관계 필터(`some` / `none` / `every` / `is` / `isNot`)가 읽는 테이블까지요.
 
 같은 `EntityManager`를 통한 쓰기 — `save`, `update`, `updateMany`, `delete`, `softDelete`, `restore`, `upsert`, `insertMany`, `increment` 등 — 는 그 쓰기가 닿을 수 있는 테이블로 태깅된 엔트리를 전부 무효화합니다. `ON DELETE CASCADE` 외래 키로 도달 가능한 자식 테이블도 포함되므로, 캐시된 "posts를 실은 authors" 결과는 post 하나만 수정해도 함께 떨어집니다.
 

@@ -17,6 +17,7 @@ import "reflect-metadata";
 import { Entity } from "../../../src/decorators/Entity";
 import { Column } from "../../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../../src/decorators/PrimaryGeneratedColumn";
+import { PrimaryColumn } from "../../../src/decorators/PrimaryColumn";
 import { ManyToOne } from "../../../src/decorators/ManyToOne";
 import { OneToMany } from "../../../src/decorators/OneToMany";
 import { ManyToMany } from "../../../src/decorators/ManyToMany";
@@ -74,6 +75,7 @@ class WrfComment {
   @PrimaryGeneratedColumn() id!: number;
   @Column({ type: "varchar", length: 40 }) body!: string;
   @Column({ type: "boolean" }) approved!: boolean;
+  @Column({ type: "int", nullable: true }) score!: number | null;
   @ManyToOne(() => WrfPost, (p: WrfPost) => p.comments)
   @RelationColumn({ name: "post_id" })
   post!: Relation<WrfPost>;
@@ -93,12 +95,27 @@ class WrfCategory {
   @OneToMany(() => WrfCategory, { mappedBy: "parent" }) children!: WrfCategory[];
 }
 
+// A OneToOne with no owning column on either side: nothing correlates the
+// two rows, so a filter on it is refused instead of binding the filter
+// object as a column value.
+@Entity({ name: "wrf_lockers" })
+class WrfLocker {
+  @PrimaryGeneratedColumn() id!: number;
+  @OneToOne(() => WrfKey, { inverseSide: "locker" }) key!: Relation<WrfKey> | null;
+}
+
+@Entity({ name: "wrf_keys" })
+class WrfKey {
+  @PrimaryGeneratedColumn() id!: number;
+  @OneToOne(() => WrfLocker) locker!: Relation<WrfLocker> | null;
+}
+
 describe("[Integration] SQLite: relation filters in where", () => {
   let em: EntityManager;
 
   beforeAll(async () => {
     em = await createTestEntityManager({
-      entities: [WrfUser, WrfProfile, WrfTag, WrfPost, WrfComment, WrfCategory],
+      entities: [WrfUser, WrfProfile, WrfTag, WrfPost, WrfComment, WrfCategory, WrfLocker, WrfKey],
     });
     const alice = await em.save(WrfUser, { name: "alice" });
     const bob = await em.save(WrfUser, { name: "bob" });
@@ -118,9 +135,9 @@ describe("[Integration] SQLite: relation filters in where", () => {
     await em.query(
       `INSERT INTO wrf_post_tags (post_id, tag_id) VALUES (${p1.id}, ${orm.id}), (${p1.id}, ${sql.id}), (${p2.id}, ${sql.id})`,
     );
-    await em.save(WrfComment, { body: "nice", approved: true, post: p1, author: bob });
-    await em.save(WrfComment, { body: "hmm", approved: false, post: p1, author: alice });
-    await em.save(WrfComment, { body: "ok", approved: true, post: p2, author: alice });
+    await em.save(WrfComment, { body: "nice", approved: true, score: 5, post: p1, author: bob });
+    await em.save(WrfComment, { body: "hmm", approved: false, score: 3, post: p1, author: alice });
+    await em.save(WrfComment, { body: "ok", approved: true, score: null, post: p2, author: alice });
     const trashed = await em.save(WrfComment, { body: "spam", approved: false, post: p4, author: bob });
     await em.softDelete(WrfComment, { id: trashed.id });
     await em.softDelete(WrfUser, { id: gone.id });
@@ -142,6 +159,14 @@ describe("[Integration] SQLite: relation filters in where", () => {
       expect(await titles({ comments: { some: { approved: true } } })).toEqual(["p1", "p2"]);
       expect(await titles({ comments: { none: { approved: false } } })).toEqual(["p2", "p3", "p4"]);
       expect(await titles({ comments: { every: { approved: true } } })).toEqual(["p2", "p3", "p4"]);
+    });
+
+    it("every counts a related row its where cannot decide (NULL) as failing", async () => {
+      // p1: scores 5 and 3 — every row passes. p2: one comment with a NULL
+      // score — NOT (score > 0) is unknown for it, and it still counts
+      // against the post. p3 / p4: no live comment — vacuously true.
+      expect(await titles({ comments: { every: { score: { gt: 0 } } } })).toEqual(["p1", "p3", "p4"]);
+      expect(await titles({ comments: { every: { score: null } } })).toEqual(["p2", "p3", "p4"]);
     });
 
     it("some: {} has any, none: {} has none, every: {} is always true", async () => {
@@ -241,7 +266,38 @@ describe("[Integration] SQLite: relation filters in where", () => {
     });
   });
 
+  describe("query cache", () => {
+    it("a cached read is invalidated by a write to a table its relation filter reads", async () => {
+      const cache = em.queryCache!;
+      await cache.clear();
+      const option = { where: { comments: { some: { body: "fresh" } } }, cache: true } as const;
+
+      expect(await em.find(WrfPost, option)).toEqual([]);
+      const hitsBefore = cache.stats.hits;
+      await em.find(WrfPost, option);
+      expect(cache.stats.hits).toBe(hitsBefore + 1);
+
+      // No post row changes, only a comment row — the comments table is
+      // read by the filter's EXISTS, so the entry must fall with the write.
+      const p3 = (await em.findOne(WrfPost, { where: { title: "p3" } }))!;
+      const alice = (await em.findOne(WrfUser, { where: { name: "alice" } }))!;
+      const fresh = await em.save(WrfComment, { body: "fresh", approved: true, score: 1, post: p3, author: alice });
+      try {
+        expect((await em.find(WrfPost, option)).map((p) => p.title)).toEqual(["p3"]);
+      } finally {
+        await em.delete(WrfComment, { id: fresh.id });
+        await cache.clear();
+      }
+    });
+  });
+
   describe("validation", () => {
+    it("rejects a filter on the inverse side of a OneToOne whose owner has no join column", async () => {
+      await expect(
+        em.find(WrfLocker, { where: { key: { is: { id: 1 } } } }),
+      ).rejects.toThrow(/cannot be filtered: it is the inverse side of a OneToOne and "locker" on "WrfKey" holds no join column/);
+    });
+
     it("rejects a filter key that does not fit the relation", async () => {
       await expect(titles({ author: { some: {} } })).rejects.toThrow(
         /"some" cannot filter relation "author" of "WrfPost": it is a ManyToOne, which takes "is" \/ "isNot"/,
@@ -385,5 +441,47 @@ describe("[Integration] SQLite: relation filters under tenant_column", () => {
       expect(await em.count(TPost, { author: { is: { name: "mallory" } } })).toBe(0);
       expect(await em.count(TPost, { author: { is: null } })).toBe(1);
     });
+  });
+});
+
+// A parent keyed by two columns: a single join column cannot say which part
+// of the key it holds, so the filter is refused unless the relation names
+// the referenced column.
+@Entity({ name: "wrf_orders" })
+class WrfOrder {
+  @PrimaryColumn({ type: "varchar", length: 10 }) tenantCode!: string;
+  @PrimaryColumn({ type: "int" }) orderNo!: number;
+  @OneToMany(() => WrfLine, { mappedBy: "order" }) lines!: WrfLine[];
+}
+
+@Entity({ name: "wrf_lines" })
+class WrfLine {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToOne(() => WrfOrder, (o: WrfOrder) => o.lines)
+  @RelationColumn({ name: "order_no" })
+  order!: Relation<WrfOrder>;
+}
+
+describe("[Integration] SQLite: relation filters on a composite key", () => {
+  let em: EntityManager;
+
+  beforeAll(async () => {
+    em = await createTestEntityManager({ entities: [WrfOrder, WrfLine], synchronize: false });
+  });
+
+  afterAll(async () => {
+    await em.propagateShutdown();
+  });
+
+  it("refuses to correlate on one part of a composite key", async () => {
+    await expect(
+      em.find(WrfOrder, { where: { lines: { some: {} } } }),
+    ).rejects.toThrow(InvalidQueryError);
+    await expect(
+      em.find(WrfOrder, { where: { lines: { some: {} } } }),
+    ).rejects.toThrow(/"WrfOrder" has a composite primary key \(tenantCode, orderNo\)/);
+    await expect(
+      em.find(WrfLine, { where: { order: { is: { orderNo: 1 } } } }),
+    ).rejects.toThrow(/composite primary key/);
   });
 });

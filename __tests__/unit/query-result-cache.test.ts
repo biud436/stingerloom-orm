@@ -273,6 +273,63 @@ describe("QueryResultCache", () => {
     expect(exec).toHaveBeenCalledTimes(2);
   });
 
+  it("tags the tables relation filters in where read, at any depth", async () => {
+    const resolver = makeResolver({
+      resolveOneToManyMetadata: (cls: any) =>
+        cls === FakeUser
+          ? [{ propertyKey: "posts", getRelatedEntity: () => FakePost }]
+          : [],
+      resolveManyToManyMetadata: (cls: any) =>
+        cls === FakePost
+          ? [
+              {
+                propertyKey: "tags",
+                getRelatedEntity: () => FakeTag,
+                joinTable: {
+                  name: "post_tags",
+                  joinColumn: "postId",
+                  inverseJoinColumn: "tagId",
+                },
+              },
+            ]
+          : [],
+      resolveManyToManyJoinTable: (rel: any) =>
+        rel.joinTable
+          ? {
+              joinTableName: rel.joinTable.name,
+              joinColumn: rel.joinTable.joinColumn,
+              inverseJoinColumn: rel.joinTable.inverseJoinColumn,
+            }
+          : null,
+    });
+    const { ctx } = makeCtx(resolver);
+    const cache = new QueryResultCache(ctx);
+
+    // No relation loaded, but the where reads posts (and, nested, the
+    // post_tags join table and tags) through correlated EXISTS.
+    const policy = cache.policyForFind(FakeUser as any, {
+      cache: true,
+      where: {
+        OR: [{ posts: { some: { tags: { none: { label: "spam" } } } } }, { name: "x" }],
+      },
+    })!;
+    expect([...policy.tags].sort()).toEqual(["t:post_tags", "t:posts", "t:tags", "t:users"]);
+
+    // A relation's own where under `relations` is walked the same way.
+    const nested = cache.policyForFind(FakeUser as any, {
+      cache: true,
+      relations: parseRelationsOption({ posts: { where: { tags: { some: {} } } } }),
+    })!;
+    expect([...nested.tags].sort()).toEqual(["t:post_tags", "t:posts", "t:tags", "t:users"]);
+
+    // A write to the filtered table drops the entry.
+    const exec = jest.fn().mockResolvedValue({ results: [{ id: 1 }] });
+    await cache.runQuery(policy, SELECT_SQL, exec);
+    await cache.invalidateEntity(FakePost as any);
+    await cache.runQuery(policy, SELECT_SQL, exec);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
   it("invalidate() accepts entity classes and string tags", async () => {
     const { ctx } = makeCtx();
     const cache = new QueryResultCache(ctx);
