@@ -1,12 +1,12 @@
 /**
- * @ComputedColumn 런타임 synchronize 통합 테스트
+ * Runtime synchronize integration tests for @ComputedColumn
  *
- * 결함(2026-08-31 재현): GENERATED ALWAYS AS DDL은 migrate:generate 전용
- * SchemaGenerator에만 있었고, 런타임 synchronize의 driver.createTable()은
- * 계산 컬럼 메타데이터를 아예 보지 않아 컬럼이 무음으로 빠졌다.
+ * Defect (reproduced 2026-08-31): the GENERATED ALWAYS AS DDL existed only in the
+ * migrate:generate-only SchemaGenerator; runtime synchronize's driver.createTable()
+ * never looked at computed-column metadata, so the column was silently dropped.
  *
- * SQLite in-memory 실 SQL로 CREATE TABLE 경로를 검증한다.
- * 주의: SQLite의 PRAGMA table_info는 생성 컬럼을 숨기므로 table_xinfo로 검사한다.
+ * Verifies the CREATE TABLE path with real SQL on SQLite in-memory.
+ * Note: SQLite's PRAGMA table_info hides generated columns, so this checks table_xinfo.
  */
 
 import "reflect-metadata";

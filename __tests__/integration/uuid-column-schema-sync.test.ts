@@ -1,16 +1,16 @@
 /**
- * uuid 컬럼 선언 타입 라운드트립 — MySQL/MariaDB + PostgreSQL
+ * Declared-type round trip for uuid columns — MySQL/MariaDB + PostgreSQL
  *
- * 검증 내용:
- * 1. 기존 테이블에 `@Column({ type: "uuid" })`가 추가되면 ADD COLUMN이
- *    CREATE TABLE과 같은 타입을 쓴다. 수정 전 MySQL 경로는 길이 없는 `CHAR`
- *    (= CHAR(1))를 발행해서 strict 모드에선 INSERT가 죽고, 아니면 한 글자로
- *    잘렸다.
- * 2. 36자 UUID 값이 손실 없이 왕복한다.
- * 3. 재부팅 diff가 같은 컬럼을 드리프트로 보지 않는다 (MariaDB 10.7+의 네이티브
- *    UUID는 수정 전 매 부팅 `MODIFY COLUMN ... CHAR` 대상이었다).
+ * What is checked:
+ * 1. When `@Column({ type: "uuid" })` is added to an existing table, ADD COLUMN
+ *    uses the same type as CREATE TABLE. Before the fix, the MySQL path emitted a
+ *    length-less `CHAR` (= CHAR(1)), so the INSERT failed in strict mode and was
+ *    otherwise truncated to a single character.
+ * 2. A 36-character UUID value round-trips without loss.
+ * 3. A reboot diff does not treat the same column as drift (before the fix, MariaDB
+ *    10.7+'s native UUID was a `MODIFY COLUMN ... CHAR` target on every boot).
  *
- * 실행:
+ * How to run:
  *   INTEGRATION_TEST=true npx jest --testPathPattern "uuid-column-schema-sync"
  */
 

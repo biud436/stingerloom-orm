@@ -1,17 +1,17 @@
 /**
- * 관계 경로 대칭 통합 테스트 (MySQL / PostgreSQL 공통)
+ * Relation path symmetry integration tests (shared by MySQL / PostgreSQL)
  *
- * `find(Entity, { relations })`가 지키는 계약을 다른 세 경로도 똑같이 지키는지
- * 실제 드라이버에서 확인합니다.
+ * Checks on the real drivers that three other paths keep the same contract
+ * as `find(Entity, { relations })`:
  *
- * - SelectQueryBuilder 관계 JOIN(`leftJoinRelationAndSelect` / `innerJoinRelation`)과
- *   `whereHas` / `withCount` 서브쿼리가 soft-deleted 자식·부모를 숨긴다
- * - `findWithCursor()`가 eager ManyToOne을 로드하고 `relations` 옵션을 받는다
- * - `softDelete()` / `restore()`가 `cascade: ["remove"]` 자식(@DeletedAt 보유)에
- *   연쇄된다
- * - `deleteMany()`가 delete()와 같이 cascade + before/afterDelete 이벤트를 낸다
+ * - SelectQueryBuilder relation JOINs (`leftJoinRelationAndSelect` / `innerJoinRelation`)
+ *   and the `whereHas` / `withCount` subqueries hide soft-deleted children and parents
+ * - `findWithCursor()` loads eager ManyToOne relations and accepts the `relations` option
+ * - `softDelete()` / `restore()` cascade to `cascade: ["remove"]` children
+ *   that have @DeletedAt
+ * - `deleteMany()` cascades and emits before/afterDelete events just like delete()
  *
- * SQLite 판: __tests__/integration/sqlite/relation-path-soft-delete-symmetry.test.ts
+ * SQLite version: __tests__/integration/sqlite/relation-path-soft-delete-symmetry.test.ts
  */
 
 import "reflect-metadata";
@@ -65,7 +65,7 @@ describe.each(getTestDrivers())(
     let em: EntityManager;
     let Author: new () => any;
     let Book: new () => any;
-    // FK 이름 길이 제한(64자) 때문에 짧은 prefix
+    // Short prefix because of the 64-character FK name limit
     const authorTable = shortName("rpa");
     const bookTable = shortName("rpb");
 
@@ -124,7 +124,7 @@ describe.each(getTestDrivers())(
 
     /**
      * A1 → B1(trashed), B2 / A2 → B3(trashed) / A3(trashed) → B4(live).
-     * B4는 부모 softDelete 뒤에 저장해 cascade가 닿지 않게 한다.
+     * B4 is saved after the parent's softDelete so the cascade does not reach it.
      */
     async function seed() {
       const a1 = await em.save(Author, { name: "A1" });
@@ -257,7 +257,7 @@ describe.each(getTestDrivers())(
           ["C1", true],
           ["C2", true],
         ]);
-        // 이미 trashed였던 자식의 원래 stamp는 덮어쓰지 않는다.
+        // The original stamp of a child that was already trashed is not overwritten.
         expect(new Date(trashed[1].deletedAt).getTime()).toBe(
           new Date(c2Before.deletedAt).getTime(),
         );

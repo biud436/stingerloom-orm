@@ -1,11 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * SchemaRegistrar: PostgreSQL ENUM 타입 프로비저닝
+ * SchemaRegistrar: PostgreSQL ENUM type provisioning
  *
- * PG의 enum 컬럼은 명명 타입 참조라 CREATE TABLE / ADD COLUMN보다 CREATE TYPE이
- * 먼저 실행되어야 합니다. 이 패스가 없으면 DDL이 `type ... does not exist`로
- * 실패하고 continueOnError 기본값이 warn으로 삼켜, 테이블/컬럼이 조용히
- * 누락됩니다 (2026-08-16 실 PG 확정).
+ * A PG enum column references a named type, so CREATE TYPE has to run before
+ * CREATE TABLE / ADD COLUMN. Without this pass the DDL fails with `type ... does not exist`,
+ * the default continueOnError swallows it as a warning, and the table/column is
+ * silently missing (confirmed on a real PG server, 2026-08-16).
  */
 import "reflect-metadata";
 import { Logger } from "../../src/utils/Logger";
@@ -32,7 +32,7 @@ const FULL: SynchronizePolicy = {
   logDDL: false,
 };
 
-/** pg_type/pg_enum을 흉내내는 인메모리 enum 카탈로그. */
+/** In-memory enum catalog that mimics pg_type/pg_enum. */
 function makeEnumDriver(types: Record<string, string[]> = {}) {
   return {
     catalog: types,
@@ -176,8 +176,8 @@ describe("SchemaRegistrar: PostgreSQL enum type provisioning", () => {
   });
 
   it("inserts a new value at its declared position instead of appending", async () => {
-    // 선언 순서 ["draft","archived","published"] — "archived"는 가운데라
-    // 그냥 붙이면 ORDER BY 결과가 엔티티 선언과 달라진다.
+    // Declaration order is ["draft","archived","published"] — "archived" is in the
+    // middle, so simply appending it would make ORDER BY disagree with the entity declaration.
     const driver = makeEnumDriver({ post_status_enum: ["draft", "published"] });
     const registrar = makeRegistrar(driver);
 
@@ -275,8 +275,8 @@ describe("SchemaRegistrar: PostgreSQL enum type provisioning", () => {
 
   describe("synchronize modes", () => {
     it("applies additive enum DDL in safe mode", async () => {
-      // CREATE TYPE / ADD VALUE는 비파괴적이고, safe 모드가 수행하는
-      // CREATE TABLE·ADD COLUMN이 이 타입을 필요로 한다.
+      // CREATE TYPE / ADD VALUE are non-destructive, and the CREATE TABLE / ADD COLUMN
+      // that safe mode performs need the type.
       const policy: SynchronizePolicy = { ...FULL, mode: "safe" };
       const driver = makeEnumDriver({ post_status_enum: ["draft"] });
       const registrar = makeRegistrar(driver, policy);
@@ -451,9 +451,9 @@ describe("SchemaRegistrar: ADD COLUMN backfill default", () => {
   }
 
   it("adds a NOT NULL enum column as nullable rather than DEFAULT ''", () => {
-    // `''`는 선언된 값 목록에 없으면 유효한 기본값이 아니라서 MySQL이
-    // ENUM(...) NOT NULL DEFAULT '' 를 1067로 거절한다. 반대로 첫 번째 값을
-    // 채우면 없는 데이터를 만들어내므로, 컬럼을 nullable로 추가한다.
+    // `''` is not a valid default unless it is in the declared value list, so MySQL
+    // rejects ENUM(...) NOT NULL DEFAULT '' with error 1067. Filling in the first value
+    // instead would invent data, so the column is added as nullable.
     const def = typeDef({
       tableName: "post",
       columnName: "status",

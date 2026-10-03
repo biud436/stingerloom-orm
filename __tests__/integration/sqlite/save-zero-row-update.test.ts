@@ -75,13 +75,13 @@ describe("[Integration] SQLite: save() 0-row UPDATE", () => {
     await conn.em.query(`DELETE FROM "${table}"`);
   });
 
-  it("존재하지 않는 PK로 save() → EntityNotFoundError (수정 전: null 반환 무음 성공)", async () => {
+  it("save() with a nonexistent PK -> EntityNotFoundError (before the fix: silently succeeded and returned null)", async () => {
     await expect(
       conn.em.save(User, { id: 9999, name: "ghost" }),
     ).rejects.toThrow(EntityNotFoundError);
   });
 
-  it("존재하지 않는 PK로 save() 시 afterUpdate 훅/구독자가 발화하면 안 된다 (수정 전: 유령 이벤트 발화)", async () => {
+  it("save() with a nonexistent PK must not fire afterUpdate hooks/subscribers (before the fix: a phantom event fired)", async () => {
     const fired: string[] = [];
     subscribe({
       listenTo: () => User,
@@ -93,7 +93,7 @@ describe("[Integration] SQLite: save() 0-row UPDATE", () => {
     expect(fired).toEqual([]);
   });
 
-  it("값이 그대로인 save()는 여전히 성공해야 한다 (존재 프로브 — MySQL affectedRows 0 케이스)", async () => {
+  it("save() with unchanged values still succeeds (existence probe -- the MySQL affectedRows 0 case)", async () => {
     const saved: any = await conn.em.save(User, { name: "same" });
 
     const result: any = await conn.em.save(User, { id: saved.id, name: "same" });
@@ -101,7 +101,7 @@ describe("[Integration] SQLite: save() 0-row UPDATE", () => {
     expect(result).toMatchObject({ id: saved.id, name: "same" });
   });
 
-  it("무회귀: 정상 UPDATE는 성공하고 afterUpdate가 1회 발화한다", async () => {
+  it("no regression: a normal UPDATE succeeds and fires afterUpdate once", async () => {
     const saved: any = await conn.em.save(User, { name: "before" });
 
     const fired: string[] = [];

@@ -1,11 +1,11 @@
 /**
- * SQLite In-Memory: TABLE_PER_CLASS 다형 루트 연산 통합 테스트
+ * SQLite In-Memory: TABLE_PER_CLASS polymorphic root operation integration tests
  *
- * TPC 루트 테이블은 자기 행이 없다(계층의 행은 콘크리트 테이블마다 있다).
- * find()는 UNION ALL로 전 서브타입을 읽지만 count/집계/커서/findAndCount/
- * findWithPage와 delete/updateMany/softDelete/restore/deleteMany/increment는
- * 빈 루트 테이블만 보고 무음 0을 반환했다. 이 파일은 루트 대상
- * 연산이 전부 전 서브타입을 대상으로 동작하는지 고정한다.
+ * A TPC root table holds no rows of its own (the hierarchy's rows live in each concrete table).
+ * find() read every subtype through UNION ALL, but count/aggregates/cursor/findAndCount/
+ * findWithPage and delete/updateMany/softDelete/restore/deleteMany/increment
+ * looked only at the empty root table and silently returned 0. This file pins that
+ * every root-targeted operation acts on all subtypes.
  */
 
 import "reflect-metadata";

@@ -74,7 +74,7 @@ describe("[Integration] SQLite: post-commit subscriber error", () => {
     await conn.em.query(`DELETE FROM "${table}"`);
   });
 
-  it("afterTransactionCommit이 던져도 원본 에러가 전파되고 롤백 훅은 발화하지 않아야 한다", async () => {
+  it("propagates the original error and fires no rollback hook when afterTransactionCommit throws", async () => {
     const events: string[] = [];
     subscribe({
       listenTo: () => User,
@@ -87,8 +87,8 @@ describe("[Integration] SQLite: post-commit subscriber error", () => {
       afterTransactionRollback: () => { events.push("afterTxRollback"); },
     });
 
-    // 수정 전: rollback 경로 진입 — SQLite에선 COMMIT 뒤 ROLLBACK이 실패해
-    // TRANSACTION_ROLLBACK_FAILED로 둔갑하거나, 롤백 훅이 오발화했다.
+    // Before the fix it entered the rollback path: on SQLite the ROLLBACK after COMMIT failed and
+    // surfaced as TRANSACTION_ROLLBACK_FAILED, or the rollback hook fired by mistake.
     await expect(
       conn.em.transaction(async (tem) => {
         await tem.save(User, { name: "Committed" });
@@ -99,7 +99,7 @@ describe("[Integration] SQLite: post-commit subscriber error", () => {
     expect(events.some((e) => e.includes("Rollback"))).toBe(false);
   });
 
-  it("post-commit 예외에도 커밋된 데이터는 유지되어야 한다", async () => {
+  it("keeps the committed data despite a post-commit exception", async () => {
     subscribe({
       listenTo: () => User,
       afterTransactionCommit: () => {
@@ -118,7 +118,7 @@ describe("[Integration] SQLite: post-commit subscriber error", () => {
     expect(rows[0].name).toBe("Durable");
   });
 
-  it("무회귀: 본문 예외는 여전히 롤백 훅을 발화하고 데이터를 버린다", async () => {
+  it("no regression: an exception in the body still fires the rollback hook and discards the data", async () => {
     const events: string[] = [];
     subscribe({
       listenTo: () => User,
