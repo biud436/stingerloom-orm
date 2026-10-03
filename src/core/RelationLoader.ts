@@ -29,11 +29,21 @@ import { RelationWhereFilterBuilder } from "./RelationWhereFilter";
 import { createDialectExpression } from "../dialects/DialectExpression";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { singleTableRowShape } from "./SingleTableRows";
 
 /** Alias of the per-parent row number a paged collection read ranks by. */
 const ROW_NUMBER_ALIAS = "__stg_rn";
 /** Alias of the derived table a paged collection read filters by row number. */
 const PAGED_ALIAS = "__stg_paged";
+/**
+ * How many parent keys one batched `IN (...)` binds. Every driver caps the
+ * bind parameters of a statement — SQLite at 999 before 3.32, PostgreSQL
+ * and MySQL at 65,535 — and a nested level's parent set is bounded by the
+ * data, not by the read's `limit`, so a level is read in slices of this
+ * size and the slices merged.
+ */
+const IN_CHUNK_SIZE: Record<string, number> = { sqlite: 900 };
+const DEFAULT_IN_CHUNK_SIZE = 10_000;
 
 /**
  * A loaded entity instance viewed as a property-indexable record. Relation
@@ -110,9 +120,71 @@ export class RelationLoader {
     return {
       columns: this.readColumns(RelatedEntity, relatedMetadata).map((name) => this.ctx.wrap(name)),
       from: this.ctx.wrapTable(relatedMetadata.name ?? RelatedEntity.name),
-      toEntities: (rows) =>
-        transformer.toEntities(RelatedEntity, { results: rows } as QueryResult),
+      toEntities: (rows) => this.hydrateRelated(RelatedEntity, rows),
     };
+  }
+
+  /**
+   * Rows of a batched relation read as instances of `RelatedEntity` — the
+   * way `find()` on it builds them. A SINGLE_TABLE root is read
+   * polymorphically: each row becomes its subclass, cut to that class's
+   * columns, as a `find(Root)` row is. Anything else hydrates as the class.
+   */
+  private hydrateRelated(RelatedEntity: ClazzType<any>, rows: any[]): any[] {
+    const transformer = ResultTransformerFactory.create();
+    const inheritanceResolver = this.ctx.getInheritanceResolver();
+    if (
+      inheritanceResolver.getStrategy(RelatedEntity) === "SINGLE_TABLE" &&
+      inheritanceResolver.isPolymorphicQuery(RelatedEntity)
+    ) {
+      const discMap = inheritanceResolver.buildDiscriminatorMap(RelatedEntity);
+      if (discMap.size > 0) {
+        const discColumn = inheritanceResolver.getDiscriminatorColumn(RelatedEntity)?.name ?? "dtype";
+        return transformer.toPolymorphicEntities(
+          RelatedEntity,
+          { results: rows } as QueryResult,
+          discMap,
+          discColumn,
+          undefined,
+          singleTableRowShape({ inheritanceResolver, resolver: this.resolver }, RelatedEntity),
+        );
+      }
+    }
+    return transformer.toEntities(RelatedEntity, { results: rows } as QueryResult);
+  }
+
+  /**
+   * The predicate that keeps a batched read of a SINGLE_TABLE child to its
+   * own subtype's rows — the table holds every subtype, and `find(Child)`
+   * adds the same predicate. `qualifier` prefixes the column when the
+   * statement reads a second table.
+   */
+  private singleTableScope(RelatedEntity: ClazzType<any>, qualifier?: string): Sql | undefined {
+    const sti = this.ctx.getInheritanceResolver().getSingleTableChildDiscriminator(RelatedEntity);
+    if (!sti) return undefined;
+    const column = qualifier
+      ? `${this.ctx.wrap(qualifier)}.${this.ctx.wrap(sti.columnName)}`
+      : this.ctx.wrap(sti.columnName);
+    return Conditions.equals(column, sti.value);
+  }
+
+  /**
+   * Runs a batched read over `ids` in slices small enough for the driver's
+   * bind-parameter cap (see {@link IN_CHUNK_SIZE}) and merges the row sets.
+   * One slice — the common case — is one statement, as before.
+   */
+  private async queryInChunks(
+    ids: unknown[],
+    run: (chunk: unknown[]) => Promise<QueryResult>,
+  ): Promise<QueryResult> {
+    const size = IN_CHUNK_SIZE[this.ctx.getDbType() ?? ""] ?? DEFAULT_IN_CHUNK_SIZE;
+    if (ids.length <= size) return run(ids);
+    const results: any[] = [];
+    for (let start = 0; start < ids.length; start += size) {
+      const part = await run(ids.slice(start, start + size));
+      if (part.results) results.push(...part.results);
+    }
+    return { results } as QueryResult;
   }
 
   /**
@@ -195,14 +267,14 @@ export class RelationLoader {
   /**
    * `ROW_NUMBER() OVER (PARTITION BY <parent key> ORDER BY ...)` — ranks the
    * related rows within each parent in the relation's order, the related
-   * primary key breaking ties (and ordering alone when no `orderBy` is set),
-   * so a page of each parent's rows is stable.
+   * primary key — every column of it — breaking ties (and ordering alone
+   * when no `orderBy` is set), so a page of each parent's rows is stable.
    */
   private rowNumberColumn(
     relationName: string,
     partitionBy: string,
     order: Array<{ column: string; direction: "ASC" | "DESC" }>,
-    tiebreaker: string,
+    tiebreakers: readonly string[],
   ): string {
     const capabilities = this.ctx.getDriver()?.getCapabilities?.();
     if (capabilities && capabilities.supportsWindowFunctions === false) {
@@ -212,7 +284,7 @@ export class RelationLoader {
         "Use MySQL 8.0+, MariaDB 10.2+ or SQLite 3.25+, or drop take/skip and slice each parent's rows in code.",
       );
     }
-    const orderSql = [...order, { column: tiebreaker, direction: "ASC" as const }]
+    const orderSql = [...order, ...tiebreakers.map((column) => ({ column, direction: "ASC" as const }))]
       .map((entry) => `${entry.column} ${entry.direction}`)
       .join(", ");
     return `ROW_NUMBER() OVER (PARTITION BY ${partitionBy} ORDER BY ${orderSql}) AS ${this.ctx.wrap(ROW_NUMBER_ALIAS)}`;
@@ -334,17 +406,21 @@ export class RelationLoader {
     );
   }
 
-  /** Collects the non-null PK value of every parent. */
+  /**
+   * Collects the distinct non-null PK value of every parent — a nested level
+   * can hold the same parent under several grandparents, and binding it
+   * twice buys nothing.
+   */
   private collectParentIds(
     parents: EntityRecord[],
     pk: ColumnMetadata,
   ): unknown[] {
-    const ids: unknown[] = [];
+    const ids = new Set<unknown>();
     for (const parent of parents) {
       const id = this.parentIdOf(parent, pk);
-      if (id !== undefined && id !== null) ids.push(id);
+      if (id !== undefined && id !== null) ids.add(id);
     }
-    return ids;
+    return [...ids];
   }
 
   /**
@@ -434,18 +510,20 @@ export class RelationLoader {
       // 2. One batched query: WHERE pk IN (...) plus the predicates the
       //    eager JOIN puts in its ON clause.
       const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
-      const executeQuery = async (session: TransactionSessionManager) => {
+      const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
         const selectCols = this.readColumns(RelatedEntity, relatedMetadata).map(
           (name) => this.ctx.wrap(name),
         );
         const whereConditions: Sql[] = [
-          Conditions.in(this.ctx.wrap(relatedPk.name), fkValues),
+          Conditions.in(this.ctx.wrap(relatedPk.name), ids),
         ];
         const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
         if (deletedAtColumn && !relationWithDeleted) {
           whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
         }
+        const subtype = this.singleTableScope(RelatedEntity);
+        if (subtype) whereConditions.push(subtype);
         const tenantPredicate = this.ctx.buildTenantWhereClause(RelatedEntity);
         if (tenantPredicate) {
           whereConditions.push(tenantPredicate);
@@ -466,14 +544,16 @@ export class RelationLoader {
         return queryResult;
       };
 
-      const queryResult = await this.ctx.executeInTransaction(executeQuery, existingSession);
+      const queryResult = await this.queryInChunks(fkValues, (chunk) =>
+        this.ctx.executeInTransaction(executeQuery(chunk), existingSession),
+      );
 
       // 3. Index the targets by PK, reading the PK from the raw row so the
       //    lookup key matches the FK value the parent row carries.
       const relatedByPk = new Map<unknown, unknown>();
       const rows = queryResult.results ?? [];
       if (rows.length > 0) {
-        const related = ResultTransformerFactory.create().toEntities(RelatedEntity, queryResult);
+        const related = this.hydrateRelated(RelatedEntity, rows);
         for (let i = 0; i < related.length; i++) {
           relatedByPk.set(rows[i][relatedPk.name], related[i]);
         }
@@ -553,7 +633,7 @@ export class RelationLoader {
       const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
       const source = this.relatedRowSource(RelatedEntity, relatedMetadata);
 
-      const executeQuery = async (session: TransactionSessionManager) => {
+      const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
         const selectCols = [...source.columns];
         selectCols.push(
@@ -562,19 +642,21 @@ export class RelationLoader {
         const order = this.relationOrder(relatedMetadata, options, (col) => this.ctx.wrap(col));
         const paged = RelationLoader.pagesRows(options);
         if (paged) {
-          const relatedPk = relatedMetadata.columns.find((col: ColumnMetadata) => col.options?.primary);
+          const relatedKeys = relatedMetadata.columns
+            .filter((col: ColumnMetadata) => col.options?.primary)
+            .map((col: ColumnMetadata) => this.ctx.wrap(col.name));
           selectCols.push(
             this.rowNumberColumn(
               rel.propertyKey,
               this.ctx.wrap(fkColumn),
               order,
-              this.ctx.wrap(relatedPk?.name ?? fkColumn),
+              relatedKeys.length > 0 ? relatedKeys : [this.ctx.wrap(fkColumn)],
             ),
           );
         }
 
         const whereConditions: Sql[] = [
-          Conditions.in(this.ctx.wrap(fkColumn), parentIds),
+          Conditions.in(this.ctx.wrap(fkColumn), ids),
           ...this.relationWhere(
             RelatedEntity,
             relatedMetadata,
@@ -588,6 +670,8 @@ export class RelationLoader {
         if (deletedAtColumn && !relationWithDeleted) {
           whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
         }
+        const subtype = this.singleTableScope(RelatedEntity);
+        if (subtype) whereConditions.push(subtype);
 
         // Tenant scoping under the "tenant_column" strategy. The batched child
         // query is a bare SELECT with no JOINs, so the predicate is unqualified.
@@ -615,7 +699,9 @@ export class RelationLoader {
         return queryResult;
       };
 
-      const queryResult = await this.ctx.executeInTransaction(executeQuery, existingSession);
+      const queryResult = await this.queryInChunks(parentIds, (chunk) =>
+        this.ctx.executeInTransaction(executeQuery(chunk), existingSession),
+      );
 
       // 3. Group the results into a Map keyed by FK value
       const childrenByParentId = new Map<any, any[]>();
@@ -714,7 +800,7 @@ export class RelationLoader {
       // 2. Batched query: SELECT the joinColumn as well to map parents to children
       const fkAlias = "__m2m_fk";
 
-      const executeQuery = async (session: TransactionSessionManager) => {
+      const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
         const selectCols = this.readColumns(RelatedEntity, relatedMetadata).map(
           (name) => `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(name)}`,
@@ -726,15 +812,18 @@ export class RelationLoader {
         const order = this.relationOrder(relatedMetadata, options, qualify);
         const paged = RelationLoader.pagesRows(options);
         if (paged) {
+          const relatedKeys = relatedMetadata.columns
+            .filter((col: ColumnMetadata) => col.options?.primary)
+            .map((col: ColumnMetadata) => qualify(col.name));
           selectCols.push(
-            this.rowNumberColumn(rel.propertyKey, parentKey, order, qualify(relatedPk.name)),
+            this.rowNumberColumn(rel.propertyKey, parentKey, order, relatedKeys),
           );
         }
 
         const joinCondition = sql`${raw(this.ctx.wrap(relatedTableName))}.${raw(this.ctx.wrap(relatedPk.name))} = ${raw(this.ctx.wrap(joinInfo.joinTableName))}.${raw(this.ctx.wrap(joinInfo.inverseJoinColumn))}`;
 
         const whereConditions: Sql[] = [
-          Conditions.in(parentKey, parentIds),
+          Conditions.in(parentKey, ids),
           ...this.relationWhere(
             RelatedEntity,
             relatedMetadata,
@@ -756,6 +845,8 @@ export class RelationLoader {
             ),
           );
         }
+        const subtype = this.singleTableScope(RelatedEntity, relatedTableName);
+        if (subtype) whereConditions.push(subtype);
 
         // Tenant scoping for the related entity. Qualify by the related table
         // name because the query JOINs a second table (the join table) — an
@@ -792,27 +883,29 @@ export class RelationLoader {
         return queryResult;
       };
 
-      const queryResult = await this.ctx.executeInTransaction(executeQuery, existingSession);
+      const queryResult = await this.queryInChunks(parentIds, (chunk) =>
+        this.ctx.executeInTransaction(executeQuery(chunk), existingSession),
+      );
 
-      // 3. Group the results into a Map keyed by FK value
+      // 3. Group the results into a Map keyed by FK value. The statement
+      //    JOINs the join table only for its parent key, so hydration is 1:1
+      //    and order-preserving with the rows.
       const childrenByParentId = new Map<any, any[]>();
-      const resultTransformer = ResultTransformerFactory.create();
 
       if (queryResult.results && queryResult.results.length > 0) {
-        for (const row of queryResult.results) {
-          const fkValue = row[fkAlias];
-          const entityRow = RelationLoader.withoutAliases(row, [fkAlias, ROW_NUMBER_ALIAS]);
-
-          const entities = resultTransformer.toEntities(RelatedEntity, {
-            results: [entityRow],
-          } as QueryResult);
-
+        const rows = queryResult.results;
+        const entityRows = rows.map((row) =>
+          RelationLoader.withoutAliases(row, [fkAlias, ROW_NUMBER_ALIAS]),
+        );
+        const entities = this.hydrateRelated(RelatedEntity, entityRows);
+        for (let i = 0; i < entities.length; i++) {
+          const fkValue = rows[i][fkAlias];
           let group = childrenByParentId.get(fkValue);
           if (!group) {
             group = [];
             childrenByParentId.set(fkValue, group);
           }
-          group.push(...entities);
+          group.push(entities[i]);
         }
       }
 
@@ -905,7 +998,7 @@ export class RelationLoader {
         const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
         const source = this.relatedRowSource(RelatedEntity, relatedMetadata);
 
-        const executeQuery = async (session: TransactionSessionManager) => {
+        const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
           const qb = RawQueryBuilderFactory.create();
           const selectCols = [...source.columns];
           selectCols.push(
@@ -913,7 +1006,7 @@ export class RelationLoader {
           );
 
           const whereConditions: Sql[] = [
-            Conditions.in(this.ctx.wrap(fkColumn), parentIds),
+            Conditions.in(this.ctx.wrap(fkColumn), ids),
           ];
 
           const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
@@ -922,6 +1015,8 @@ export class RelationLoader {
           if (deletedAtColumn && !relationWithDeleted) {
             whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
           }
+          const subtype = this.singleTableScope(RelatedEntity);
+          if (subtype) whereConditions.push(subtype);
 
           // Tenant scoping under the "tenant_column" strategy.
           const tenantPredicate = this.ctx.buildTenantWhereClause(RelatedEntity);
@@ -945,7 +1040,9 @@ export class RelationLoader {
           return queryResult;
         };
 
-        const queryResult = await this.ctx.executeInTransaction(executeQuery, existingSession);
+        const queryResult = await this.queryInChunks(parentIds, (chunk) =>
+          this.ctx.executeInTransaction(executeQuery(chunk), existingSession),
+        );
 
         // 3. Group the results into a Map keyed by FK value (1:1 mapping for OneToOne)
         const relatedByParentId = new Map<any, any>();

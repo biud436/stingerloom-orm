@@ -1150,7 +1150,9 @@ WHERE "__stg_paged"."__stg_rn" > 0 AND "__stg_paged"."__stg_rn" <= 3
 ORDER BY "__stg_paged"."__stg_o2m_fk", "__stg_paged"."__stg_rn";
 ```
 
-Window functions need MySQL 8.0+, MariaDB 10.2+ or SQLite 3.25+ (every supported PostgreSQL has them); on an older server `take` / `skip` throw `OrmError` with `UNSUPPORTED_OPERATION` instead of loading every row. `where` and `orderBy` work everywhere.
+Window functions need MySQL 8.0+, MariaDB 10.2+ or SQLite 3.25+ (every supported PostgreSQL has them); on an older server `take` / `skip` throw `OrmError` with `UNSUPPORTED_OPERATION` instead of loading every row. The check reads the server version detected at connect time; when that detection failed, the ORM assumes support and an older server reports its own syntax error instead. `where` and `orderBy` work everywhere.
+
+Paging ranks each parent's rows by `orderBy`, then by every column of the related primary key, so a page is stable for a composite key too. A batched read binds at most 900 parent keys per statement on SQLite and 10,000 elsewhere; a larger set is read in slices and merged, so a nested collection under a collection never exceeds the driver's bind-parameter cap.
 
 The options are checked before any statement runs: a `where` / `orderBy` key that is not a column of the related entity throws `InvalidQueryError`, and `where`, `orderBy`, `take` or `skip` on a single-valued relation (`@ManyToOne`, `@OneToOne`) is rejected — filter the read itself for those.
 

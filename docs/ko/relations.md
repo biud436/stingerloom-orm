@@ -1150,7 +1150,9 @@ WHERE "__stg_paged"."__stg_rn" > 0 AND "__stg_paged"."__stg_rn" <= 3
 ORDER BY "__stg_paged"."__stg_o2m_fk", "__stg_paged"."__stg_rn";
 ```
 
-윈도 함수는 MySQL 8.0+, MariaDB 10.2+, SQLite 3.25+에서 쓸 수 있습니다(지원하는 PostgreSQL은 모두 가능). 더 오래된 서버에서는 모든 행을 읽어 오는 대신 `take` / `skip`이 `UNSUPPORTED_OPERATION` 코드의 `OrmError`를 던져요. `where`와 `orderBy`는 어디서나 동작합니다.
+윈도 함수는 MySQL 8.0+, MariaDB 10.2+, SQLite 3.25+에서 쓸 수 있습니다(지원하는 PostgreSQL은 모두 가능). 더 오래된 서버에서는 모든 행을 읽어 오는 대신 `take` / `skip`이 `UNSUPPORTED_OPERATION` 코드의 `OrmError`를 던져요. 이 검사는 접속 시점에 감지한 서버 버전을 기준으로 하기 때문에, 버전 감지에 실패했다면 지원한다고 가정하고 쿼리를 보내며 오래된 서버는 자체 문법 오류를 돌려줍니다. `where`와 `orderBy`는 어디서나 동작합니다.
+
+페이징은 부모별 행을 `orderBy`, 그다음 관련 엔티티 기본 키의 모든 컬럼 순으로 매기므로 복합 키에서도 페이지가 안정적입니다. 배치 읽기 한 문장이 바인딩하는 부모 키는 SQLite에서 최대 900개, 그 외에서는 10,000개이고, 그보다 큰 집합은 나눠 읽어 합칩니다. 컬렉션 아래 컬렉션을 중첩해도 드라이버의 바인드 파라미터 한도를 넘지 않아요.
 
 옵션은 쿼리를 실행하기 전에 검사합니다. 관련 엔티티의 컬럼이 아닌 `where` / `orderBy` 키는 `InvalidQueryError`를 던지고, 단일 값 관계(`@ManyToOne`, `@OneToOne`)에 `where`, `orderBy`, `take`, `skip`을 주면 거부합니다. 그런 조건은 조회 자체에 거세요.
 

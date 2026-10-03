@@ -51,8 +51,11 @@ import {
   validateReadIdentifiers,
 } from "../ColumnNameValidator";
 import { RelationLoader } from "../RelationLoader";
-import { relationTargetOf } from "../RelationNameValidator";
-import { RelationWhereFilterBuilder, relationAwareScope } from "../RelationWhereFilter";
+import {
+  RelationWhereFilterBuilder,
+  relationAwareScope,
+  validateRelationOptionIdentifiers,
+} from "../RelationWhereFilter";
 import { AggregateQueryHandler } from "../AggregateQueryHandler";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -284,18 +287,7 @@ export class ReadExecutor {
     entity: ClazzType<any>,
     tree: RelationTree | undefined,
   ): void {
-    if (!tree) return;
-    for (const node of tree.nodes.values()) {
-      const target = relationTargetOf(entity, node.name, this.resolver);
-      if (!target) continue;
-      const { where, orderBy } = node.options ?? {};
-      const metadata =
-        where !== undefined || orderBy ? this.resolver.resolveEntityMetadata(target) : undefined;
-      if (metadata) {
-        validateReadIdentifiers({ where, orderBy }, undefined, relationAwareScope(this.ctx, this.resolver, target, metadata));
-      }
-      this.validateRelationOptionIdentifiers(target, node.children);
-    }
+    validateRelationOptionIdentifiers(this.ctx, this.resolver, entity, tree);
   }
 
   /**
@@ -1258,6 +1250,16 @@ export class ReadExecutor {
       op.relationTree?.nodes.get(relAlias)?.options?.withDeleted ?? op.findOption.withDeleted;
     if (relatedDeletedAt && !withDeleted) {
       joinCondition = sql`${joinCondition} AND ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedDeletedAt))} IS NULL`;
+    }
+
+    // A SINGLE_TABLE child shares its table with its siblings: a key that
+    // points at a sibling's row is no row of this relation.
+    const subtype = this.inheritanceResolver.getSingleTableChildDiscriminator(RelatedEntity);
+    if (subtype) {
+      joinCondition = sql`${joinCondition} AND ${Conditions.equals(
+        `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(subtype.columnName)}`,
+        subtype.value,
+      )}`;
     }
 
     if (!op.findOption.withoutTenantScope) {

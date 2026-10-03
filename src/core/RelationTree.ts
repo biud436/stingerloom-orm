@@ -321,15 +321,6 @@ export function requestedRelationNames(relations: unknown): readonly string[] | 
   return parseRelationsOption(relations)?.names;
 }
 
-/** True when any level of the tree goes deeper than its top level. */
-export function hasNestedRelations(tree: RelationTree | undefined): boolean {
-  if (!tree) return false;
-  for (const node of tree.nodes.values()) {
-    if (node.children && node.children.names.length > 0) return true;
-  }
-  return false;
-}
-
 /**
  * A stable string for the shape of a tree — `"author,comments(author)"` —
  * for memo keys. Empty for no tree.

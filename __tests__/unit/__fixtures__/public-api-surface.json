@@ -484,6 +484,7 @@
     "ServerDatabaseClientOptions",
     "SetRelatedEntity",
     "SingleRelationFilter",
+    "SingleRelationLoadOptions",
     "SnakeNamingStrategy",
     "SnapshotStrategy",
     "SortDirection",

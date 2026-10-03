@@ -132,13 +132,27 @@ export interface RelationLoadOptions<R> {
 }
 
 /**
+ * What to load together with a single-valued relation (`@ManyToOne`,
+ * `@OneToOne`) in the object form of `relations`: the relations nested
+ * under it and its own `withDeleted`. `where`, `orderBy`, `take` and `skip`
+ * page a collection and are not offered here.
+ *
+ * @template R - The related entity.
+ */
+export type SingleRelationLoadOptions<R> = Pick<RelationLoadOptions<R>, "relations" | "withDeleted">;
+
+/**
  * The object form of `relations`: one key per relation, `true` to load it,
- * or {@link RelationLoadOptions} to also load relations nested under it.
+ * or the relation's options to also load relations nested under it —
+ * {@link RelationLoadOptions} for a collection property,
+ * {@link SingleRelationLoadOptions} for a single-valued one.
  */
 export type RelationsObject<T> = {
   [K in RelationPropertyKeys<T>]?:
     | boolean
-    | RelationLoadOptions<RelationTarget<T[K]>>;
+    | (NonNullable<Awaited<T[K]>> extends ReadonlyArray<unknown>
+        ? RelationLoadOptions<RelationTarget<T[K]>>
+        : SingleRelationLoadOptions<RelationTarget<T[K]>>);
 };
 
 /**

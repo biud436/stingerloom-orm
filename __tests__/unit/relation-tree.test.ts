@@ -10,7 +10,6 @@ import {
   parseRelationsOption,
   relationTreeKey,
   requestedRelationNames,
-  hasNestedRelations,
   type RelationTree,
 } from "../../src/core/RelationTree";
 import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
@@ -55,14 +54,12 @@ describe("parseRelationsOption", () => {
   it("turns names into a flat level in request order", () => {
     const tree = parse(["author", "tags"]);
     expect(tree.names).toEqual(["author", "tags"]);
-    expect(hasNestedRelations(tree)).toBe(false);
   });
 
   it("splits dotted paths into nested levels and merges shared prefixes", () => {
     const tree = parse(["comments", "comments.author", "comments.author.team", "author"]);
     expect(tree.names).toEqual(["comments", "author"]);
     expect(relationTreeKey(tree)).toBe("comments(author(team)),author");
-    expect(hasNestedRelations(tree)).toBe(true);
   });
 
   it("reads the object form, skipping false and undefined", () => {
@@ -84,7 +81,6 @@ describe("parseRelationsOption", () => {
 
   it("treats an options object without nested relations as a plain load", () => {
     expect(relationTreeKey(parse({ author: {} }))).toBe("author");
-    expect(hasNestedRelations(parse({ author: {} }))).toBe(false);
   });
 
   it("rejects a non-string array entry", () => {
@@ -259,5 +255,20 @@ describe("relations option typing", () => {
     // @ts-expect-error — "title" is a column of Team, not a relation
     const column: RelationsOption<User> = { team: { relations: { title: true } } };
     expect([ok, typo, column]).toHaveLength(3);
+  });
+
+  it("offers where / orderBy / take / skip on collection properties only", () => {
+    const ok: RelationsOption<User> = {
+      posts: { where: { id: 1 }, orderBy: { id: "ASC" }, take: 1, skip: 1, withDeleted: true },
+      team: { withDeleted: true, relations: ["members"] },
+      lazyManager: { relations: { team: true } },
+    };
+    // @ts-expect-error — take pages a collection; team is single-valued
+    const paged: RelationsOption<User> = { team: { take: 1 } };
+    // @ts-expect-error — where filters a collection; team is single-valued
+    const filtered: RelationsOption<User> = { team: { where: { title: "x" } } };
+    // @ts-expect-error — a lazy single-valued relation is single-valued too
+    const lazy: RelationsOption<User> = { lazyManager: { orderBy: { id: "ASC" } } };
+    expect([ok, paged, filtered, lazy]).toHaveLength(4);
   });
 });
