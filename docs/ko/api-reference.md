@@ -245,7 +245,7 @@ interface FindOption<T> {
   orderBy?: Partial<Record<keyof T, "ASC" | "DESC">>;
   groupBy?: (keyof T)[];
   having?: Sql[];
-  relations?: (keyof T)[];
+  relations?: (keyof T | string)[] | RelationsObject<T>;  // 점 경로·객체 형식으로 중첩
   withDeleted?: boolean;
   onlyDeleted?: boolean;         // Soft delete된 행만 반환 (withDeleted보다 우선)
   distinct?: boolean;            // SELECT DISTINCT

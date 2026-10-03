@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { WhereClause } from "../dialects/FindOption";
+import { WhereClause, RelationsOption } from "../dialects/FindOption";
 
 /**
  * Cursor-based pagination option.
@@ -45,12 +45,12 @@ export type CursorPaginationOption<T> = {
   withDeleted?: boolean;
 
   /**
-   * Relations to load for every entity on the page, by property name —
-   * the same names `FindOption.relations` accepts. Each relation is one
-   * batched query per page (never one per row); `eager: true` relations are
-   * loaded without being listed, exactly as `find()` does.
+   * Relations to load for every entity on the page — the same names, dotted
+   * paths and object form `FindOption.relations` accepts. Each relation is
+   * one batched query per page (never one per row); `eager: true` relations
+   * are loaded without being listed, exactly as `find()` does.
    */
-  relations?: string[];
+  relations?: RelationsOption<T>;
 
   /**
    * In a replication setup, forces read queries to use the master node.

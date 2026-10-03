@@ -402,18 +402,14 @@ The name must match a relation property declared with `@ManyToOne`,
 `@OneToMany`, `@ManyToMany` or `@OneToOne` on that entity — the same name the
 loaders match on (the property name, not the FK column).
 
-Nested paths are reported separately because they were never supported:
+A nested path is checked segment by segment, each against the entity it reaches, and the message quotes the path:
 
-```typescript
-// Not supported — throws
-await em.find(Post, { relations: ["author.profile"] });
-
-// Load the root relation, then fetch the nested one
-const posts = await em.find(Post, { relations: ["author"] });
-const profiles = await em.find(Profile, {
-  where: { authorId: In(posts.map((p) => p.author.id)) },
-});
 ```
+InvalidQueryError: Unknown relation "profil" in "relations" for entity "User" (requested as "author.profil").
+Available relations: [posts (OneToMany), profile (OneToOne)]. Did you mean "profile"?
+```
+
+In the object form, an option key the relation does not accept is reported the same way (`Unknown option "wher" for relation "comments"`). See [Nested Relations](./relations.md#nested-relations).
 
 A relation whose target thunk yields nothing is reported too
 (`... target thunk returned no entity class`) — that is almost always a

@@ -530,7 +530,7 @@ const cat = await em.findOne(Cat, { where: { id: 1 } });
 console.log(cat.owner.name); // "John" — loaded without relations option
 ```
 
-`findWithCursor()` attaches the same eager relations, loaded with one batched query per relation per page (the keyset statement itself never JOINs). Eager loading reads one level deep on every path: the eager relations of the root entity are attached, but entities reached through `relations` (a cat's owner's cats, say) do not have *their* eager relations resolved. A soft-deleted target hydrates as `null` unless the read passes `withDeleted`.
+`findWithCursor()` attaches the same eager relations, loaded with one batched query per relation per page (the keyset statement itself never JOINs). Eager loading reads one level deep on every path: the eager relations of the root entity are attached, but entities reached through `relations` (a cat's owner's cats, say) do not have *their* eager relations resolved — name them with a [nested relation](#nested-relations) when you need them. A soft-deleted target hydrates as `null` unless the read passes `withDeleted`.
 
 **Generated SQL (PostgreSQL):**
 
@@ -580,6 +580,8 @@ SELECT * FROM "owner" WHERE "id" = 3;
 ```
 
 Lazy loading is useful when the relation is rarely accessed. If you list 50 cats and only display the owner for the first one, you avoid 49 unnecessary queries.
+
+Naming a lazy relation in `relations` loads it with the read like any other relation, so `cat.owner` holds the owner itself (`await cat.owner` keeps working) and its [nested relations](#nested-relations) can be loaded with it.
 
 > **Hint** An unloaded lazy property is non-enumerable, so `JSON.stringify(cat)`, spread, and `Object.keys` skip it without firing a query. Once loaded (or assigned), it becomes a plain enumerable value and serializes normally — serialization always reflects exactly what has been loaded. A failed lazy load rejects callers that `await` it, but a discarded synchronous access never crashes the process with an unhandled rejection.
 
@@ -1036,6 +1038,51 @@ SELECT * FROM "post" WHERE "author_id" = 1;
 ```
 
 ManyToOne relations and the owning side of OneToOne are loaded via LEFT JOIN (single query). OneToMany, ManyToMany and the inverse side of OneToOne are loaded in a separate query, because a JOIN would multiply the parent rows. That query matches related rows to each parent by the parent's primary key, so the primary key is fetched even when `select` leaves it out; see [select with relations](./entity-manager-querying.md#select-with-relations).
+
+An entity reached through a relation is hydrated with the same properties `find()` gives it when you query it directly — its foreign-key shadow properties (`authorId`) and its `@ComputedColumn` values included, whether it was JOINed or loaded by the separate query.
+
+### Nested Relations
+
+A relation of a related entity is named with a dotted path, or with the object form, which nests the same option under each relation:
+
+```typescript
+// Each post with its comments, and each comment with its author and the author's team
+const posts = await em.find(Post, {
+  relations: ["comments.author.team", "tags"],
+});
+
+// The same read in the object form
+const same = await em.find(Post, {
+  relations: {
+    comments: { relations: { author: { relations: ["team"] } } },
+    tags: true,
+  },
+});
+```
+
+The two forms mix freely, at any level, and a relation named in several entries (`["comments", "comments.author"]`) is loaded once. `false` leaves a relation out, which is handy when the object is built conditionally.
+
+**How the levels are read.** The top level is loaded exactly as above — to-one relations JOINed into the main statement, collections in their separate query. Every level below it is loaded after the rows are hydrated, with **one batched `IN (...)` query per relation per level**, whatever the number of parents:
+
+```sql
+-- relations: ["comments.author"] on 50 posts
+SELECT ... FROM "post";                                          -- 1. the posts
+SELECT ... FROM "comment" WHERE "post_id" IN (1, 2, ..., 50);    -- 2. their comments
+SELECT ... FROM "user" WHERE "id" IN (7, 9, 12);                 -- 3. the comments' distinct authors
+```
+
+A level with nothing to load (no comments at all) issues no query for the levels under it.
+
+Nested levels follow the same rules as the top level: a soft-deleted entity is left out unless the read passes `withDeleted`, and each related entity is scoped by its own tenant predicate under the `tenant_column` strategy. `find()`, `findOne()`, `findAndCount()`, `findWithPage()`, `findWithCursor()`, `stream()` and `explain()` all accept the nested forms, and a cached read is invalidated by writes to any table a nested level reads.
+
+Every name is checked against the entity it is applied to. A misspelled segment is reported with the path that reached it:
+
+```
+InvalidQueryError: Unknown relation "autor" in "relations" for entity "Comment" (requested as "comments.autor").
+Available relations: [post (ManyToOne), author (ManyToOne)]. Did you mean "author"?
+```
+
+> **Note** `eager: true` applies to the entity a read queries. The entities a nested level reaches load only the relations you name for them, so a deep tree never fans out on its own.
 
 ## Next Steps
 

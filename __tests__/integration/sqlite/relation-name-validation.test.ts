@@ -5,9 +5,9 @@
  * `relations.includes(...)`, so before this guard a typo produced no error at
  * all: the query succeeded and the relation property stayed `undefined` — a
  * silently wrong answer, while the same typo in a bulk update criteria already
- * threw "Unknown column ... Valid columns: ...". Nested paths
- * ("author.profile") were documented in FindOption's JSDoc but never
- * implemented, so they could only ever no-op.
+ * threw "Unknown column ... Valid columns: ...". A nested path
+ * ("author.profile") is checked segment by segment against the entity each
+ * segment reaches.
  *
  * Fail-before (probe on 3df4001): all four typo cases below returned rows with
  * the relation missing, and the nested entry was silently dropped.
@@ -164,15 +164,19 @@ describe("[Integration] SQLite: relations identifier validation", () => {
       expect(error.message).not.toContain("Did you mean");
     });
 
-    it("rejects a nested relation path with a dedicated message", async () => {
-      const error = await captureError(() => em.find(RnvPost, { relations: ["author", "author.profile"] }));
+    it("loads a nested relation path instead of rejecting it", async () => {
+      const [post] = await em.find(RnvPost, { relations: ["author", "author.profile"] });
+      expect(post.author.name).toBe("kim");
+      expect(post.author.profile.bio).toBe("hello");
+    });
+
+    it("rejects an unknown segment of a nested path, naming the path", async () => {
+      const error = await captureError(() => em.find(RnvPost, { relations: ["author.profil"] }));
       expect(error).toBeInstanceOf(InvalidQueryError);
-      expect(error.message).toContain(
-        'Nested relation path "author.profile" is not supported',
-      );
-      expect((error as InvalidQueryError).suggestion).toContain(
-        'Load "author" here',
-      );
+      expect(error.message).toContain('Unknown relation "profil"');
+      expect(error.message).toContain('for entity "RnvAuthor"');
+      expect(error.message).toContain('(requested as "author.profil")');
+      expect(error.message).toContain('Did you mean "profile"?');
     });
 
     it("guards findOne / findAndCount / findWithPage through the same gate", async () => {

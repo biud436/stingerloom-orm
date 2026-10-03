@@ -246,9 +246,9 @@ describe("ResultTransformer", () => {
             post__id: 1,
             post__title: "첫 번째 글",
             post__content: "내용입니다",
-            comment__id: 1,
-            comment__content: "댓글입니다",
-            comment__created_at: "2024-03-16T00:00:00Z",
+            post__comment__id: 1,
+            post__comment__content: "댓글입니다",
+            post__comment__created_at: "2024-03-16T00:00:00Z",
           },
         ],
       };
@@ -262,9 +262,33 @@ describe("ResultTransformer", () => {
       const user = result as User;
       expect(user.post).toBeDefined();
       expect(user.post).toBeInstanceOf(Post);
-      // if (user.post?.comment) {
       expect(user.post?.comment).toBeInstanceOf(PostComment);
-      // }
+      expect(user.post?.comment?.content).toBe("댓글입니다");
+    });
+
+    it("중첩 관계는 루트 행의 같은 이름 JOIN 컬럼을 읽지 않아야 합니다", () => {
+      // `comment__*` belongs to a JOIN of the row's own entity, not to the
+      // post's `comment` — only `post__comment__*` may hydrate that one.
+      const mockResult: QueryResult = {
+        results: [
+          {
+            id: 1,
+            name: "홍길동",
+            email: "hong@example.com",
+            post__id: 1,
+            post__title: "첫 번째 글",
+            post__content: "내용입니다",
+            comment__id: 9,
+            comment__content: "다른 댓글",
+            comment__created_at: "2024-03-16T00:00:00Z",
+          },
+        ],
+      };
+
+      const user = resultTransformer.transformNested(User, mockResult, {}) as User;
+
+      expect(user.post).toBeInstanceOf(Post);
+      expect(user.post?.comment).toBeNull();
     });
 
     it("단일 행에 다수의 중첩된 관계 데이터 포함", () => {

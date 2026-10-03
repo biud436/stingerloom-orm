@@ -40,7 +40,11 @@ import {
 } from "../PagePagination";
 import { EntityManagerInternals } from "../EntityManagerInternals";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
-import { validateRelationNames } from "../RelationNameValidator";
+import {
+  requestedRelationNames,
+  resolveRelationTree,
+  type RelationTree,
+} from "../RelationTree";
 import {
   assertWhereNotVacuous,
   buildEntityColumnScope,
@@ -251,6 +255,18 @@ export class ReadExecutor {
     };
     byMetadata.set(metadata, plan);
     return plan;
+  }
+
+  /**
+   * The physical column names a read of `entity` selects — the column plan's
+   * `allColNames`. Relation loaders read related entities through it so they
+   * hydrate with the same properties `find()` gives them.
+   */
+  readColumnNames(
+    entity: ClazzType<any>,
+    metadata: { name: string; columns: ColumnMetadata[] },
+  ): readonly string[] {
+    return this.getColumnPlan(entity, metadata).allColNames;
   }
 
   /**
@@ -511,7 +527,10 @@ export class ReadExecutor {
 
     const plan = this.getColumnPlan(entity, metadata);
 
-    const { eagerM2O, eagerO2O } = this.resolveToOneRelations(plan, findOption.relations);
+    const { eagerM2O, eagerO2O } = this.resolveToOneRelations(
+      plan,
+      requestedRelationNames(findOption.relations),
+    );
 
     const hasEagerJoins =
       eagerM2O.length > 0 || eagerO2O.length > 0
@@ -598,7 +617,7 @@ export class ReadExecutor {
     selectColumns: readonly string[] | undefined,
   ): string[] {
     const { entity, findOption, propToCol } = op;
-    const relations = findOption.relations;
+    const relations = requestedRelationNames(findOption.relations);
     if (!relations || relations.length === 0) return [];
 
     const keyColumns = this.relationLoader.parentKeyColumns(entity, relations);
@@ -658,7 +677,7 @@ export class ReadExecutor {
     const keyList = `primary key column${keyColumns.length > 1 ? "s" : ""} ${keys}`;
     const relationNames = this.relationLoader.relationsMatchedByParentKey(
       op.entity,
-      op.findOption.relations ?? [],
+      requestedRelationNames(op.findOption.relations) ?? [],
     );
     const relations = quote(relationNames);
     const are = relationNames.length > 1 ? "are" : "is";
@@ -892,10 +911,10 @@ export class ReadExecutor {
       if (!relatedMetadata) continue;
 
       const relAlias = rel.columnName;
-      for (const col of relatedMetadata.columns) {
-        const alias = joinedColumnAlias(rel.columnName, col.name);
+      for (const name of this.readColumnNames(RelatedEntity, relatedMetadata)) {
+        const alias = joinedColumnAlias(rel.columnName, name);
         selectMap.push(
-          `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
+          `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(name)} AS ${this.ctx.wrap(alias)}`,
         );
       }
     }
@@ -907,10 +926,10 @@ export class ReadExecutor {
       if (!relatedMetadata) continue;
 
       const relAlias = rel.propertyKey;
-      for (const col of relatedMetadata.columns) {
-        const alias = joinedColumnAlias(rel.propertyKey, col.name);
+      for (const name of this.readColumnNames(RelatedEntity, relatedMetadata)) {
+        const alias = joinedColumnAlias(rel.propertyKey, name);
         selectMap.push(
-          `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(col.name)} AS ${this.ctx.wrap(alias)}`,
+          `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(name)} AS ${this.ctx.wrap(alias)}`,
         );
       }
     }
@@ -1402,36 +1421,37 @@ export class ReadExecutor {
     session: TransactionSessionManager,
   ): Promise<void> {
     const { entity, findOption } = op;
-    if (!findOption.relations || findOption.relations.length === 0 || !entityResult) {
+    const relations = requestedRelationNames(findOption.relations);
+    if (!relations || relations.length === 0 || !entityResult) {
       return;
     }
 
     await this.relationLoader.loadOneToManyRelations(
       entity,
       entityResult as T | T[],
-      findOption.relations,
+      relations,
       session,
       findOption.withDeleted,
     );
     await this.relationLoader.loadManyToManyRelations(
       entity,
       entityResult as T | T[],
-      findOption.relations,
+      relations,
       session,
       findOption.withDeleted,
     );
     await this.relationLoader.loadOneToOneRelations(
       entity,
       entityResult as T | T[],
-      findOption.relations,
+      relations,
       session,
       findOption.withDeleted,
     );
   }
 
   /**
-   * Replaces each lazy ManyToOne property with a Proxy that reads the target
-   * on first access.
+   * Replaces each lazy ManyToOne property the read did not name in
+   * `relations` with a Proxy that reads the target on first access.
    *
    * The load fires at property-access time, possibly under another tenant's
    * context (or none), so the hydration-time context is captured and replayed
@@ -1445,8 +1465,16 @@ export class ReadExecutor {
     entityResult: EntityResult<T>,
   ): void {
     const { findOption } = op;
+    // A lazy relation the read names in `relations` was JOINed and hydrated
+    // like any requested relation (nested levels included); a proxy would
+    // throw that away and re-read it on access.
+    const requested = requestedRelationNames(findOption.relations) ?? [];
     const lazyRelations = op.plan.manyToOne.filter((rel) => {
-      return rel.option?.lazy === true && rel.option?.eager !== true;
+      return (
+        rel.option?.lazy === true &&
+        rel.option?.eager !== true &&
+        !requested.includes(rel.columnName)
+      );
     });
     if (lazyRelations.length === 0 || !entityResult) return;
 
@@ -1527,10 +1555,14 @@ export class ReadExecutor {
   ): Promise<EntityResult<T>> {
     this.validatePaginationOptions(findOption);
 
-    // Reject relation names no loader can resolve. Every loader filters with
-    // `relations.includes(...)`, so without this an unmatched name produced a
-    // successful query whose relation property stayed undefined.
-    validateRelationNames(entity, findOption.relations, this.resolver);
+    // Normalize `relations` — names, dotted paths, the object form — into one
+    // tree, rejecting a name no loader can resolve at any level. Every loader
+    // filters with `relations.includes(...)`, so without the check an
+    // unmatched name produced a successful query whose relation property
+    // stayed undefined. The read below sees the top-level names only; the
+    // levels under them are loaded once it has hydrated its rows.
+    const relationTree = resolveRelationTree(entity, findOption.relations, this.resolver);
+    if (relationTree) findOption = { ...findOption, relations: relationTree.names };
 
     const readNode = this.ctx.getReadNode(findOption.useMaster);
     const effectiveTimeout = this.resolveTimeout(findOption);
@@ -1543,7 +1575,7 @@ export class ReadExecutor {
       findOption.cache && !existingSession && !findOption.lock
         ? this.ctx.getQueryCache()?.policyForFind(entity, {
             cache: findOption.cache,
-            relations: findOption.relations as readonly string[] | undefined,
+            relations: relationTree,
           })
         : undefined;
 
@@ -1580,6 +1612,15 @@ export class ReadExecutor {
       const entityResult = this.hydrateRows(op, queryResult, resultTransformer);
 
       await this.loadDeferredRelations(op, entityResult, session);
+      if (entityResult) {
+        await this.relationLoader.loadNestedRelations(
+          entity,
+          entityResult as T | T[],
+          relationTree,
+          session,
+          findOption.withDeleted,
+        );
+      }
       this.injectLazyRelationProxies(op, entityResult);
       await this.emitAfterLoad(op, entityResult);
 
@@ -1598,13 +1639,17 @@ export class ReadExecutor {
     }
 
     const order = this.resolveCursorOrder(entity, metadata, option);
-    validateRelationNames(entity, option.relations, this.resolver);
+    const relationTree = resolveRelationTree(entity, option.relations, this.resolver);
+    if (relationTree) option = { ...option, relations: relationTree.names };
 
     const where: any = { ...(option.where ?? {}) };
     const readNode = this.ctx.getReadNode(option.useMaster);
 
     const cachePolicy = option.cache
-      ? this.ctx.getQueryCache()?.policyForFind(entity, { cache: option.cache })
+      ? this.ctx.getQueryCache()?.policyForFind(entity, {
+          cache: option.cache,
+          relations: relationTree,
+        })
       : undefined;
 
     return this.ctx.executeReadOnly(async (rawSession) => {
@@ -1650,7 +1695,7 @@ export class ReadExecutor {
 
       const queryResult = (await session.query<T>(qb.build())) as QueryResult;
 
-      return this.hydrateCursorPage(entity, metadata, option, keyset, queryResult, session);
+      return this.hydrateCursorPage(entity, metadata, option, keyset, queryResult, session, relationTree);
     }, { readNodeOverride: readNode, timeout: this.resolveTimeout(option) });
   }
 
@@ -1774,6 +1819,7 @@ export class ReadExecutor {
     keyset: KeysetPlan,
     queryResult: QueryResult,
     session: TransactionSessionManager,
+    relationTree: RelationTree | undefined,
   ): Promise<CursorPaginationResult<T>> {
     const { results } = queryResult;
     if (!results || results.length === 0) {
@@ -1795,6 +1841,13 @@ export class ReadExecutor {
     // Relations before afterLoad, as findInternal orders them, so a
     // subscriber sees the same shape on a cursor page as on find().
     await this.loadCursorPageRelations(entity, metadata, option, entities, session);
+    await this.relationLoader.loadNestedRelations(
+      entity,
+      entities,
+      relationTree,
+      session,
+      option.withDeleted,
+    );
 
     // Notify subscribers of the afterLoad event
     for (const loadedEntity of entities) {
@@ -1830,7 +1883,8 @@ export class ReadExecutor {
   ): Promise<void> {
     if (entities.length === 0) return;
     const plan = this.getColumnPlan(entity, metadata);
-    const { eagerM2O, eagerO2O } = this.resolveToOneRelations(plan, option.relations);
+    const relations = requestedRelationNames(option.relations);
+    const { eagerM2O, eagerO2O } = this.resolveToOneRelations(plan, relations);
     await this.relationLoader.loadToOneRelations(
       entity,
       entities,
@@ -1839,25 +1893,25 @@ export class ReadExecutor {
       session,
       option.withDeleted,
     );
-    if (!option.relations || option.relations.length === 0) return;
+    if (!relations || relations.length === 0) return;
     await this.relationLoader.loadOneToManyRelations(
       entity,
       entities,
-      option.relations,
+      relations,
       session,
       option.withDeleted,
     );
     await this.relationLoader.loadManyToManyRelations(
       entity,
       entities,
-      option.relations,
+      relations,
       session,
       option.withDeleted,
     );
     await this.relationLoader.loadOneToOneRelations(
       entity,
       entities,
-      option.relations,
+      relations,
       session,
       option.withDeleted,
     );
@@ -1968,7 +2022,7 @@ export class ReadExecutor {
       findOption.cache && !findOption.lock
         ? this.ctx.getQueryCache()?.policyForFind(entity, {
             cache: findOption.cache,
-            relations: findOption.relations as readonly string[] | undefined,
+            relations: resolveRelationTree(entity, findOption.relations, this.resolver),
           })
         : undefined;
     return this.ctx.executeReadOnly(async (rawSession) => {

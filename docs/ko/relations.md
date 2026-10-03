@@ -530,7 +530,7 @@ const cat = await em.findOne(Cat, { where: { id: 1 } });
 console.log(cat.owner.name); // "John" — relations 옵션 없이 로드됨
 ```
 
-`findWithCursor()`도 같은 eager 관계를 붙입니다. 다만 키셋 쿼리 자체는 JOIN하지 않고, 페이지마다 관계당 배치 쿼리 하나로 로드해요. eager 로딩은 어느 경로에서든 한 단계만 읽습니다 — 루트 엔티티의 eager 관계는 붙지만, `relations`로 따라 들어간 엔티티(예: 고양이의 주인의 고양이들)의 eager 관계까지 풀지는 않아요. soft-delete된 대상은 `withDeleted`를 넘기지 않는 한 `null`로 하이드레이션됩니다.
+`findWithCursor()`도 같은 eager 관계를 붙입니다. 다만 키셋 쿼리 자체는 JOIN하지 않고, 페이지마다 관계당 배치 쿼리 하나로 로드해요. eager 로딩은 어느 경로에서든 한 단계만 읽습니다 — 루트 엔티티의 eager 관계는 붙지만, `relations`로 따라 들어간 엔티티(예: 고양이의 주인의 고양이들)의 eager 관계까지 풀지는 않아요. 필요하면 [중첩 관계](#중첩-관계)로 이름을 지정하세요. soft-delete된 대상은 `withDeleted`를 넘기지 않는 한 `null`로 하이드레이션됩니다.
 
 **생성되는 SQL (PostgreSQL):**
 
@@ -580,6 +580,8 @@ SELECT * FROM "owner" WHERE "id" = 3;
 ```
 
 지연 로딩은 관계가 거의 접근되지 않을 때 유용해요. 50마리의 고양이를 나열하면서 첫 번째 고양이의 주인만 표시한다면, 49개의 불필요한 쿼리를 피할 수 있어요.
+
+lazy 관계라도 `relations`에 이름을 넣으면 다른 관계처럼 조회와 함께 로드됩니다. 이때 `cat.owner`에는 주인 엔티티 자체가 들어 있고(`await cat.owner`도 그대로 동작해요), 그 [중첩 관계](#중첩-관계)도 같이 로드할 수 있습니다.
 
 > **힌트** 로드되지 않은 lazy 프로퍼티는 non-enumerable이라 `JSON.stringify(cat)`, 스프레드, `Object.keys`가 쿼리를 발화시키지 않고 건너뜁니다. 로드되거나 직접 할당하면 평범한 enumerable 값이 되어 정상적으로 직렬화돼요 — 직렬화 결과는 항상 실제로 로드된 것만 반영합니다. lazy load가 실패하면 `await`한 호출자에게는 reject되지만, await 없이 버려진 동기 접근이 unhandled rejection으로 프로세스를 죽이는 일은 없습니다.
 
@@ -1036,6 +1038,51 @@ SELECT * FROM "post" WHERE "author_id" = 1;
 ```
 
 ManyToOne 관계와 OneToOne의 소유 측은 LEFT JOIN으로 로드돼요 (단일 쿼리). OneToMany, ManyToMany, OneToOne의 역방향은 별도 쿼리로 로드되는데, JOIN을 쓰면 부모 행이 곱해지기 때문이에요. 이 쿼리는 부모의 기본 키로 관련 행을 짝지으므로, `select`에서 기본 키를 빼도 기본 키를 함께 가져옵니다. 자세한 내용은 [select와 relations 함께 쓰기](./entity-manager-querying.md#select와-relations-함께-쓰기)를 참고하세요.
+
+관계를 따라 읽은 엔티티는 그 엔티티를 직접 `find()`했을 때와 같은 프로퍼티로 하이드레이션됩니다. JOIN으로 읽었든 별도 쿼리로 읽었든 FK 섀도 프로퍼티(`authorId`)와 `@ComputedColumn` 값까지 그대로 들어 있어요.
+
+### 중첩 관계
+
+관련 엔티티의 관계까지 읽으려면 점으로 이은 경로를 쓰거나, 각 관계 아래에 같은 옵션을 다시 넣는 객체 형식을 씁니다.
+
+```typescript
+// 글마다 댓글을, 댓글마다 작성자와 작성자의 팀을 함께 로드
+const posts = await em.find(Post, {
+  relations: ["comments.author.team", "tags"],
+});
+
+// 같은 조회를 객체 형식으로
+const same = await em.find(Post, {
+  relations: {
+    comments: { relations: { author: { relations: ["team"] } } },
+    tags: true,
+  },
+});
+```
+
+두 형식은 어느 단계에서든 섞어 쓸 수 있고, 여러 항목에 같은 관계가 나와도(`["comments", "comments.author"]`) 한 번만 로드합니다. `false`를 주면 그 관계는 빠지므로, 조건에 따라 객체를 조립할 때 편해요.
+
+**단계별로 읽는 방식.** 최상위 단계는 위에서 설명한 그대로입니다 — to-one 관계는 메인 쿼리에 JOIN하고, 컬렉션은 별도 쿼리로 읽어요. 그 아래 단계는 행을 하이드레이션한 뒤 **단계마다, 관계마다 배치 `IN (...)` 쿼리 하나**로 로드합니다. 부모가 몇 개든 쿼리 수는 같아요.
+
+```sql
+-- 글 50개에 relations: ["comments.author"]
+SELECT ... FROM "post";                                          -- 1. 글
+SELECT ... FROM "comment" WHERE "post_id" IN (1, 2, ..., 50);    -- 2. 그 글들의 댓글
+SELECT ... FROM "user" WHERE "id" IN (7, 9, 12);                 -- 3. 댓글 작성자(중복 제거)
+```
+
+로드할 것이 없는 단계(댓글이 하나도 없음)에서는 그 아래 단계의 쿼리도 나가지 않습니다.
+
+중첩 단계도 최상위와 같은 규칙을 따릅니다. soft-delete된 엔티티는 `withDeleted`를 넘기지 않는 한 빠지고, `tenant_column` 전략에서는 관련 엔티티마다 자기 테넌트 조건으로 범위가 좁혀져요. `find()`, `findOne()`, `findAndCount()`, `findWithPage()`, `findWithCursor()`, `stream()`, `explain()`이 모두 중첩 형식을 받으며, 캐시된 조회는 중첩 단계가 읽는 테이블에 쓰기가 일어나도 무효화됩니다.
+
+모든 이름은 그 이름이 적용되는 엔티티를 기준으로 검사합니다. 오타가 난 단계는 거기까지 온 경로와 함께 알려줘요.
+
+```
+InvalidQueryError: Unknown relation "autor" in "relations" for entity "Comment" (requested as "comments.autor").
+Available relations: [post (ManyToOne), author (ManyToOne)]. Did you mean "author"?
+```
+
+> **Note** `eager: true`는 조회 대상 엔티티에만 적용됩니다. 중첩 단계에서 만나는 엔티티는 직접 이름을 준 관계만 로드하므로, 트리가 깊어져도 저절로 쿼리가 불어나지 않아요.
 
 ## 다음 단계
 

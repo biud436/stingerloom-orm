@@ -400,18 +400,14 @@ Available relations: [author (ManyToOne), tags (ManyToMany)]. Did you mean "auth
 `@ManyToMany`, `@OneToOne`으로 선언한 관계 프로퍼티여야 합니다. 로더가 매칭에
 쓰는 이름과 같은 이름, 즉 FK 컬럼명이 아니라 프로퍼티명이에요.
 
-중첩 경로는 원래 지원한 적이 없어서 별도 메시지로 알려줍니다.
+중첩 경로는 단계마다 그 단계가 가리키는 엔티티를 기준으로 검사하고, 메시지에 경로를 함께 적어줍니다.
 
-```typescript
-// 지원하지 않음 — 예외 발생
-await em.find(Post, { relations: ["author.profile"] });
-
-// 루트 관계를 먼저 로드하고, 중첩 관계는 후속 쿼리로
-const posts = await em.find(Post, { relations: ["author"] });
-const profiles = await em.find(Profile, {
-  where: { authorId: In(posts.map((p) => p.author.id)) },
-});
 ```
+InvalidQueryError: Unknown relation "profil" in "relations" for entity "User" (requested as "author.profil").
+Available relations: [posts (OneToMany), profile (OneToOne)]. Did you mean "profile"?
+```
+
+객체 형식에서 관계가 받지 않는 옵션 키를 넣어도 같은 방식으로 알려줘요(`Unknown option "wher" for relation "comments"`). 자세한 내용은 [중첩 관계](./relations.md#중첩-관계)를 참고하세요.
 
 대상 엔티티 thunk가 아무것도 돌려주지 않는 관계도 같은 방식으로 걸러냅니다
 (`... target thunk returned no entity class`). 대부분 엔티티 모듈 간 순환
