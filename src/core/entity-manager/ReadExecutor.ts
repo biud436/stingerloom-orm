@@ -51,6 +51,7 @@ import {
   validateReadIdentifiers,
 } from "../ColumnNameValidator";
 import { RelationLoader } from "../RelationLoader";
+import { relationTargetOf } from "../RelationNameValidator";
 import { AggregateQueryHandler } from "../AggregateQueryHandler";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -146,6 +147,8 @@ interface FindOperation<T> {
    * {@link ReadExecutor.resolveAddedKeyColumns}. Empty for every other shape.
    */
   addedKeyColumns: string[];
+  /** The read's `relations`, normalized; undefined when it named none. */
+  relationTree: RelationTree | undefined;
 }
 
 /**
@@ -255,6 +258,39 @@ export class ReadExecutor {
     };
     byMetadata.set(metadata, plan);
     return plan;
+  }
+
+  /**
+   * Rejects a `where` / `orderBy` key in a relation's options that names no
+   * column of the related entity — the guard the read's own options get —
+   * before any statement runs, at every level of the tree.
+   */
+  private validateRelationOptionIdentifiers(
+    entity: ClazzType<any>,
+    tree: RelationTree | undefined,
+  ): void {
+    if (!tree) return;
+    for (const node of tree.nodes.values()) {
+      const target = relationTargetOf(entity, node.name, this.resolver);
+      if (!target) continue;
+      const { where, orderBy } = node.options ?? {};
+      const metadata =
+        where !== undefined || orderBy ? this.resolver.resolveEntityMetadata(target) : undefined;
+      if (metadata) {
+        validateReadIdentifiers(
+          { where, orderBy },
+          undefined,
+          buildEntityColumnScope({
+            entity: target,
+            metadata,
+            propertyToColumn: this.ctx.buildPropertyToColumnMap(metadata),
+            computedColumns: this.ctx.getComputedColumnNames(target),
+            inheritanceResolver: this.inheritanceResolver,
+          }),
+        );
+      }
+      this.validateRelationOptionIdentifiers(target, node.children);
+    }
   }
 
   /**
@@ -513,6 +549,7 @@ export class ReadExecutor {
   private prepareFindOperation<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
+    relationTree?: RelationTree,
   ): FindOperation<T> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
@@ -555,6 +592,7 @@ export class ReadExecutor {
       hasEagerJoins,
       tptQualifyColumn: undefined,
       addedKeyColumns: [],
+      relationTree,
     };
     op.tptQualifyColumn = this.createTptColumnQualifier(op);
 
@@ -1198,7 +1236,9 @@ export class ReadExecutor {
     joinCondition: Sql,
   ): Sql {
     const relatedDeletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
-    if (relatedDeletedAt && !(op.findOption as any).withDeleted) {
+    const withDeleted =
+      op.relationTree?.nodes.get(relAlias)?.options?.withDeleted ?? op.findOption.withDeleted;
+    if (relatedDeletedAt && !withDeleted) {
       joinCondition = sql`${joinCondition} AND ${raw(this.ctx.wrap(relAlias))}.${raw(this.ctx.wrap(relatedDeletedAt))} IS NULL`;
     }
 
@@ -1432,6 +1472,7 @@ export class ReadExecutor {
       relations,
       session,
       findOption.withDeleted,
+      op.relationTree,
     );
     await this.relationLoader.loadManyToManyRelations(
       entity,
@@ -1439,6 +1480,7 @@ export class ReadExecutor {
       relations,
       session,
       findOption.withDeleted,
+      op.relationTree,
     );
     await this.relationLoader.loadOneToOneRelations(
       entity,
@@ -1446,6 +1488,7 @@ export class ReadExecutor {
       relations,
       session,
       findOption.withDeleted,
+      op.relationTree,
     );
   }
 
@@ -1562,6 +1605,7 @@ export class ReadExecutor {
     // stayed undefined. The read below sees the top-level names only; the
     // levels under them are loaded once it has hydrated its rows.
     const relationTree = resolveRelationTree(entity, findOption.relations, this.resolver);
+    this.validateRelationOptionIdentifiers(entity, relationTree);
     if (relationTree) findOption = { ...findOption, relations: relationTree.names };
 
     const readNode = this.ctx.getReadNode(findOption.useMaster);
@@ -1588,7 +1632,7 @@ export class ReadExecutor {
         : rawSession;
       const resultTransformer = ResultTransformerFactory.create();
 
-      const op = this.prepareFindOperation(entity, findOption);
+      const op = this.prepareFindOperation(entity, findOption, relationTree);
 
       const qb = RawQueryBuilderFactory.create();
 
@@ -1640,6 +1684,7 @@ export class ReadExecutor {
 
     const order = this.resolveCursorOrder(entity, metadata, option);
     const relationTree = resolveRelationTree(entity, option.relations, this.resolver);
+    this.validateRelationOptionIdentifiers(entity, relationTree);
     if (relationTree) option = { ...option, relations: relationTree.names };
 
     const where: any = { ...(option.where ?? {}) };
@@ -1840,7 +1885,7 @@ export class ReadExecutor {
 
     // Relations before afterLoad, as findInternal orders them, so a
     // subscriber sees the same shape on a cursor page as on find().
-    await this.loadCursorPageRelations(entity, metadata, option, entities, session);
+    await this.loadCursorPageRelations(entity, metadata, option, entities, session, relationTree);
     await this.relationLoader.loadNestedRelations(
       entity,
       entities,
@@ -1880,6 +1925,7 @@ export class ReadExecutor {
     option: CursorPaginationOption<T>,
     entities: T[],
     session: TransactionSessionManager,
+    relationTree: RelationTree | undefined,
   ): Promise<void> {
     if (entities.length === 0) return;
     const plan = this.getColumnPlan(entity, metadata);
@@ -1892,6 +1938,7 @@ export class ReadExecutor {
       eagerO2O,
       session,
       option.withDeleted,
+      relationTree,
     );
     if (!relations || relations.length === 0) return;
     await this.relationLoader.loadOneToManyRelations(
@@ -1900,6 +1947,7 @@ export class ReadExecutor {
       relations,
       session,
       option.withDeleted,
+      relationTree,
     );
     await this.relationLoader.loadManyToManyRelations(
       entity,
@@ -1907,6 +1955,7 @@ export class ReadExecutor {
       relations,
       session,
       option.withDeleted,
+      relationTree,
     );
     await this.relationLoader.loadOneToOneRelations(
       entity,
@@ -1914,6 +1963,7 @@ export class ReadExecutor {
       relations,
       session,
       option.withDeleted,
+      relationTree,
     );
   }
 

@@ -22,8 +22,17 @@ import type {
   OneToManyMetadata,
   OneToOneMetadata,
 } from "../decorators";
-import type { RelationTree } from "./RelationTree";
+import type { RelationQueryOptions, RelationTree } from "./RelationTree";
 import { relationTargetOf } from "./RelationNameValidator";
+import { resolveWhereClause } from "./WhereResolver";
+import { createDialectExpression } from "../dialects/DialectExpression";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
+
+/** Alias of the per-parent row number a paged collection read ranks by. */
+const ROW_NUMBER_ALIAS = "__stg_rn";
+/** Alias of the derived table a paged collection read filters by row number. */
+const PAGED_ALIAS = "__stg_paged";
 
 /**
  * A loaded entity instance viewed as a property-indexable record. Relation
@@ -120,6 +129,104 @@ export class RelationLoader {
       name: relatedMetadata.name ?? RelatedEntity.name,
       columns: relatedMetadata.columns,
     });
+  }
+
+  /** The query options `tree` gives the relation `name`, if any. */
+  private static optionsOf(
+    tree: RelationTree | undefined,
+    name: string,
+  ): RelationQueryOptions | undefined {
+    return tree?.nodes.get(name)?.options;
+  }
+
+  /**
+   * The relation's own `where`, resolved against the related entity's
+   * columns. `table` qualifies the columns when the statement reads a second
+   * table (the ManyToMany join table).
+   */
+  private relationWhere(
+    relatedMetadata: { name?: string; columns: ColumnMetadata[] },
+    options: RelationQueryOptions | undefined,
+    table?: string,
+  ): Sql[] {
+    if (options?.where === undefined) return [];
+    const dialect = this.ctx.getDialect();
+    return resolveWhereClause(options.where as any, {
+      wrapColumn: (n) => this.ctx.wrap(n),
+      qualified: table !== undefined,
+      tableName: table,
+      dialect,
+      dialectExpression: createDialectExpression(dialect),
+      propertyToColumn: this.ctx.buildPropertyToColumnMap(relatedMetadata as any),
+    });
+  }
+
+  /**
+   * The ORDER BY of a relation read: the relation's `orderBy`, mapped from
+   * property names to columns. `qualify` turns a column into the expression
+   * the statement reads it by.
+   */
+  private relationOrder(
+    relatedMetadata: { columns: ColumnMetadata[] },
+    options: RelationQueryOptions | undefined,
+    qualify: (column: string) => string,
+  ): Array<{ column: string; direction: "ASC" | "DESC" }> {
+    if (!options?.orderBy) return [];
+    const propToCol = this.ctx.buildPropertyToColumnMap(relatedMetadata as any);
+    return Object.entries(options.orderBy).map(([property, direction]) => ({
+      column: qualify(propToCol.get(property) ?? property),
+      direction,
+    }));
+  }
+
+  /** Whether the relation pages each parent's rows. */
+  private static pagesRows(options: RelationQueryOptions | undefined): boolean {
+    return options?.take !== undefined || (options?.skip ?? 0) > 0;
+  }
+
+  /**
+   * `ROW_NUMBER() OVER (PARTITION BY <parent key> ORDER BY ...)` — ranks the
+   * related rows within each parent in the relation's order, the related
+   * primary key breaking ties (and ordering alone when no `orderBy` is set),
+   * so a page of each parent's rows is stable.
+   */
+  private rowNumberColumn(
+    relationName: string,
+    partitionBy: string,
+    order: Array<{ column: string; direction: "ASC" | "DESC" }>,
+    tiebreaker: string,
+  ): string {
+    const capabilities = this.ctx.getDriver()?.getCapabilities?.();
+    if (capabilities && capabilities.supportsWindowFunctions === false) {
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `"take" / "skip" on relation "${relationName}" need window functions, which this database version does not support.`,
+        "Use MySQL 8.0+, MariaDB 10.2+ or SQLite 3.25+, or drop take/skip and slice each parent's rows in code.",
+      );
+    }
+    const orderSql = [...order, { column: tiebreaker, direction: "ASC" as const }]
+      .map((entry) => `${entry.column} ${entry.direction}`)
+      .join(", ");
+    return `ROW_NUMBER() OVER (PARTITION BY ${partitionBy} ORDER BY ${orderSql}) AS ${this.ctx.wrap(ROW_NUMBER_ALIAS)}`;
+  }
+
+  /**
+   * Keeps the rows of each parent's page from a statement that selected
+   * {@link rowNumberColumn}, ordered by parent then rank so grouping keeps
+   * the relation's order.
+   */
+  private pageEachParent(inner: Sql, parentKeyAlias: string, options: RelationQueryOptions): Sql {
+    const rn = raw(`${this.ctx.wrap(PAGED_ALIAS)}.${this.ctx.wrap(ROW_NUMBER_ALIAS)}`);
+    const skip = options.skip ?? 0;
+    const upper = options.take !== undefined ? sql` AND ${rn} <= ${skip + options.take}` : sql``;
+    return sql`SELECT * FROM (${inner}) AS ${raw(this.ctx.wrap(PAGED_ALIAS))} WHERE ${rn} > ${skip}${upper} ORDER BY ${raw(`${this.ctx.wrap(PAGED_ALIAS)}.${this.ctx.wrap(parentKeyAlias)}`)}, ${rn}`;
+  }
+
+  /** A raw row with the loader's bookkeeping aliases removed, ready to hydrate. */
+  private static withoutAliases(row: Record<string, unknown>, aliases: readonly string[]): Record<string, unknown> {
+    const copy = { ...row };
+    for (const alias of aliases) delete copy[alias];
+    return copy;
   }
 
   /**
@@ -255,6 +362,7 @@ export class RelationLoader {
     oneToOne: OneToOneMetadata<any>[],
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
+    tree?: RelationTree,
   ): Promise<void> {
     if (manyToOne.length === 0 && oneToOne.length === 0) return;
     const parents = this.toParentRecords(parentResults);
@@ -289,6 +397,8 @@ export class RelationLoader {
 
     for (const target of targets) {
       const { RelatedEntity, propertyKey, fkKeys } = target;
+      const relationWithDeleted =
+        RelationLoader.optionsOf(tree, propertyKey)?.withDeleted ?? withDeleted;
       const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
       if (!relatedMetadata) continue;
       const relatedPk = relatedMetadata.columns.find(
@@ -325,7 +435,7 @@ export class RelationLoader {
           Conditions.in(this.ctx.wrap(relatedPk.name), fkValues),
         ];
         const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
-        if (deletedAtColumn && !withDeleted) {
+        if (deletedAtColumn && !relationWithDeleted) {
           whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
         }
         const tenantPredicate = this.ctx.buildTenantWhereClause(RelatedEntity);
@@ -388,6 +498,7 @@ export class RelationLoader {
     relations: readonly string[],
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
+    tree?: RelationTree,
   ): Promise<void> {
     const oneToManyMeta = this.requestedOneToMany(entity, relations);
     if (oneToManyMeta.length === 0) return;
@@ -417,11 +528,13 @@ export class RelationLoader {
       // under a stable alias and read it from the RAW row when grouping — the
       // hydrated entity is keyed by property names, not DB column names.
       const fkAlias = "__stg_o2m_fk";
+      const options = RelationLoader.optionsOf(tree, rel.propertyKey);
+      const relationWithDeleted = options?.withDeleted ?? withDeleted;
 
       // 1. Collect every parent ID (skipping null/undefined)
       const parentIds = this.collectParentIds(parents, pk);
 
-      if (parentIds.length === 0) {
+      if (parentIds.length === 0 || options?.take === 0) {
         for (const parent of parents) {
           parent[rel.propertyKey] = [];
         }
@@ -438,13 +551,27 @@ export class RelationLoader {
         selectCols.push(
           `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
         );
+        const order = this.relationOrder(relatedMetadata, options, (col) => this.ctx.wrap(col));
+        const paged = RelationLoader.pagesRows(options);
+        if (paged) {
+          const relatedPk = relatedMetadata.columns.find((col: ColumnMetadata) => col.options?.primary);
+          selectCols.push(
+            this.rowNumberColumn(
+              rel.propertyKey,
+              this.ctx.wrap(fkColumn),
+              order,
+              this.ctx.wrap(relatedPk?.name ?? fkColumn),
+            ),
+          );
+        }
 
         const whereConditions: Sql[] = [
           Conditions.in(this.ctx.wrap(fkColumn), parentIds),
+          ...this.relationWhere(relatedMetadata, options),
         ];
 
         const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
-        if (deletedAtColumn && !withDeleted) {
+        if (deletedAtColumn && !relationWithDeleted) {
           whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
         }
 
@@ -458,8 +585,11 @@ export class RelationLoader {
         qb.select(selectCols)
           .from(source.from, source.alias)
           .where(whereConditions);
+        if (!paged && order.length > 0) qb.orderBy(order);
 
-        const resultQuery = qb.build();
+        const resultQuery = paged
+          ? this.pageEachParent(qb.build(), fkAlias, options!)
+          : qb.build();
         const subQueryStart = Date.now();
         this.ctx.beginTrackQuery();
         const queryResult = (await session.query(resultQuery)) as QueryResult;
@@ -481,11 +611,9 @@ export class RelationLoader {
         // Strip the FK alias before hydration, then bulk-deserialize. The query
         // has no JOINs, so toEntities() is 1:1 and order-preserving with rows —
         // letting us read each child's FK from the raw row by index.
-        const entityRows = rows.map((row) => {
-          const copy = { ...row };
-          delete copy[fkAlias];
-          return copy;
-        });
+        const entityRows = rows.map((row) =>
+          RelationLoader.withoutAliases(row, [fkAlias, ROW_NUMBER_ALIAS]),
+        );
         const allChildren = source.toEntities(entityRows);
 
         for (let i = 0; i < allChildren.length; i++) {
@@ -527,6 +655,7 @@ export class RelationLoader {
     relations: readonly string[],
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
+    tree?: RelationTree,
   ): Promise<void> {
     const manyToManyMeta = this.requestedManyToMany(entity, relations);
     if (manyToManyMeta.length === 0) return;
@@ -555,11 +684,13 @@ export class RelationLoader {
       if (!relatedPk) continue;
 
       const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
+      const options = RelationLoader.optionsOf(tree, rel.propertyKey);
+      const relationWithDeleted = options?.withDeleted ?? withDeleted;
 
       // 1. Collect every parent ID (skipping null/undefined)
       const parentIds = this.collectParentIds(parents, pk);
 
-      if (parentIds.length === 0) {
+      if (parentIds.length === 0 || options?.take === 0) {
         for (const parent of parents) {
           parent[rel.propertyKey] = [];
         }
@@ -574,24 +705,30 @@ export class RelationLoader {
         const selectCols = this.readColumns(RelatedEntity, relatedMetadata).map(
           (name) => `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(name)}`,
         );
-        selectCols.push(
-          `${this.ctx.wrap(joinInfo.joinTableName)}.${this.ctx.wrap(joinInfo.joinColumn)} AS ${this.ctx.wrap(fkAlias)}`,
-        );
+        const parentKey = `${this.ctx.wrap(joinInfo.joinTableName)}.${this.ctx.wrap(joinInfo.joinColumn)}`;
+        selectCols.push(`${parentKey} AS ${this.ctx.wrap(fkAlias)}`);
+        const qualify = (col: string) =>
+          `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(col)}`;
+        const order = this.relationOrder(relatedMetadata, options, qualify);
+        const paged = RelationLoader.pagesRows(options);
+        if (paged) {
+          selectCols.push(
+            this.rowNumberColumn(rel.propertyKey, parentKey, order, qualify(relatedPk.name)),
+          );
+        }
 
         const joinCondition = sql`${raw(this.ctx.wrap(relatedTableName))}.${raw(this.ctx.wrap(relatedPk.name))} = ${raw(this.ctx.wrap(joinInfo.joinTableName))}.${raw(this.ctx.wrap(joinInfo.inverseJoinColumn))}`;
 
         const whereConditions: Sql[] = [
-          Conditions.in(
-            `${this.ctx.wrap(joinInfo.joinTableName)}.${this.ctx.wrap(joinInfo.joinColumn)}`,
-            parentIds,
-          ),
+          Conditions.in(parentKey, parentIds),
+          ...this.relationWhere(relatedMetadata, options, relatedTableName),
         ];
 
         // Soft-delete scoping for the target entity. Qualify by the related
         // table name because the query JOINs a second table (the join table) —
         // an unqualified predicate would be ambiguous.
         const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
-        if (deletedAtColumn && !withDeleted) {
+        if (deletedAtColumn && !relationWithDeleted) {
           whereConditions.push(
             Conditions.isNull(
               `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(deletedAtColumn)}`,
@@ -618,8 +755,11 @@ export class RelationLoader {
             joinCondition,
           )
           .where(whereConditions);
+        if (!paged && order.length > 0) qb.orderBy(order);
 
-        const resultQuery = qb.build();
+        const resultQuery = paged
+          ? this.pageEachParent(qb.build(), fkAlias, options!)
+          : qb.build();
         const subQueryStart = Date.now();
         this.ctx.beginTrackQuery();
         const queryResult = (await session.query(resultQuery)) as QueryResult;
@@ -640,8 +780,7 @@ export class RelationLoader {
       if (queryResult.results && queryResult.results.length > 0) {
         for (const row of queryResult.results) {
           const fkValue = row[fkAlias];
-          const entityRow = { ...row };
-          delete entityRow[fkAlias];
+          const entityRow = RelationLoader.withoutAliases(row, [fkAlias, ROW_NUMBER_ALIAS]);
 
           const entities = resultTransformer.toEntities(RelatedEntity, {
             results: [entityRow],
@@ -680,6 +819,7 @@ export class RelationLoader {
     relations: readonly string[],
     existingSession?: TransactionSessionManager,
     withDeleted?: boolean,
+    tree?: RelationTree,
   ): Promise<void> {
     const oneToOneMeta = this.requestedOneToOne(entity, relations);
     if (oneToOneMeta.length === 0) return;
@@ -756,7 +896,9 @@ export class RelationLoader {
           ];
 
           const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
-          if (deletedAtColumn && !withDeleted) {
+          const relationWithDeleted =
+            RelationLoader.optionsOf(tree, rel.propertyKey)?.withDeleted ?? withDeleted;
+          if (deletedAtColumn && !relationWithDeleted) {
             whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
           }
 
@@ -870,10 +1012,10 @@ export class RelationLoader {
       .resolveOneToOneMetadata(entity)
       .filter((rel) => !!rel.joinColumn && names.includes(rel.propertyKey));
 
-    await this.loadToOneRelations(entity, instances, manyToOne, owningOneToOne, existingSession, withDeleted);
-    await this.loadOneToManyRelations(entity, instances, names, existingSession, withDeleted);
-    await this.loadManyToManyRelations(entity, instances, names, existingSession, withDeleted);
-    await this.loadOneToOneRelations(entity, instances, names, existingSession, withDeleted);
+    await this.loadToOneRelations(entity, instances, manyToOne, owningOneToOne, existingSession, withDeleted, tree);
+    await this.loadOneToManyRelations(entity, instances, names, existingSession, withDeleted, tree);
+    await this.loadManyToManyRelations(entity, instances, names, existingSession, withDeleted, tree);
+    await this.loadOneToOneRelations(entity, instances, names, existingSession, withDeleted, tree);
     await this.loadNestedRelations(entity, instances, tree, existingSession, withDeleted);
   }
 

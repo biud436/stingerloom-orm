@@ -1084,6 +1084,48 @@ Available relations: [post (ManyToOne), author (ManyToOne)]. Did you mean "autho
 
 > **Note** `eager: true` applies to the entity a read queries. The entities a nested level reaches load only the relations you name for them, so a deep tree never fans out on its own.
 
+### Filtering, Ordering and Limiting a Relation
+
+In the object form, a collection relation (`@OneToMany`, `@ManyToMany`) takes the same `where` and `orderBy` as the read itself, plus `take` / `skip` counted **per parent**:
+
+```typescript
+// Each post with its three highest-scored approved comments, each with its author
+const posts = await em.find(Post, {
+  relations: {
+    comments: {
+      where: { approved: true },
+      orderBy: { score: "DESC" },
+      take: 3,
+      relations: { author: true },
+    },
+  },
+});
+```
+
+| Option | Applies to | Effect |
+|--------|-----------|--------|
+| `where` | collections | Loads only the matching related rows. Every operator of the read's `where` works, including `OR` arrays. It filters the relation, not the parents — a post without approved comments is still returned, with `comments: []`. |
+| `orderBy` | collections | Orders each parent's related rows. |
+| `take` / `skip` | collections | Pages each parent's related rows in `orderBy` order (the related primary key when `orderBy` is not given). `take: 0` assigns empty collections without a query. |
+| `withDeleted` | every relation | Overrides the read's `withDeleted` for this relation only — `true` includes its soft-deleted rows, `false` hides them. Relations nested under it follow their own setting, or the read's. |
+
+Per-parent paging is one statement, not one per parent: the batched read ranks each parent's rows with a window function and keeps the requested range.
+
+```sql
+-- comments: { orderBy: { score: "DESC" }, take: 3 } on 50 posts
+SELECT * FROM (
+  SELECT ..., "post_id" AS "__stg_o2m_fk",
+         ROW_NUMBER() OVER (PARTITION BY "post_id" ORDER BY "score" DESC, "id" ASC) AS "__stg_rn"
+  FROM "comment" WHERE "post_id" IN (1, 2, ..., 50) AND "deleted_at" IS NULL
+) AS "__stg_paged"
+WHERE "__stg_paged"."__stg_rn" > 0 AND "__stg_paged"."__stg_rn" <= 3
+ORDER BY "__stg_paged"."__stg_o2m_fk", "__stg_paged"."__stg_rn";
+```
+
+Window functions need MySQL 8.0+, MariaDB 10.2+ or SQLite 3.25+ (every supported PostgreSQL has them); on an older server `take` / `skip` throw `OrmError` with `UNSUPPORTED_OPERATION` instead of loading every row. `where` and `orderBy` work everywhere.
+
+The options are checked before any statement runs: a `where` / `orderBy` key that is not a column of the related entity throws `InvalidQueryError`, and `where`, `orderBy`, `take` or `skip` on a single-valued relation (`@ManyToOne`, `@OneToOne`) is rejected — filter the read itself for those.
+
 ## Next Steps
 
 Now that you've set up relationships between entities, it's time to learn various ways to manipulate data.

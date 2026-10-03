@@ -103,7 +103,7 @@ describe("parseRelationsOption", () => {
     const error = captureError(() => parse({ comments: { relations: { author: { wher: {} } } } }));
     expect(error).toBeInstanceOf(InvalidQueryError);
     expect(error.message).toContain('Unknown option "wher" for relation "comments.author"');
-    expect(error.suggestion).toContain("relations");
+    expect(error.suggestion).toContain("relations, where, orderBy, take, skip, withDeleted");
   });
 
   it("rejects a relation value that is neither boolean nor an options object", () => {
@@ -119,6 +119,84 @@ describe("parseRelationsOption", () => {
     expect(captureError(() => parse({ author: { relations: 5 } })).message).toContain(
       'The "relations" of "author" must be an array',
     );
+  });
+});
+
+describe("relation query options", () => {
+  const optionsOf = (relations: unknown, ...path: string[]) => {
+    let tree: RelationTree | undefined = parse(relations);
+    let node;
+    for (const name of path) {
+      node = tree!.nodes.get(name);
+      tree = node?.children;
+    }
+    return node?.options;
+  };
+
+  it("keeps where, orderBy, take, skip and withDeleted on the node they belong to", () => {
+    const relations = {
+      comments: {
+        where: { approved: true },
+        orderBy: { createdAt: "DESC" },
+        take: 3,
+        skip: 1,
+        withDeleted: true,
+        relations: { author: { withDeleted: false } },
+      },
+    };
+    expect(optionsOf(relations, "comments")).toEqual({
+      where: { approved: true },
+      orderBy: { createdAt: "DESC" },
+      take: 3,
+      skip: 1,
+      withDeleted: true,
+    });
+    expect(optionsOf(relations, "comments", "author")).toEqual({ withDeleted: false });
+  });
+
+  it("leaves a node without options undefined", () => {
+    expect(optionsOf({ comments: { relations: ["author"] } }, "comments")).toBeUndefined();
+    expect(optionsOf(["comments"], "comments")).toBeUndefined();
+  });
+
+  it("accepts an array of where clauses (OR between them)", () => {
+    const where = [{ approved: true }, { pinned: true }];
+    expect(optionsOf({ comments: { where } }, "comments")?.where).toBe(where);
+  });
+
+  it.each([
+    [{ where: "approved" }, '"where" of relation "comments"'],
+    [{ where: [] }, '"where" of relation "comments"'],
+    [{ orderBy: ["createdAt"] }, '"orderBy" of relation "comments"'],
+    [{ orderBy: { createdAt: "desc" } }, '"orderBy.createdAt" of relation "comments" in "relations" is string "desc"'],
+    [{ take: -1 }, '"take" of relation "comments" in "relations" must be a non-negative integer'],
+    [{ take: 1.5 }, '"take" of relation "comments"'],
+    [{ skip: "2" }, '"skip" of relation "comments"'],
+    [{ withDeleted: "yes" }, '"withDeleted" of relation "comments" in "relations" must be a boolean'],
+  ])("rejects a malformed option %j", (spec, message) => {
+    const error = captureError(() => parse({ comments: spec }));
+    expect(error).toBeInstanceOf(InvalidQueryError);
+    expect(error.message).toContain(message);
+  });
+
+  it("types the options against the related entity", () => {
+    class Comment {
+      id!: number;
+      body!: string;
+      approved!: boolean;
+    }
+    class Post {
+      id!: number;
+      comments!: Comment[];
+    }
+    const ok: RelationsOption<Post> = {
+      comments: { where: { approved: true, body: { contains: "x" } }, orderBy: { id: "DESC" }, take: 2 },
+    };
+    // @ts-expect-error — "aproved" is not a property of Comment
+    const typo: RelationsOption<Post> = { comments: { where: { aproved: true } } };
+    // @ts-expect-error — directions are "ASC" | "DESC"
+    const direction: RelationsOption<Post> = { comments: { orderBy: { id: "desc" } } };
+    expect([ok, typo, direction]).toHaveLength(3);
   });
 });
 

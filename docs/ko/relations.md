@@ -1084,6 +1084,48 @@ Available relations: [post (ManyToOne), author (ManyToOne)]. Did you mean "autho
 
 > **Note** `eager: true`는 조회 대상 엔티티에만 적용됩니다. 중첩 단계에서 만나는 엔티티는 직접 이름을 준 관계만 로드하므로, 트리가 깊어져도 저절로 쿼리가 불어나지 않아요.
 
+### 관계 필터링, 정렬, 개수 제한
+
+객체 형식에서 컬렉션 관계(`@OneToMany`, `@ManyToMany`)는 조회 자체와 같은 `where`, `orderBy`를 받고, `take` / `skip`은 **부모마다** 셉니다.
+
+```typescript
+// 글마다 승인된 댓글 중 점수가 높은 3개를, 댓글마다 작성자와 함께
+const posts = await em.find(Post, {
+  relations: {
+    comments: {
+      where: { approved: true },
+      orderBy: { score: "DESC" },
+      take: 3,
+      relations: { author: true },
+    },
+  },
+});
+```
+
+| 옵션 | 적용 대상 | 동작 |
+|------|----------|------|
+| `where` | 컬렉션 | 조건에 맞는 관련 행만 로드합니다. `OR` 배열을 포함해 조회 `where`의 연산자를 모두 쓸 수 있어요. 부모가 아니라 관계를 거르므로, 승인된 댓글이 없는 글도 `comments: []`로 결과에 남습니다. |
+| `orderBy` | 컬렉션 | 부모별 관련 행의 순서를 정합니다. |
+| `take` / `skip` | 컬렉션 | 부모별 관련 행을 `orderBy` 순서로(없으면 관련 엔티티의 기본 키 순서로) 잘라냅니다. `take: 0`이면 쿼리 없이 빈 컬렉션을 넣어요. |
+| `withDeleted` | 모든 관계 | 이 관계에 한해 조회의 `withDeleted`를 덮어씁니다. `true`면 soft-delete된 행을 포함하고 `false`면 숨깁니다. 그 아래 중첩된 관계는 자기 설정을 따르고, 없으면 조회의 설정을 따라요. |
+
+부모별 페이징도 부모마다 쿼리를 날리지 않고 한 문장으로 처리합니다. 배치 조회에서 윈도 함수로 부모별 순위를 매긴 뒤 요청한 범위만 남겨요.
+
+```sql
+-- 글 50개에 comments: { orderBy: { score: "DESC" }, take: 3 }
+SELECT * FROM (
+  SELECT ..., "post_id" AS "__stg_o2m_fk",
+         ROW_NUMBER() OVER (PARTITION BY "post_id" ORDER BY "score" DESC, "id" ASC) AS "__stg_rn"
+  FROM "comment" WHERE "post_id" IN (1, 2, ..., 50) AND "deleted_at" IS NULL
+) AS "__stg_paged"
+WHERE "__stg_paged"."__stg_rn" > 0 AND "__stg_paged"."__stg_rn" <= 3
+ORDER BY "__stg_paged"."__stg_o2m_fk", "__stg_paged"."__stg_rn";
+```
+
+윈도 함수는 MySQL 8.0+, MariaDB 10.2+, SQLite 3.25+에서 쓸 수 있습니다(지원하는 PostgreSQL은 모두 가능). 더 오래된 서버에서는 모든 행을 읽어 오는 대신 `take` / `skip`이 `UNSUPPORTED_OPERATION` 코드의 `OrmError`를 던져요. `where`와 `orderBy`는 어디서나 동작합니다.
+
+옵션은 쿼리를 실행하기 전에 검사합니다. 관련 엔티티의 컬럼이 아닌 `where` / `orderBy` 키는 `InvalidQueryError`를 던지고, 단일 값 관계(`@ManyToOne`, `@OneToOne`)에 `where`, `orderBy`, `take`, `skip`을 주면 거부합니다. 그런 조건은 조회 자체에 거세요.
+
 ## 다음 단계
 
 엔티티 간의 관계를 설정했으니, 이제 데이터를 조작하는 다양한 방법을 배울 차례예요.
