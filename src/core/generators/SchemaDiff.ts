@@ -7,12 +7,13 @@ import {
   EntityMetadata,
   getEntitySchema,
 } from "../../decorators/Entity";
-import {
-  COMPUTED_COLUMN_TOKEN,
-  ComputedColumnMetadata,
-} from "../../decorators/ComputedColumn";
+import { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { SchemaDialect } from "./SchemaGenerator";
-import { collectTableColumns, tableOwnerEntity } from "./entityColumns";
+import {
+  collectTableColumns,
+  collectTableComputedColumns,
+  tableOwnerEntity,
+} from "./entityColumns";
 import {
   columnNameSimilarity,
   columnNamesLookRenamed,
@@ -524,11 +525,7 @@ export class SchemaDiff {
   private getComputedColumns<T>(
     entity: ClazzType<T>,
   ): ComputedColumnMetadata[] {
-    return (
-      (Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity.prototype) as
-        | ComputedColumnMetadata[]
-        | undefined) ?? []
-    );
+    return collectTableComputedColumns(entity);
   }
 
   private async getDbColumns(

@@ -48,9 +48,12 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
 import { RelationMetadataResolver } from "../RelationMetadataResolver";
 import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "../PropertyColumnMap";
-import { collectTableColumns, EntityColumnDef } from "./entityColumns";
+import {
+  collectTableColumns,
+  collectTableComputedColumns,
+  EntityColumnDef,
+} from "./entityColumns";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
-import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import {
   ColumnDefinitionBuilder,
   createColumnDefinitionBuilder,
@@ -136,9 +139,7 @@ export class SchemaGenerator {
 
     // Computed/generated columns — rendered by the shared builder so this
     // migration-time DDL can never diverge from the runtime synchronize path.
-    const computedMeta: ComputedColumnMetadata[] =
-      Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity.prototype) ?? [];
-    for (const cc of computedMeta) {
+    for (const cc of collectTableComputedColumns(entity)) {
       columnDefs.push(
         this.columnDefBuilder.buildComputedColumnDef(cc, {
           columnName: cc.name,

@@ -77,6 +77,7 @@ import {
 } from "../JoinedChildSource";
 import { createDialectExpression } from "../../dialects/DialectExpression";
 import { singleTableRowShape, type RowShape } from "../SingleTableRows";
+import { collectTableComputedColumns } from "../generators/entityColumns";
 
 /**
  * Per-entity read-path column plan: the physical SELECT list (plain and
@@ -790,16 +791,12 @@ export class ReadExecutor {
     const select = op.findOption.select;
 
     // TPT child: every column of both tables, each read from the table that
-    // holds it — the child's key, own columns and own join columns, then the
-    // root's columns and the join columns of the relations it declares.
+    // holds it — the child's key, own columns, own join columns and own
+    // generated columns, then the root's (see joinedRootColumns).
     if (op.isTPTChild && op.tptQualifyColumn) {
       const root = this.inheritanceResolver.getRoot(entity)!;
       const rootColumns = joinedRootColumns(this.resolver, root);
-      const childColumns = new Set<string>();
-      for (const col of metadata.columns) childColumns.add(col.name);
-      for (const rel of [...plan.manyToOne, ...plan.oneToOne]) {
-        if (rel.joinColumn) childColumns.add(rel.joinColumn);
-      }
+      const childColumns = new Set(plan.allColNames);
       for (const name of childColumns) {
         if (!rootColumns.has(name)) selectMap.push(op.tptQualifyColumn(name));
       }
@@ -867,6 +864,9 @@ export class ReadExecutor {
       );
       for (const name of joinedChildJoinColumns(this.resolver, ChildEntity, root)) {
         childColumns.add(name);
+      }
+      for (const computed of collectTableComputedColumns(ChildEntity)) {
+        childColumns.add(computed.name);
       }
       for (const name of childColumns) {
         columns.push(

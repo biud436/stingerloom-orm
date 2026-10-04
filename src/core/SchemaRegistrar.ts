@@ -37,10 +37,7 @@ import {
   ManyToManyMetadata,
   COLUMN_TOKEN,
 } from "../decorators";
-import {
-  COMPUTED_COLUMN_TOKEN,
-  ComputedColumnMetadata,
-} from "../decorators/ComputedColumn";
+import { collectTableComputedColumns } from "./generators/entityColumns";
 import {
   RELATION_COLUMN_TOKEN,
   RelationColumnMetadata,
@@ -596,8 +593,10 @@ export class SchemaRegistrar {
               }
               // @ComputedColumn metadata lives outside metadata.columns —
               // pass it explicitly so the generated columns are part of the
-              // CREATE TABLE statement.
-              const computedColumns = this.getComputedColumns(TargetEntity);
+              // CREATE TABLE statement. An inheritance table takes the
+              // generated columns its own columns hold: a SINGLE_TABLE root
+              // its children's too, a JOINED child only its own.
+              const computedColumns = collectTableComputedColumns(TargetEntity);
               await driver?.createTable(
                 tableName,
                 createColumns,
@@ -1676,21 +1675,6 @@ export class SchemaRegistrar {
         }
       }
     }
-  }
-
-  /**
-   * Reads `@ComputedColumn` metadata for an entity. Same source the
-   * migration-time SchemaGenerator uses (the decorator and the EntitySchema
-   * registrar both write to COMPUTED_COLUMN_TOKEN on the prototype).
-   */
-  private getComputedColumns(
-    entity: ClazzType<any>,
-  ): ComputedColumnMetadata[] {
-    return (
-      (Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity.prototype) as
-        | ComputedColumnMetadata[]
-        | undefined) ?? []
-    );
   }
 
   // ── Pinned schemas (`@Entity({ schema })`) ─────────────────────────────

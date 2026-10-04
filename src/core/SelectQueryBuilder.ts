@@ -37,6 +37,10 @@ import { COLUMN_TOKEN } from "../decorators/Column";
 import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "./PropertyColumnMap";
 import { InheritanceResolver } from "./InheritanceResolver";
 import {
+  collectTableComputedColumns,
+  declaredComputedColumns,
+} from "./generators/entityColumns";
+import {
   buildTpcUnionSource,
   hierarchyRowColumns,
   pruneTpcSiblingColumns,
@@ -561,7 +565,10 @@ export class SelectQueryBuilder<T, TResult = T> {
       const rootColNames = new Set(
         rootMeta.columns.map((c: any) => c.name),
       );
-      const parentOnlyColumns = new Set<string>();
+      // The root's generated columns live on the root's table, next to the
+      // columns their expressions read; the child's own on the child's.
+      const rootComputed = declaredComputedColumns(root).map((c) => c.name);
+      const parentOnlyColumns = new Set<string>(rootComputed);
       for (const colName of rootColNames) {
         if (!pkColNames.has(colName)) {
           parentOnlyColumns.add(colName);
@@ -578,10 +585,16 @@ export class SelectQueryBuilder<T, TResult = T> {
           selectCols.push(`${this.em.wrap(this.alias)}.${this.em.wrap(col.name)}`);
         }
       }
+      for (const computed of collectTableComputedColumns(this.entity)) {
+        selectCols.push(`${this.em.wrap(this.alias)}.${this.em.wrap(computed.name)}`);
+      }
       for (const col of rootMeta.columns) {
         if (!pkColNames.has(col.name)) {
           selectCols.push(`${this.em.wrap(parentAlias)}.${this.em.wrap(col.name)}`);
         }
+      }
+      for (const name of rootComputed) {
+        selectCols.push(`${this.em.wrap(parentAlias)}.${this.em.wrap(name)}`);
       }
       this.tptSelectColumns = selectCols;
 
@@ -625,11 +638,15 @@ export class SelectQueryBuilder<T, TResult = T> {
           condition: joinCond,
         });
 
-        // Add child own columns to SELECT with prefix aliases
-        const ownCols = ir.getOwnColumns(ChildEntity);
-        for (const col of ownCols) {
+        // Add child own columns, generated ones included, to SELECT with
+        // prefix aliases
+        const ownCols = [
+          ...ir.getOwnColumns(ChildEntity).map((col) => col.name as string),
+          ...collectTableComputedColumns(ChildEntity).map((col) => col.name),
+        ];
+        for (const name of ownCols) {
           extraSelectCols.push(
-            `${this.em.wrap(childTableName)}.${this.em.wrap(col.name)} AS ${this.em.wrap(`${childTableName}_${col.name}`)}`,
+            `${this.em.wrap(childTableName)}.${this.em.wrap(name)} AS ${this.em.wrap(`${childTableName}_${name}`)}`,
           );
         }
 

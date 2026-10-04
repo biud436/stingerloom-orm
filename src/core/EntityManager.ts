@@ -52,7 +52,7 @@ import {
 } from "./entity-manager/EntityArgumentGuard";
 import { DeleteWithoutConditionsError } from "../errors/DeleteWithoutConditionsError";
 import { EntityNotFoundError } from "../errors/EntityNotFoundError";
-import { COMPUTED_COLUMN_TOKEN, ComputedColumnMetadata } from "../decorators/ComputedColumn";
+import { ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import {
   EntitySubscriber,
   InsertEvent,
@@ -98,6 +98,10 @@ import { PluginContext } from "./plugin/PluginContext";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { NamingStrategy } from "./generators/NamingStrategy";
+import {
+  collectTableComputedColumns,
+  declaredComputedColumns,
+} from "./generators/entityColumns";
 import { createAliasRef, createEntitySqlRef, AliasRef, SqlRef } from "./SqlRef";
 import { InheritanceResolver } from "./InheritanceResolver";
 import type { WriteBuffer } from "./plugin/buffer/WriteBuffer";
@@ -2118,8 +2122,9 @@ export class EntityManager implements BaseEntityManager {
       }
     }
 
-    const computed: ComputedColumnMetadata[] =
-      Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity?.prototype) ?? [];
+    const computed: ComputedColumnMetadata[] = entity
+      ? declaredComputedColumns(entity)
+      : [];
     for (const col of computed) {
       valid.add(col.propertyKey);
       valid.add(col.name);
@@ -2129,6 +2134,12 @@ export class EntityManager implements BaseEntityManager {
       const root = this.inheritanceResolver.getRoot(entity) ?? entity;
       for (const col of this.inheritanceResolver.getAllHierarchyColumns(root)) {
         valid.add(this.propKey(col));
+      }
+      for (const cls of this.inheritanceResolver.getConcreteEntities(root)) {
+        for (const col of declaredComputedColumns(cls)) {
+          valid.add(col.propertyKey);
+          valid.add(col.name);
+        }
       }
       const disc = this.inheritanceResolver.getDiscriminatorColumn(root);
       if (disc) valid.add(disc.name);
@@ -2455,9 +2466,18 @@ export class EntityManager implements BaseEntityManager {
       : null;
   }
 
+  /**
+   * The generated columns the rows read as `entity` carry: the ones it
+   * declares, inherited ones included — and for a SINGLE_TABLE root, whose
+   * polymorphic reads hand back every subtype, its children's as well.
+   */
   private getComputedColumnNames<T>(entity: ClazzType<T>): Set<string> {
-    const meta: ComputedColumnMetadata[] =
-      Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity?.prototype) ?? [];
+    const meta =
+      entity &&
+      this.inheritanceResolver.getStrategy(entity) === "SINGLE_TABLE" &&
+      !this.inheritanceResolver.isChildEntity(entity)
+        ? collectTableComputedColumns(entity)
+        : declaredComputedColumns(entity);
     return new Set(meta.map((m) => m.name));
   }
 
