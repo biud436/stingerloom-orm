@@ -512,5 +512,12 @@ describe("IdentityMapManager", () => {
         mgr.tryBuildCacheKey(User, { where: { id: 1 }, withoutTenantScope: true } as any),
       ).toBeNull();
     });
+
+    it("bypasses the cache for a lookup that counts relations", () => {
+      expect(
+        mgr.tryBuildCacheKey(User, { where: { id: 1 }, withCount: { postCount: "posts" } } as any),
+      ).toBeNull();
+      expect(mgr.tryBuildCacheKey(User, { where: { id: 1 }, withCount: {} } as any)).not.toBeNull();
+    });
   });
 });

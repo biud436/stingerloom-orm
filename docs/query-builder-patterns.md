@@ -148,6 +148,8 @@ const users = await em
 
 The count alias is added to the SELECT list, not the entity — so `orderBy({ posts_count: "DESC" })` would qualify it as `"u"."posts_count"` (a column that doesn't exist) and the database would reject the query. Reach for `appendSql(sql\`ORDER BY "alias" ...\`)` instead.
 
+To put the count on the entities themselves, read them with `find()` and its `withCount` option — see [Counting Related Rows](./relations.md#counting-related-rows-withcount).
+
 ### `loadRelation()` — Quick Relation Loading
 
 A concise shorthand for `leftJoinRelationAndSelect()`:

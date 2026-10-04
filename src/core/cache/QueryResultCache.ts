@@ -6,6 +6,7 @@ import { MetadataContext } from "../../metadata/MetadataContext";
 import { transactionStorage } from "../../decorators/Transactional";
 import type { EntityManagerInternals } from "../EntityManagerInternals";
 import { relationTreeKey, type RelationTree } from "../RelationTree";
+import type { RelationCountSpec } from "../RelationCount";
 import { isRelationFilter } from "../WhereResolver";
 import { relationFilterTargetOf } from "../RelationWhereFilter";
 
@@ -255,13 +256,15 @@ export class QueryResultCache {
       relations?: RelationTree;
       /** The read's where: relation filters in it read tables of their own. */
       where?: unknown;
+      /** The read's `withCount`: each count reads the counted relation's tables. */
+      counts?: readonly RelationCountSpec[];
     },
   ): QueryCachePolicy | undefined {
     const normalized = this.normalizeOption(option.cache);
     if (!normalized) return undefined;
     if (transactionStorage.getStore()) return undefined;
     const tags = new Set<string>(this.collectReadTags(entity, option.relations));
-    for (const tag of this.collectFilterTags(entity, option.where, option.relations)) {
+    for (const tag of this.collectFilterTags(entity, option.where, option.relations, option.counts)) {
       tags.add(tag);
     }
     const list = [...tags];
@@ -472,12 +475,36 @@ export class QueryResultCache {
     entity: ClazzType<any>,
     where: unknown,
     relations: RelationTree | undefined,
+    counts?: readonly RelationCountSpec[],
   ): string[] {
     const tables = new Set<string>();
     const visited = new Set<ClazzType<any>>([entity]);
     this.visitFilterTargets(entity, where, tables, visited);
+    this.visitCountTargets(entity, counts, tables, visited);
     this.visitTreeFilters(entity, relations, tables, visited);
     return [...tables].map((t) => TABLE_TAG_PREFIX + t);
+  }
+
+  /**
+   * The tables a `withCount` reads: each counted relation's target (and a
+   * many-to-many join table), plus whatever the relation filters in its
+   * where read.
+   */
+  private visitCountTargets(
+    entity: ClazzType<any>,
+    counts: readonly RelationCountSpec[] | undefined,
+    tables: Set<string>,
+    visited: Set<ClazzType<any>>,
+  ): void {
+    if (!counts) return;
+    const resolver = this.ctx.getResolver();
+    for (const count of counts) {
+      const target = safeCall(() => relationFilterTargetOf(resolver, entity, count.relation));
+      if (!target) continue;
+      if (target.joinTableName) tables.add(target.joinTableName);
+      this.visitReadClosure(target.entity, undefined, tables, visited);
+      this.visitFilterTargets(target.entity, count.where, tables, visited);
+    }
   }
 
   private visitFilterTargets(
@@ -529,6 +556,7 @@ export class QueryResultCache {
       if (node.options?.where !== undefined) {
         this.visitFilterTargets(target, node.options.where, tables, visited);
       }
+      this.visitCountTargets(target, node.options?.withCount, tables, visited);
       this.visitTreeFilters(target, node.children, tables, visited);
     }
   }

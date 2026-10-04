@@ -54,8 +54,10 @@ import { RelationLoader } from "../RelationLoader";
 import {
   RelationWhereFilterBuilder,
   relationAwareScope,
+  validateRelationCountIdentifiers,
   validateRelationOptionIdentifiers,
 } from "../RelationWhereFilter";
+import { resolveRelationCounts, type RelationCountSpec } from "../RelationCount";
 import { AggregateQueryHandler } from "../AggregateQueryHandler";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -155,6 +157,8 @@ interface FindOperation<T> {
   addedKeyColumns: string[];
   /** The read's `relations`, normalized; undefined when it named none. */
   relationTree: RelationTree | undefined;
+  /** The read's `withCount`, normalized; undefined when it counts nothing. */
+  relationCounts: RelationCountSpec[] | undefined;
 }
 
 /**
@@ -289,6 +293,20 @@ export class ReadExecutor {
     tree: RelationTree | undefined,
   ): void {
     validateRelationOptionIdentifiers(this.ctx, this.resolver, entity, tree);
+  }
+
+  /**
+   * Normalizes and validates a read's `withCount` — the relations, the
+   * properties the counts are written to and the columns each count's
+   * where names — before any statement runs.
+   */
+  private resolveRelationCounts(
+    entity: ClazzType<any>,
+    withCount: unknown,
+  ): RelationCountSpec[] | undefined {
+    const counts = resolveRelationCounts(entity, withCount, this.resolver);
+    validateRelationCountIdentifiers(this.ctx, this.resolver, entity, counts);
+    return counts;
   }
 
   /**
@@ -556,6 +574,7 @@ export class ReadExecutor {
     entity: ClazzType<T>,
     findOption: FindOption<T>,
     relationTree?: RelationTree,
+    relationCounts?: RelationCountSpec[],
   ): FindOperation<T> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
@@ -599,6 +618,7 @@ export class ReadExecutor {
       tptQualifyColumn: undefined,
       addedKeyColumns: [],
       relationTree,
+      relationCounts,
     };
     op.tptQualifyColumn = this.createTptColumnQualifier(op);
 
@@ -655,8 +675,8 @@ export class ReadExecutor {
     selectColumns: readonly string[] | undefined,
   ): string[] {
     const { entity, findOption, propToCol } = op;
-    const relations = requestedRelationNames(findOption.relations);
-    if (!relations || relations.length === 0) return [];
+    const relations = this.keyMatchedRelationNames(op);
+    if (relations.length === 0) return [];
 
     const keyColumns = this.relationLoader.parentKeyColumns(entity, relations);
     if (keyColumns.length === 0) return [];
@@ -691,6 +711,19 @@ export class ReadExecutor {
   }
 
   /**
+   * The relations a read loads or counts by each parent's primary key
+   * candidates: the requested `relations` and the relations `withCount`
+   * counts.
+   */
+  private keyMatchedRelationNames<T>(op: FindOperation<T>): string[] {
+    const names = [...(requestedRelationNames(op.findOption.relations) ?? [])];
+    for (const count of op.relationCounts ?? []) {
+      if (!names.includes(count.relation)) names.push(count.relation);
+    }
+    return names;
+  }
+
+  /**
    * Rejects a `distinct` / `groupBy` read that asks for relations matched by
    * a primary key the collapsed result cannot stand for.
    *
@@ -715,7 +748,7 @@ export class ReadExecutor {
     const keyList = `primary key column${keyColumns.length > 1 ? "s" : ""} ${keys}`;
     const relationNames = this.relationLoader.relationsMatchedByParentKey(
       op.entity,
-      requestedRelationNames(op.findOption.relations) ?? [],
+      this.keyMatchedRelationNames(op),
     );
     const relations = quote(relationNames);
     const are = relationNames.length > 1 ? "are" : "is";
@@ -1646,6 +1679,7 @@ export class ReadExecutor {
     const relationTree = resolveRelationTree(entity, findOption.relations, this.resolver);
     this.validateRelationOptionIdentifiers(entity, relationTree);
     if (relationTree) findOption = { ...findOption, relations: relationTree.names };
+    const relationCounts = this.resolveRelationCounts(entity, findOption.withCount);
 
     const readNode = this.ctx.getReadNode(findOption.useMaster);
     const effectiveTimeout = this.resolveTimeout(findOption);
@@ -1660,6 +1694,7 @@ export class ReadExecutor {
             cache: findOption.cache,
             relations: relationTree,
             where: findOption.where,
+            counts: relationCounts,
           })
         : undefined;
 
@@ -1672,7 +1707,7 @@ export class ReadExecutor {
         : rawSession;
       const resultTransformer = ResultTransformerFactory.create();
 
-      const op = this.prepareFindOperation(entity, findOption, relationTree);
+      const op = this.prepareFindOperation(entity, findOption, relationTree, relationCounts);
 
       const qb = RawQueryBuilderFactory.create();
 
@@ -1704,6 +1739,15 @@ export class ReadExecutor {
           session,
           findOption.withDeleted,
         );
+        if (relationCounts) {
+          await this.relationLoader.loadRelationCounts(
+            entity,
+            entityResult as T | T[],
+            relationCounts,
+            session,
+            findOption.withDeleted,
+          );
+        }
       }
       this.injectLazyRelationProxies(op, entityResult);
       await this.emitAfterLoad(op, entityResult);
@@ -1726,6 +1770,7 @@ export class ReadExecutor {
     const relationTree = resolveRelationTree(entity, option.relations, this.resolver);
     this.validateRelationOptionIdentifiers(entity, relationTree);
     if (relationTree) option = { ...option, relations: relationTree.names };
+    const relationCounts = this.resolveRelationCounts(entity, option.withCount);
 
     const where: any = { ...(option.where ?? {}) };
     const readNode = this.ctx.getReadNode(option.useMaster);
@@ -1735,6 +1780,7 @@ export class ReadExecutor {
           cache: option.cache,
           relations: relationTree,
           where: option.where,
+          counts: relationCounts,
         })
       : undefined;
 
@@ -1781,7 +1827,16 @@ export class ReadExecutor {
 
       const queryResult = (await session.query<T>(qb.build())) as QueryResult;
 
-      return this.hydrateCursorPage(entity, metadata, option, keyset, queryResult, session, relationTree);
+      return this.hydrateCursorPage(
+        entity,
+        metadata,
+        option,
+        keyset,
+        queryResult,
+        session,
+        relationTree,
+        relationCounts,
+      );
     }, { readNodeOverride: readNode, timeout: this.resolveTimeout(option) });
   }
 
@@ -1900,6 +1955,7 @@ export class ReadExecutor {
     queryResult: QueryResult,
     session: TransactionSessionManager,
     relationTree: RelationTree | undefined,
+    relationCounts: RelationCountSpec[] | undefined,
   ): Promise<CursorPaginationResult<T>> {
     const { results } = queryResult;
     if (!results || results.length === 0) {
@@ -1928,6 +1984,15 @@ export class ReadExecutor {
       session,
       option.withDeleted,
     );
+    if (relationCounts) {
+      await this.relationLoader.loadRelationCounts(
+        entity,
+        entities,
+        relationCounts,
+        session,
+        option.withDeleted,
+      );
+    }
 
     // Notify subscribers of the afterLoad event
     for (const loadedEntity of entities) {
@@ -2133,6 +2198,7 @@ export class ReadExecutor {
             cache: findOption.cache,
             relations: resolveRelationTree(entity, findOption.relations, this.resolver),
             where: findOption.where,
+            counts: resolveRelationCounts(entity, findOption.withCount, this.resolver),
           })
         : undefined;
     return this.ctx.executeReadOnly(async (rawSession) => {
@@ -2180,6 +2246,7 @@ export class ReadExecutor {
       orderBy: option.orderBy,
       select: option.select,
       relations: option.relations,
+      withCount: option.withCount,
       withDeleted: option.withDeleted,
       timeout: option.timeout,
       useMaster: option.useMaster,

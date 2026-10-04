@@ -11,10 +11,12 @@ import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundErr
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { resolveRelationTree } from "./RelationTree";
+import { resolveRelationCounts } from "./RelationCount";
 import { validateReadIdentifiers } from "./ColumnNameValidator";
 import {
   RelationWhereFilterBuilder,
   relationAwareScope,
+  validateRelationCountIdentifiers,
   validateRelationOptionIdentifiers,
 } from "./RelationWhereFilter";
 import { EntityManagerInternals } from "./EntityManagerInternals";
@@ -52,10 +54,16 @@ export class ExplainQueryHandler {
     // Same guard as find(): explain() mirrors the read path, so an unresolvable
     // relation name — or an unknown column in a relation's own where /
     // orderBy — must fail here too instead of silently planning fewer joins.
-    // Only the top level shapes the statement; nested levels and the
-    // per-relation options are follow-up reads.
+    // Only the top level shapes the statement; nested levels, the
+    // per-relation options and the `withCount` counts are follow-up reads.
     const relationTree = resolveRelationTree(entity, findOption.relations, this.resolver);
     validateRelationOptionIdentifiers(this.ctx, this.resolver, entity, relationTree);
+    validateRelationCountIdentifiers(
+      this.ctx,
+      this.resolver,
+      entity,
+      resolveRelationCounts(entity, findOption.withCount, this.resolver),
+    );
     const relationNames = relationTree?.names ?? [];
 
     const qb = RawQueryBuilderFactory.create();

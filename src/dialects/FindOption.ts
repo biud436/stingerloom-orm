@@ -65,6 +65,73 @@ export type RelationPropertyKeys<T> = {
 }[keyof T & string];
 
 /**
+ * Property names of `T` that hold a collection of related entities — the
+ * `@OneToMany` and `@ManyToMany` properties.
+ */
+export type CollectionRelationKeys<T> = {
+  [K in RelationPropertyKeys<T>]-?: NonNullable<Awaited<T[K]>> extends ReadonlyArray<unknown>
+    ? K
+    : never;
+}[RelationPropertyKeys<T>];
+
+/**
+ * Property names of `T` typed as a number — the properties `withCount` can
+ * write a count to.
+ */
+export type CountPropertyKeys<T> = {
+  [K in keyof T & string]-?: [NonNullable<T[K]>] extends [never]
+    ? never
+    : [NonNullable<T[K]>] extends [number]
+      ? K
+      : never;
+}[keyof T & string];
+
+/**
+ * One relation count of `withCount` that counts only some of the related
+ * rows.
+ *
+ * @template T - The entity the count is attached to.
+ * @template K - The collection relation counted.
+ */
+export interface RelationCountOptions<T, K extends CollectionRelationKeys<T>> {
+  /** The `@OneToMany` / `@ManyToMany` relation whose rows are counted. */
+  relation: K;
+  /** Counts only the related rows that match — the related entity's where. */
+  where?: WhereClause<RelationTarget<T[K]>> | WhereClause<RelationTarget<T[K]>>[];
+  /** Counts soft-deleted related rows too, whatever the read's `withDeleted` says. */
+  withDeleted?: boolean;
+}
+
+/**
+ * Counts written onto each entity a read returns: keyed by the property the
+ * count is written to (a `number` property the entity declares besides its
+ * columns), each value names the collection relation to count — or gives
+ * {@link RelationCountOptions} to count only some of its rows. An entity
+ * with no related rows gets 0.
+ *
+ * @example
+ * ```ts
+ * class Post {
+ *   @OneToMany(() => Comment, (c) => c.post) comments!: Comment[];
+ *   commentCount?: number;
+ *   approvedCount?: number;
+ * }
+ *
+ * em.find(Post, {
+ *   withCount: {
+ *     commentCount: "comments",
+ *     approvedCount: { relation: "comments", where: { approved: true } },
+ *   },
+ * })
+ * ```
+ */
+export type WithCountOption<T> = {
+  [P in CountPropertyKeys<T>]?:
+    | CollectionRelationKeys<T>
+    | { [K in CollectionRelationKeys<T>]: RelationCountOptions<T, K> }[CollectionRelationKeys<T>];
+};
+
+/**
  * What to load together with one relation in the object form of
  * `relations`.
  *
@@ -129,17 +196,35 @@ export interface RelationLoadOptions<R> {
    * own setting, or the read's.
    */
   withDeleted?: boolean;
+
+  /**
+   * Counts written onto each related entity the relation loads — see
+   * {@link WithCountOption}.
+   *
+   * @example
+   * ```ts
+   * // Each post's comments, each with its like count
+   * em.find(Post, {
+   *   relations: { comments: { withCount: { likeCount: "likes" } } },
+   * })
+   * ```
+   */
+  withCount?: WithCountOption<R>;
 }
 
 /**
  * What to load together with a single-valued relation (`@ManyToOne`,
  * `@OneToOne`) in the object form of `relations`: the relations nested
- * under it and its own `withDeleted`. `where`, `orderBy`, `take` and `skip`
- * page a collection and are not offered here.
+ * under it, its own `withDeleted` and counts on the related entity.
+ * `where`, `orderBy`, `take` and `skip` page a collection and are not
+ * offered here.
  *
  * @template R - The related entity.
  */
-export type SingleRelationLoadOptions<R> = Pick<RelationLoadOptions<R>, "relations" | "withDeleted">;
+export type SingleRelationLoadOptions<R> = Pick<
+  RelationLoadOptions<R>,
+  "relations" | "withDeleted" | "withCount"
+>;
 
 /**
  * The object form of `relations`: one key per relation, `true` to load it,
@@ -483,6 +568,21 @@ export type FindOption<T> = {
    * ```
    */
   relations?: RelationsOption<T>;
+
+  /**
+   * Counts the rows of collection relations and writes each count onto
+   * every entity the read returns — one batched statement per count — see
+   * {@link WithCountOption}. The rows counted are the ones loading the
+   * relation would attach (soft-deleted rows left out unless
+   * `withDeleted`). Use `relations: { x: { withCount } }` to count on
+   * related entities.
+   *
+   * @example
+   * ```ts
+   * em.find(Post, { withCount: { commentCount: "comments" } })
+   * ```
+   */
+  withCount?: WithCountOption<T>;
 
   /**
    * If true, includes soft-deleted entities (@DeletedAt) in the results.

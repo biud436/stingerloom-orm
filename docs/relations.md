@@ -1158,6 +1158,55 @@ Paging ranks each parent's rows by `orderBy`, then by every column of the relate
 
 The options are checked before any statement runs: a `where` / `orderBy` key that is not a column of the related entity throws `InvalidQueryError`, and `where`, `orderBy`, `take` or `skip` on a single-valued relation (`@ManyToOne`, `@OneToOne`) is rejected — filter the read itself for those.
 
+### Counting Related Rows (withCount)
+
+"Each post with its number of comments" should not load every comment. `withCount` writes the number of rows a collection relation (`@OneToMany`, `@ManyToMany`) holds onto each entity the read returns. Key it by the property the count goes to — a `number` property the entity declares besides its columns — and name the relation, or pass `{ relation, where, withDeleted }` to count only some of its rows:
+
+```typescript
+@Entity()
+export class Post {
+  // ...columns and relations...
+  @OneToMany(() => Comment, { mappedBy: "post" })
+  comments!: Comment[];
+
+  commentCount?: number;   // not a column — withCount writes it
+  approvedCount?: number;
+}
+
+const posts = await em.find(Post, {
+  withCount: {
+    commentCount: "comments",
+    approvedCount: { relation: "comments", where: { approved: true } },
+  },
+});
+posts[0].commentCount;   // 12 — 0 for a post without comments
+```
+
+Each count is one batched statement, whatever the number of posts:
+
+```sql
+SELECT "post_id" AS "__stg_count_key", COUNT(*) AS "__stg_count"
+FROM "comment"
+WHERE "post_id" IN (1, 2, ..., 50) AND "approved" = true AND "deleted_at" IS NULL
+GROUP BY "post_id";
+```
+
+The rows counted are the rows loading the relation would attach: the count's `where` (relation filters such as `{ likes: { some: {} } }` included), soft-deleted rows left out unless the count's or the read's `withDeleted` includes them, the related entity's tenant scope under `tenant_column`, and only the subtype of a `SINGLE_TABLE` child. A `ManyToMany` is counted through its join table.
+
+`find()`, `findOne()`, `findAndCount()`, `findWithPage()`, `findWithCursor()` and `stream()` take `withCount`. Under `relations`, it counts on the related entities, at any depth and on single-valued relations too:
+
+```typescript
+const users = await em.find(User, {
+  withCount: { postCount: "posts" },
+  relations: {
+    posts: { withCount: { commentCount: "comments" } },
+  },
+});
+users[0].posts[0].commentCount;
+```
+
+The option is checked before any statement runs. A relation that is not a collection, a property the entity already uses for a column or a relation, a `where` key that is not a column of the counted entity, and an entity whose primary key has more than one column throw `InvalidQueryError`. A `select` that leaves out the primary key gets it added, as for `relations`, since each count is matched to its entity by that key.
+
 ## Next Steps
 
 Now that you've set up relationships between entities, it's time to learn various ways to manipulate data.

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { WhereClause, RelationsOption } from "../dialects/FindOption";
+import { WhereClause, RelationsOption, WithCountOption } from "../dialects/FindOption";
 
 /**
  * Cursor-based pagination option.
@@ -51,6 +51,12 @@ export type CursorPaginationOption<T> = {
    * are loaded without being listed, exactly as `find()` does.
    */
   relations?: RelationsOption<T>;
+
+  /**
+   * Relation counts written onto each entity on the page — see
+   * `FindOption.withCount`. One batched query per count per page.
+   */
+  withCount?: WithCountOption<T>;
 
   /**
    * In a replication setup, forces read queries to use the master node.

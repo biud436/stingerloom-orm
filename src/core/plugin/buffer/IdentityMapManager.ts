@@ -597,6 +597,7 @@ export class IdentityMapManager {
   ): string | null {
     if (
       requestedRelationNames(option.relations)?.length ||
+      (option.withCount && Object.keys(option.withCount).length > 0) ||
       option.select ||
       option.orderBy ||
       option.limit != null ||

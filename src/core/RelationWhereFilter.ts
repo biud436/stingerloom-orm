@@ -10,6 +10,7 @@ import { createDialectExpression } from "../dialects/DialectExpression";
 import { buildEntityColumnScope, validateReadIdentifiers, type ColumnNameScope } from "./ColumnNameValidator";
 import { relationTargetOf } from "./RelationNameValidator";
 import type { RelationTree } from "./RelationTree";
+import type { RelationCountSpec } from "./RelationCount";
 import { buildTpcUnionSource, isTpcPolymorphicRoot, tpcSourceContextOf } from "./TpcUnionSource";
 import { buildJoinedChildSelect, isJoinedChild } from "./JoinedChildSource";
 
@@ -374,7 +375,31 @@ export function validateRelationOptionIdentifiers(
     if (metadata) {
       validateReadIdentifiers({ where, orderBy }, undefined, relationAwareScope(ctx, resolver, target, metadata));
     }
+    validateRelationCountIdentifiers(ctx, resolver, target, node.options?.withCount);
     validateRelationOptionIdentifiers(ctx, resolver, target, node.children);
+  }
+}
+
+/**
+ * Rejects a key in the `where` of a `withCount` entry that names no column
+ * of the counted entity, the way a relation's own where is checked.
+ */
+export function validateRelationCountIdentifiers(
+  ctx: EntityManagerInternals,
+  resolver: RelationMetadataResolver,
+  entity: ClazzType<any>,
+  counts: readonly RelationCountSpec[] | undefined,
+): void {
+  for (const spec of counts ?? []) {
+    if (spec.where === undefined) continue;
+    const target = relationTargetOf(entity, spec.relation, resolver);
+    const metadata = target ? resolver.resolveEntityMetadata(target) : undefined;
+    if (!target || !metadata) continue;
+    validateReadIdentifiers(
+      { where: spec.where as any },
+      undefined,
+      relationAwareScope(ctx, resolver, target, metadata),
+    );
   }
 }
 

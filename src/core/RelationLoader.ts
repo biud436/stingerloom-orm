@@ -23,6 +23,7 @@ import type {
   OneToOneMetadata,
 } from "../decorators";
 import type { RelationQueryOptions, RelationTree } from "./RelationTree";
+import type { RelationCountSpec } from "./RelationCount";
 import { relationTargetOf } from "./RelationNameValidator";
 import { resolveWhereClause } from "./WhereResolver";
 import { RelationWhereFilterBuilder } from "./RelationWhereFilter";
@@ -36,6 +37,9 @@ import { buildJoinedChildSelect, isJoinedChild } from "./JoinedChildSource";
 const ROW_NUMBER_ALIAS = "__stg_rn";
 /** Alias of the derived table a paged collection read filters by row number. */
 const PAGED_ALIAS = "__stg_paged";
+/** Aliases of the parent key and the count a batched relation count selects. */
+const COUNT_KEY_ALIAS = "__stg_count_key";
+const COUNT_ALIAS = "__stg_count";
 /**
  * How many parent keys one batched `IN (...)` binds. Every driver caps the
  * bind parameters of a statement — SQLite at 999 before 3.32, PostgreSQL
@@ -1128,13 +1132,195 @@ export class RelationLoader {
 
     for (const node of tree.nodes.values()) {
       const children = node.children;
-      if (!children || children.names.length === 0) continue;
+      const hasChildren = !!children && children.names.length > 0;
+      const counts = node.options?.withCount;
+      if (!hasChildren && !counts) continue;
       const target = relationTargetOf(entity, node.name, this.resolver);
       if (!target) continue;
       const related = RelationLoader.collectRelated(parents, node.name);
       if (related.length === 0) continue;
-      await this.loadRelationLevel(target, related, children, existingSession, withDeleted);
+      if (hasChildren) {
+        await this.loadRelationLevel(target, related, children!, existingSession, withDeleted);
+      }
+      if (counts) {
+        await this.loadRelationCounts(target, related, counts, existingSession, withDeleted);
+      }
     }
+  }
+
+  /**
+   * Writes the count of each requested relation's rows to every parent —
+   * one batched `GROUP BY` statement per count, whatever the number of
+   * parents, and 0 for a parent with no related rows.
+   *
+   * The rows counted are the ones loading the relation would attach: the
+   * count's own `where`, soft-deleted rows left out unless the count's or
+   * the read's `withDeleted` says otherwise, the related entity's tenant
+   * scope, and the subtype of a single-table child.
+   */
+  async loadRelationCounts<T>(
+    entity: ClazzType<T>,
+    parentResults: T | T[],
+    counts: readonly RelationCountSpec[],
+    existingSession?: TransactionSessionManager,
+    withDeleted?: boolean,
+  ): Promise<void> {
+    if (counts.length === 0) return;
+    const parents = this.toParentRecords(parentResults);
+    if (parents.length === 0) return;
+
+    const parentMetadata = this.resolver.resolveEntityMetadata(entity);
+    const pk = parentMetadata?.columns.find(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+    if (!pk) return;
+    const parentIds = this.collectParentIds(parents, pk);
+
+    for (const spec of counts) {
+      const byParent =
+        parentIds.length > 0
+          ? await this.countRelated(entity, spec, parentIds, existingSession, withDeleted)
+          : new Map<string, number>();
+      for (const parent of parents) {
+        const id = this.parentIdOf(parent, pk);
+        parent[spec.property] =
+          id === undefined || id === null ? 0 : (byParent.get(String(id)) ?? 0);
+      }
+    }
+  }
+
+  /**
+   * Counts the related rows of `spec.relation` per parent key, keyed by the
+   * key's string form — a driver may hand the grouped key back as a string
+   * (a PostgreSQL bigint) where the hydrated parent holds a number.
+   */
+  private async countRelated(
+    entity: ClazzType<any>,
+    spec: RelationCountSpec,
+    parentIds: unknown[],
+    existingSession: TransactionSessionManager | undefined,
+    withDeleted: boolean | undefined,
+  ): Promise<Map<string, number>> {
+    const statement = this.countStatement(entity, spec, withDeleted);
+    const byParent = new Map<string, number>();
+    if (!statement) return byParent;
+
+    const queryResult = await this.queryInChunks(parentIds, (chunk) =>
+      this.ctx.executeInTransaction(async (session) => {
+        const query = statement.build(chunk);
+        const start = Date.now();
+        this.ctx.beginTrackQuery();
+        const result = (await session.query(query)) as QueryResult;
+        this.ctx.trackQuery(statement.table, query.text ?? String(query), Date.now() - start);
+        return result;
+      }, existingSession),
+    );
+    for (const row of queryResult.results ?? []) {
+      const key = row[COUNT_KEY_ALIAS];
+      if (key === undefined || key === null) continue;
+      byParent.set(String(key), Number(row[COUNT_ALIAS]));
+    }
+    return byParent;
+  }
+
+  /**
+   * The batched statement counting `spec.relation` for a slice of parent
+   * keys, built from the same source and predicates as the loaders above:
+   *
+   * - OneToMany: the related rows grouped by their foreign key;
+   * - ManyToMany: the related rows joined to the join table, grouped by its
+   *   owner column.
+   */
+  private countStatement(
+    entity: ClazzType<any>,
+    spec: RelationCountSpec,
+    withDeleted: boolean | undefined,
+  ): { table: string; build: (ids: unknown[]) => Sql } | undefined {
+    const options: RelationQueryOptions | undefined =
+      spec.where !== undefined ? { where: spec.where } : undefined;
+    const countWithDeleted = spec.withDeleted ?? withDeleted;
+    const count = `COUNT(*) AS ${this.ctx.wrap(COUNT_ALIAS)}`;
+
+    const o2m = this.resolver
+      .resolveOneToManyMetadata(entity)
+      .find((rel) => rel.propertyKey === spec.relation);
+    if (o2m) {
+      const RelatedEntity = o2m.getRelatedEntity();
+      const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
+      if (!relatedMetadata) return undefined;
+      const owner = this.resolver
+        .resolveManyToOneMetadata(RelatedEntity)
+        .find((m) => m.columnName === o2m.mappedBy);
+      const fk = this.ctx.wrap(owner?.joinColumn ?? o2m.mappedBy);
+      const source = this.relatedRowSource(RelatedEntity, relatedMetadata);
+      const table = relatedMetadata.name ?? RelatedEntity.name;
+
+      return {
+        table,
+        build: (ids) => {
+          const where: Sql[] = [
+            Conditions.in(fk, ids),
+            ...this.relationWhere(RelatedEntity, relatedMetadata, options, countWithDeleted, source.qualifier),
+          ];
+          const deletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
+          if (deletedAt && !countWithDeleted) where.push(Conditions.isNull(this.ctx.wrap(deletedAt)));
+          const subtype = this.singleTableScope(RelatedEntity);
+          if (subtype) where.push(subtype);
+          const tenant = this.ctx.buildTenantWhereClause(RelatedEntity);
+          if (tenant) where.push(tenant);
+          return RawQueryBuilderFactory.create()
+            .select([`${fk} AS ${this.ctx.wrap(COUNT_KEY_ALIAS)}`, count])
+            .from(source.from, source.alias)
+            .where(where)
+            .groupBy([fk])
+            .build();
+        },
+      };
+    }
+
+    const m2m = this.resolver
+      .resolveManyToManyMetadata(entity)
+      .find((rel) => rel.propertyKey === spec.relation);
+    const joinInfo = m2m ? this.resolver.resolveManyToManyJoinTable(m2m) : undefined;
+    if (!m2m || !joinInfo) return undefined;
+    const RelatedEntity = m2m.getRelatedEntity();
+    const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
+    const relatedPk = relatedMetadata?.columns.find((col: ColumnMetadata) => col.options?.primary);
+    if (!relatedMetadata || !relatedPk) return undefined;
+    const table = relatedMetadata.name ?? RelatedEntity.name;
+    const related = this.ctx.wrap(table);
+    const joinTable = this.ctx.wrap(joinInfo.joinTableName);
+    const parentKey = `${joinTable}.${this.ctx.wrap(joinInfo.joinColumn)}`;
+    const { from, alias } = this.relatedTable(RelatedEntity, table);
+
+    return {
+      table,
+      build: (ids) => {
+        const where: Sql[] = [
+          Conditions.in(parentKey, ids),
+          ...this.relationWhere(RelatedEntity, relatedMetadata, options, countWithDeleted, table, table),
+        ];
+        const deletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
+        if (deletedAt && !countWithDeleted) {
+          where.push(Conditions.isNull(`${related}.${this.ctx.wrap(deletedAt)}`));
+        }
+        const subtype = this.singleTableScope(RelatedEntity, table);
+        if (subtype) where.push(subtype);
+        const tenant = this.ctx.buildTenantWhereClause(RelatedEntity, table);
+        if (tenant) where.push(tenant);
+        return RawQueryBuilderFactory.create()
+          .select([`${parentKey} AS ${this.ctx.wrap(COUNT_KEY_ALIAS)}`, count])
+          .from(from, alias)
+          .innerJoin(
+            this.ctx.wrapTable(joinInfo.joinTableName),
+            joinTable,
+            sql`${raw(related)}.${raw(this.ctx.wrap(relatedPk.name))} = ${raw(joinTable)}.${raw(this.ctx.wrap(joinInfo.inverseJoinColumn))}`,
+          )
+          .where(where)
+          .groupBy([parentKey])
+          .build();
+      },
+    };
   }
 
   /**
