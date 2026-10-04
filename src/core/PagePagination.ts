@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { WhereClause, RelationsOption } from "../dialects/FindOption";
+import { WhereClause, RelationsOption, WithCountOption } from "../dialects/FindOption";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IOrderBy } from "../dialects/IOrderBy";
 import { Sql } from "../utils/sqlTag";
@@ -28,6 +28,9 @@ export type PagePaginationOption<T> = {
 
   /** Relations to load — the same forms `FindOption.relations` accepts. */
   relations?: RelationsOption<T>;
+
+  /** Relation counts written onto each entity — see `FindOption.withCount`. */
+  withCount?: WithCountOption<T>;
 
   /** Include soft-deleted entities */
   withDeleted?: boolean;

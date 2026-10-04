@@ -148,6 +148,8 @@ const users = await em
 
 카운트 별칭은 SELECT 리스트에만 존재하는 컬럼이라 엔티티 프로퍼티가 아닙니다. `orderBy({ posts_count: "DESC" })`로 정렬하려 하면 키가 FROM 별칭으로 한정돼서 `"u"."posts_count"`가 되고, 존재하지 않는 컬럼이라 DB가 쿼리를 거부합니다. `appendSql(sql\`ORDER BY "alias" ...\`)`로 한 단계 내려가야 별칭이 그대로 살아남습니다.
 
+개수를 엔티티에 직접 담으려면 `find()`의 `withCount` 옵션으로 읽으세요. [관련 행 개수 세기](./relations.md#관련-행-개수-세기-withcount)를 참고하세요.
+
 ### `loadRelation()` — 간결한 관계 로딩
 
 `leftJoinRelationAndSelect()`의 단축어예요. 두 번째 인자로 별칭을 지정할 수 있고, 생략하면 관계 이름이 그대로 별칭이 됩니다.

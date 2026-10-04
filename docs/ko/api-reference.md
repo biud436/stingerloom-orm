@@ -246,6 +246,7 @@ interface FindOption<T> {
   groupBy?: (keyof T)[];
   having?: Sql[];
   relations?: (keyof T | string)[] | RelationsObject<T>;  // 점 경로·객체 형식으로 중첩
+  withCount?: WithCountOption<T>;  // { 개수속성: "관계" } — 관계 문서 참고
   withDeleted?: boolean;
   onlyDeleted?: boolean;         // Soft delete된 행만 반환 (withDeleted보다 우선)
   distinct?: boolean;            // SELECT DISTINCT

@@ -533,10 +533,13 @@ export { EntityNotFound } from "./dialects/EntityNotFound";
 export {
   BaseFilter,
   CollectionRelationFilter,
+  CollectionRelationKeys,
   ComparableFilter,
+  CountPropertyKeys,
   FieldFilter,
   FILTER_OPERATOR_KEYS,
   FindOption,
+  RelationCountOptions,
   RelationFilter,
   RelationKeys,
   RelationLoadOptions,
@@ -548,6 +551,7 @@ export {
   UpdateData,
   UpdateManyOptions,
   WhereClause,
+  WithCountOption,
 } from "./dialects/FindOption";
 export { IConnection } from "./dialects/IConnection";
 export { IDataSource } from "./dialects/IDataSource";

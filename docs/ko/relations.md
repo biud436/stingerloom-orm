@@ -1158,6 +1158,55 @@ ORDER BY "__stg_paged"."__stg_o2m_fk", "__stg_paged"."__stg_rn";
 
 옵션은 쿼리를 실행하기 전에 검사합니다. 관련 엔티티의 컬럼이 아닌 `where` / `orderBy` 키는 `InvalidQueryError`를 던지고, 단일 값 관계(`@ManyToOne`, `@OneToOne`)에 `where`, `orderBy`, `take`, `skip`을 주면 거부합니다. 그런 조건은 조회 자체에 거세요.
 
+### 관련 행 개수 세기 (withCount)
+
+"글마다 댓글 수"를 보려고 댓글을 전부 읽어 올 필요는 없습니다. `withCount`는 컬렉션 관계(`@OneToMany`, `@ManyToMany`)가 가진 행의 개수를 조회 결과의 엔티티마다 써 넣습니다. 키는 개수를 담을 속성(엔티티가 컬럼과 별도로 선언한 `number` 속성)이고, 값은 관계 이름입니다. 일부 행만 세려면 `{ relation, where, withDeleted }`를 넘기면 돼요.
+
+```typescript
+@Entity()
+export class Post {
+  // ...컬럼과 관계...
+  @OneToMany(() => Comment, { mappedBy: "post" })
+  comments!: Comment[];
+
+  commentCount?: number;   // 컬럼이 아닙니다 — withCount가 써 넣어요
+  approvedCount?: number;
+}
+
+const posts = await em.find(Post, {
+  withCount: {
+    commentCount: "comments",
+    approvedCount: { relation: "comments", where: { approved: true } },
+  },
+});
+posts[0].commentCount;   // 12 — 댓글이 없는 글은 0
+```
+
+개수 하나는 글이 몇 개든 배치 문장 하나로 셉니다.
+
+```sql
+SELECT "post_id" AS "__stg_count_key", COUNT(*) AS "__stg_count"
+FROM "comment"
+WHERE "post_id" IN (1, 2, ..., 50) AND "approved" = true AND "deleted_at" IS NULL
+GROUP BY "post_id";
+```
+
+세는 행은 그 관계를 로드했을 때 붙을 행과 같습니다. 개수의 `where`(`{ likes: { some: {} } }` 같은 관계 필터 포함)를 따르고, 개수나 조회의 `withDeleted`가 포함하라고 하지 않는 한 soft-delete된 행은 빠집니다. `tenant_column`에서는 관련 엔티티의 테넌트 범위가, `SINGLE_TABLE` 자식에서는 그 서브타입만 적용돼요. `ManyToMany`는 조인 테이블을 거쳐 셉니다.
+
+`find()`, `findOne()`, `findAndCount()`, `findWithPage()`, `findWithCursor()`, `stream()`이 `withCount`를 받습니다. `relations` 안에 두면 관련 엔티티에 개수를 씁니다. 깊이와 상관없고, 단일 값 관계에도 쓸 수 있어요.
+
+```typescript
+const users = await em.find(User, {
+  withCount: { postCount: "posts" },
+  relations: {
+    posts: { withCount: { commentCount: "comments" } },
+  },
+});
+users[0].posts[0].commentCount;
+```
+
+옵션은 쿼리를 실행하기 전에 검사합니다. 컬렉션이 아닌 관계, 엔티티가 이미 컬럼이나 관계로 쓰는 속성, 세는 엔티티의 컬럼이 아닌 `where` 키, 기본 키가 여러 컬럼인 엔티티는 `InvalidQueryError`를 던집니다. 개수는 기본 키로 엔티티와 짝지으므로, `select`에서 기본 키를 빼면 `relations`와 마찬가지로 기본 키가 추가돼요.
+
 ## 다음 단계
 
 엔티티 간의 관계를 설정했으니, 이제 데이터를 조작하는 다양한 방법을 배울 차례예요.

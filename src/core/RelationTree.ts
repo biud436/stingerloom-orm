@@ -3,6 +3,11 @@ import { ClazzType } from "../utils/types";
 import { InvalidQueryError } from "../errors";
 import type { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { relationEntryOf, validateRelationNames } from "./RelationNameValidator";
+import {
+  parseWithCountOption,
+  validateRelationCounts,
+  type RelationCountSpec,
+} from "./RelationCount";
 
 /**
  * How one relation's rows are read, from its entry in the object form of
@@ -15,6 +20,8 @@ export interface RelationQueryOptions {
   readonly take?: number;
   readonly skip?: number;
   readonly withDeleted?: boolean;
+  /** Counts attached to each related entity the relation loads. */
+  readonly withCount?: readonly RelationCountSpec[];
 }
 
 /**
@@ -59,6 +66,7 @@ const RELATION_OPTION_KEYS: ReadonlySet<string> = new Set([
   "take",
   "skip",
   "withDeleted",
+  "withCount",
 ]);
 
 /** Options that shape a collection — meaningless on a single-valued relation. */
@@ -176,13 +184,14 @@ function parseQueryOptions(
   spec: Record<string, unknown>,
   path: string,
 ): RelationQueryOptions | undefined {
-  const { where, orderBy, take, skip, withDeleted } = spec;
+  const { where, orderBy, take, skip, withDeleted, withCount } = spec;
   const options: {
     where?: unknown;
     orderBy?: Record<string, "ASC" | "DESC">;
     take?: number;
     skip?: number;
     withDeleted?: boolean;
+    withCount?: RelationCountSpec[];
   } = {};
 
   if (where !== undefined) {
@@ -235,6 +244,9 @@ function parseQueryOptions(
     options.withDeleted = withDeleted;
   }
 
+  const counts = parseWithCountOption(withCount, path);
+  if (counts) options.withCount = counts;
+
   return Object.keys(options).length > 0 ? options : undefined;
 }
 
@@ -284,6 +296,7 @@ function validateRelationTree(
         );
       }
     }
+    validateRelationCounts(entry.target, node.options?.withCount, resolver, pathOf(path, node.name));
     if (!node.children || node.children.names.length === 0) continue;
     validateRelationTree(entry.target, node.children, resolver, pathOf(path, node.name));
   }

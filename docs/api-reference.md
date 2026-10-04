@@ -246,6 +246,7 @@ interface FindOption<T> {
   groupBy?: (keyof T)[];
   having?: Sql[];
   relations?: (keyof T | string)[] | RelationsObject<T>;  // dotted paths / object form nest
+  withCount?: WithCountOption<T>;  // { countProp: "relation" } — see Relations
   withDeleted?: boolean;
   onlyDeleted?: boolean;         // Return ONLY soft-deleted rows (precedence over withDeleted)
   distinct?: boolean;            // SELECT DISTINCT

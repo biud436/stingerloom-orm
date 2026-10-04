@@ -808,6 +808,7 @@ Complete list of options accepted by `find()`, `findOne()`, `findAndCount()`, `f
 | `skip` | `number` | Offset for pagination. Used with `take`. |
 | `take` | `number` | Max rows to return. Used with `skip`. |
 | `relations` | `(keyof T \| string)[]` or `RelationsObject<T>` | Relation properties to load. A dotted path (`"comments.author"`) or the object form (`{ comments: { relations: { author: true } } }`) loads relations of the related entities too — see [Nested Relations](./relations.md#nested-relations). In the object form a collection relation also takes `where`, `orderBy` and per-parent `take` / `skip`, and any relation a `withDeleted` of its own — see [Filtering, Ordering and Limiting a Relation](./relations.md#filtering-ordering-and-limiting-a-relation). Names that match no relation throw `InvalidQueryError` listing the valid ones, with the path for a nested level. |
+| `withCount` | `WithCountOption<T>` | Counts the rows of collection relations and writes each count onto every entity: `{ commentCount: "comments" }`, or `{ approvedCount: { relation: "comments", where: { approved: true } } }` to count only some. One batched statement per count; 0 for an entity without related rows — see [Counting Related Rows](./relations.md#counting-related-rows-withcount). |
 | `withDeleted` | `boolean` | Include soft-deleted entities (`@DeletedAt`). Default: `false`. |
 | `groupBy` | `(keyof T)[]` | GROUP BY columns. |
 | `having` | `Sql[]` | HAVING conditions (sql-template-tag). Joined with AND. |
