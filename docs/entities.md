@@ -1209,6 +1209,18 @@ Both paths render the definition through the same builder, so they can never div
 
 One dialect caveat: adding a generated column to an **existing** table via ALTER is rejected by some engines for STORED columns (notably older SQLite). The DDL error is reported through the normal synchronize error handling (`continueOnError`) rather than being silently skipped -- prefer `stored: false` when you expect the column to be added to live tables on SQLite.
 
+#### In an inheritance hierarchy
+
+A computed column is created on the table that holds the columns its expression reads, since a generated column can only read its own row:
+
+| Strategy | A root's computed column | A child's computed column |
+|----------|--------------------------|---------------------------|
+| `SINGLE_TABLE` | the shared table | the shared table |
+| `JOINED` | the root's table | the child's table |
+| `TABLE_PER_CLASS` | every concrete table | the child's table |
+
+Under `JOINED`, a child's expression can therefore read only the columns the child declares -- the inherited ones are on the root's table. Every read returns the value on the classes that declare it: a polymorphic `find(Item)` gives each `Book` its `doubled`, and leaves the property off the sibling `Pen` instances.
+
 #### Dialect-portable expressions (builder form)
 
 A literal `expression` string is embedded into the DDL verbatim, so it must already be valid SQL for the target database. That is fine for portable arithmetic like `price * quantity`, but date math diverges sharply between engines -- MySQL spells "hours between two timestamps" `TIMESTAMPDIFF(HOUR, a, b)`, while PostgreSQL needs `EXTRACT(EPOCH FROM (b - a)) / 3600`. Hard-coding one locks the entity to a single database, and branching on `process.env.DB_TYPE` couples the entity to runtime configuration -- it also breaks the moment one process connects to two databases at once.

@@ -3,6 +3,7 @@ import sql, { Sql, join, raw } from "../utils/sqlTag";
 import { ClazzType } from "../utils";
 import { InheritanceResolver } from "./InheritanceResolver";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
+import { declaredComputedColumns } from "./generators/entityColumns";
 import type { EntityManagerInternals } from "./EntityManagerInternals";
 
 /** Alias the TPC UNION ALL derived table is read under. */
@@ -88,10 +89,11 @@ export function resolveTpcTables(
 
 /**
  * The columns an entity's rows occupy, in table order: the entity's columns,
- * then the join columns of its ManyToOne and owning OneToOne relations that
- * no column declares. For a concrete TABLE_PER_CLASS entity that is its
- * table: every concrete table repeats the relations it inherits, so a
- * child's list carries the root's join columns as well as its own.
+ * the join columns of its ManyToOne and owning OneToOne relations that no
+ * column declares, then its `@ComputedColumn`s. For a concrete
+ * TABLE_PER_CLASS entity that is its table: every concrete table repeats the
+ * relations and generated columns it inherits, so a child's list carries the
+ * root's as well as its own.
  */
 export function entityRowColumns(
   resolver: RelationMetadataResolver,
@@ -112,6 +114,9 @@ export function entityRowColumns(
   }
   for (const rel of resolver.resolveOneToOneMetadata(entity)) {
     add(rel.joinColumn);
+  }
+  for (const computed of declaredComputedColumns(entity)) {
+    add(computed.name);
   }
   return columns;
 }

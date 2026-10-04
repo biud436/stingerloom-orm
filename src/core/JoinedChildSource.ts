@@ -3,6 +3,7 @@ import sql, { Sql, raw } from "../utils/sqlTag";
 import { ClazzType } from "../utils";
 import { InheritanceResolver } from "./InheritanceResolver";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
+import { declaredComputedColumns } from "./generators/entityColumns";
 
 /** Alias the JOINED-child derived table is read under. */
 export const JOINED_CHILD_ALIAS = "_tpt";
@@ -32,8 +33,9 @@ export function isJoinedChild(
 
 /**
  * The columns a JOINED hierarchy's root table holds besides the shared key:
- * the root's own columns and the join columns of the relations it declares.
- * Every other column of a child lives on the child's table.
+ * the root's own columns, the join columns of the relations it declares and
+ * its `@ComputedColumn`s. Every other column of a child lives on the child's
+ * table.
  */
 export function joinedRootColumns(
   resolver: RelationMetadataResolver,
@@ -49,6 +51,9 @@ export function joinedRootColumns(
   }
   for (const rel of resolver.resolveOneToOneMetadata(root)) {
     if (rel.joinColumn) columns.add(rel.joinColumn);
+  }
+  for (const computed of declaredComputedColumns(root)) {
+    columns.add(computed.name);
   }
   return columns;
 }
@@ -101,8 +106,9 @@ export function buildJoinedChildSelect(
   const rootTable = wrap(rootMeta.name);
   const rootColumns = joinedRootColumns(resolver, root);
 
-  // The child's own columns and the join columns of the relations it
-  // declares; the rest, inherited, are read from the root.
+  // The child's own columns, generated ones included, and the join columns
+  // of the relations it declares; the rest, inherited, are read from the
+  // root.
   const childColumns = new Set<string>();
   for (const col of childMeta.columns) childColumns.add(col.name);
   for (const rel of resolver.resolveManyToOneMetadata(child)) {
@@ -110,6 +116,9 @@ export function buildJoinedChildSelect(
   }
   for (const rel of resolver.resolveOneToOneMetadata(child)) {
     if (rel.joinColumn) childColumns.add(rel.joinColumn);
+  }
+  for (const computed of declaredComputedColumns(child)) {
+    childColumns.add(computed.name);
   }
 
   const columns: string[] = [];

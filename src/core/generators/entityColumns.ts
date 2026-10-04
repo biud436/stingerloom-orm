@@ -5,6 +5,10 @@ import {
   RELATION_COLUMN_TOKEN,
   RelationColumnMetadata,
 } from "../../decorators/RelationColumn";
+import {
+  COMPUTED_COLUMN_TOKEN,
+  ComputedColumnMetadata,
+} from "../../decorators/ComputedColumn";
 import { inferRelatedPkType } from "./RelatedPkTypeResolver";
 import { InheritanceResolver } from "../InheritanceResolver";
 
@@ -133,6 +137,60 @@ export function collectTableColumns<T>(
         names.add(col.name);
         columns.push({ ...col, options: { ...col.options, nullable: true } });
       }
+    }
+  }
+  return columns;
+}
+
+/**
+ * The `@ComputedColumn`s an entity declares, inherited ones included (the
+ * decorator stores them on the prototype chain).
+ */
+export function declaredComputedColumns<T>(
+  entity: ClazzType<T>,
+): ComputedColumnMetadata[] {
+  return (
+    (Reflect.getMetadata(COMPUTED_COLUMN_TOKEN, entity.prototype) as
+      | ComputedColumnMetadata[]
+      | undefined) ?? []
+  );
+}
+
+/**
+ * The generated columns of the table `entity` owns — the
+ * {@link collectTableColumns} layout for `@ComputedColumn`s:
+ *
+ * - SINGLE_TABLE root: its own, then every child's, each name once.
+ * - SINGLE_TABLE child: its root's table.
+ * - JOINED child: the ones it declares; an inherited one lives on the root's
+ *   table, next to the columns its expression reads.
+ * - JOINED root, TABLE_PER_CLASS and no hierarchy: the entity's, inherited
+ *   ones included.
+ */
+export function collectTableComputedColumns<T>(
+  entity: ClazzType<T>,
+): ComputedColumnMetadata[] {
+  const owner = tableOwnerEntity(entity);
+  const strategy = inheritance.getStrategy(owner);
+  const computed = declaredComputedColumns(owner);
+  if (strategy !== "SINGLE_TABLE" && strategy !== "JOINED") return computed;
+
+  if (inheritance.isChildEntity(owner)) {
+    const root = inheritance.getRoot(owner);
+    if (!root) return computed;
+    const inherited = new Set(declaredComputedColumns(root).map((c) => c.name));
+    return computed.filter((c) => !inherited.has(c.name));
+  }
+
+  if (strategy !== "SINGLE_TABLE") return computed;
+  const names = new Set(computed.map((c) => c.name));
+  const columns = [...computed];
+  for (const child of inheritance.getConcreteEntities(owner)) {
+    if (child === owner) continue;
+    for (const cc of declaredComputedColumns(child)) {
+      if (names.has(cc.name)) continue;
+      names.add(cc.name);
+      columns.push(cc);
     }
   }
   return columns;
