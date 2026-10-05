@@ -423,7 +423,7 @@ const cards = await em.find(CreditCardPayment, { relations: ["store", "issuer"] 
 
 ### 계층을 대상으로 하는 관계
 
-다른 엔티티의 관계는 루트를 가리킬 수도, 서브타입 하나를 가리킬 수도 있습니다. 서브타입을 가리키는 관계는 그 서브타입의 행만 읽습니다. `find(CreditCardPayment)`처럼 JOIN이나 배치 읽기에 판별자 조건을 붙이기 때문에 `Store.cardPayments`에는 계좌 이체가 섞이지 않아요. 루트를 가리키는 관계는 `find(Payment)`처럼 각 행을 그 서브클래스의 모양으로 만듭니다.
+다른 엔티티의 관계는 루트를 가리킬 수도, 서브타입 하나를 가리킬 수도 있습니다. 서브타입을 가리키는 관계는 그 서브타입의 행만 읽습니다. `find(CreditCardPayment)`처럼 JOIN이나 배치 읽기에 판별자 조건을 붙이기 때문에 `Store.cardPayments`에는 계좌 이체가 섞이지 않아요. 루트를 가리키는 관계는 `find(Payment)`처럼 각 행을 그 서브클래스의 모양으로 만듭니다. 이 규칙은 관계를 읽는 모든 경로에 적용됩니다. ManyToOne·소유 측 OneToOne의 JOIN, OneToMany·ManyToMany·역방향 OneToOne의 배치 읽기, 커서 페이지의 to-one 읽기, 쿼리 빌더의 조인(`leftJoinRelationAndSelect()`, `leftJoinAndSelect(CreditCardPayment, ...)`)이 모두 해당하고, 형제 서브타입의 행을 가리키는 키는 아무것도 조인하지 않아요.
 
 ```typescript
 @Entity()

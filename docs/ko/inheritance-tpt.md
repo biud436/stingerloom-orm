@@ -454,12 +454,26 @@ const cards = await em.find(CreditCardPayment, {
 
 ### 자식을 대상으로 하는 관계
 
-다른 엔티티의 관계가 자식을 가리킬 수 있습니다. `CreditCardPayment` 타입의 `Refund.payment`, `Bank.cards`, 카드 결제의 ManyToMany 같은 경우입니다. 자식의 행은 자기 테이블과 루트 테이블에 나뉘어 있으므로, 관계를 읽는 모든 경로(ManyToOne·소유 측 OneToOne의 JOIN, OneToMany·ManyToMany·역방향 OneToOne의 배치 읽기, 커서 페이지의 to-one 읽기)가 `find(CreditCardPayment)`처럼 자식 테이블을 루트 테이블과 조인해서 읽습니다. 상속 컬럼도 함께 읽히고, 관계의 `where` / `orderBy` / `take`에서 그 컬럼을 쓸 수 있어요.
+다른 엔티티의 관계가 자식을 가리킬 수 있습니다. `CreditCardPayment` 타입의 `Refund.payment`, `Bank.cards`, 카드 결제의 ManyToMany 같은 경우입니다. 자식의 행은 자기 테이블과 루트 테이블에 나뉘어 있으므로, 관계를 읽는 모든 경로(ManyToOne·소유 측 OneToOne의 JOIN, OneToMany·ManyToMany·역방향 OneToOne의 배치 읽기, 커서 페이지의 to-one 읽기, 쿼리 빌더의 관계 조인)가 `find(CreditCardPayment)`처럼 자식 테이블을 루트 테이블과 조인해서 읽습니다. 상속 컬럼도 함께 읽히고, 관계의 `where` / `orderBy` / `take`나 조인 별칭에 거는 쿼리 빌더 `where("p.amount", ...)`에서 그 컬럼을 쓸 수 있어요.
 
 ```sql
 LEFT JOIN (SELECT "credit_card_payment"."id", "credit_card_payment"."cardNumber", "payment"."amount", ...
            FROM "credit_card_payment" AS "credit_card_payment"
            INNER JOIN "payment" AS "payment" ON "credit_card_payment"."id" = "payment"."id") AS "payment"
+  ON "refund"."payment_id" = "payment"."id"
+```
+
+### 루트를 대상으로 하는 관계
+
+루트 타입의 관계(`Payment` 타입의 `Refund.payment`)는 어느 서브클래스의 행이든 가리킬 수 있고, 그 서브클래스 고유의 컬럼은 자기 테이블에 있습니다. 그래서 이 관계를 읽을 때는 `find(Payment)`처럼 루트 테이블을 모든 자식 테이블과 조인하고, 각 행을 판별자가 가리키는 서브클래스로 만듭니다. `refund.payment`는 `cardNumber`를 가진 `CreditCardPayment`이거나 `bankCode`를 가진 `BankTransferPayment`가 됩니다. 위와 같은 경로 전부에 적용되며 쿼리 빌더의 `leftJoinRelationAndSelect()`도 포함돼요. 필터링만 하는 쿼리 빌더 조인(`leftJoinRelation()`)은 루트 테이블만 읽습니다.
+
+```sql
+LEFT JOIN (SELECT "payment"."id", "payment"."amount", "payment"."dtype", ...,
+                  "credit_card_payment"."cardNumber" AS "credit_card_payment_cardNumber",
+                  "bank_transfer_payment"."bankCode" AS "bank_transfer_payment_bankCode"
+           FROM "payment" AS "payment"
+           LEFT JOIN "credit_card_payment" AS "credit_card_payment" ON "payment"."id" = "credit_card_payment"."id"
+           LEFT JOIN "bank_transfer_payment" AS "bank_transfer_payment" ON "payment"."id" = "bank_transfer_payment"."id") AS "payment"
   ON "refund"."payment_id" = "payment"."id"
 ```
 

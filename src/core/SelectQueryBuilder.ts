@@ -46,6 +46,15 @@ import {
   pruneTpcSiblingColumns,
 } from "./TpcUnionSource";
 import {
+  buildJoinedChildSelect,
+  buildJoinedRootSelect,
+  isJoinedChild,
+  isJoinedPolymorphicRoot,
+  joinedSubclassColumns,
+  type JoinedChildSourceContext,
+} from "./JoinedChildSource";
+import { polymorphicRowClassifier } from "./PolymorphicRows";
+import {
   JsonPathCondition,
   makeJsonPathExpression,
   type JsonPathExpression,
@@ -309,6 +318,12 @@ export class SelectQueryBuilder<T, TResult = T> {
      * over soft-deleted rows stays expressible.
      */
     relationJoin?: boolean;
+    /**
+     * The derived table the JOIN reads in place of `table` when the joined
+     * entity spans tables of a JOINED hierarchy (see
+     * {@link hierarchyJoinSource}).
+     */
+    source?: Sql;
   }> = [];
   protected limitValue: number | [number, number] | undefined;
   protected offsetValue: number | undefined;
@@ -1667,6 +1682,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       alias,
       condition,
       joinedEntity: entity,
+      source: this.hierarchyJoinSource(entity, andSelect),
     });
 
     if (andSelect) {
@@ -1748,6 +1764,17 @@ export class SelectQueryBuilder<T, TResult = T> {
       cols.push(
         `${this.em.wrap(alias)}.${this.em.wrap(dbCol)} AS ${this.em.wrap(`${alias}_${dbCol}`)}`,
       );
+    }
+    // The root of a JOINED hierarchy is joined with every subclass table
+    // (see hierarchyJoinSource): each subclass's own columns ride along so
+    // the row can be built as its subclass.
+    const hierarchy = selection ? this.joinedSourceContext() : undefined;
+    if (hierarchy && isJoinedPolymorphicRoot(hierarchy.inheritanceResolver, selection!.entity)) {
+      for (const column of joinedSubclassColumns(hierarchy, selection!.entity)) {
+        cols.push(
+          `${this.em.wrap(alias)}.${this.em.wrap(column.alias)} AS ${this.em.wrap(`${alias}_${column.alias}`)}`,
+        );
+      }
     }
     if (cols.length === 0) return;
 
@@ -1911,6 +1938,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       condition,
       joinedEntity: RelatedEntity,
       relationJoin: true,
+      source: this.hierarchyJoinSource(RelatedEntity, andSelect),
     });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
@@ -1976,6 +2004,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       condition,
       joinedEntity: RelatedEntity,
       relationJoin: true,
+      source: this.hierarchyJoinSource(RelatedEntity, andSelect),
     });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
@@ -2029,6 +2058,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       condition,
       joinedEntity: RelatedEntity,
       relationJoin: true,
+      source: this.hierarchyJoinSource(RelatedEntity, andSelect),
     });
     if (andSelect)
       this.appendJoinedColumnsToSelect(alias, propToCol, {
@@ -3233,7 +3263,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     for (const j of this.joinClauses) {
       qb.join(
         j.type,
-        this.em.wrapTable(j.table),
+        this.joinTarget(j),
         this.em.wrap(j.alias),
         this.scopedJoinCondition(j),
       );
@@ -3494,6 +3524,21 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     const toEntity = (entity: ClazzType<any>, row: any) =>
       transformer.toEntity(entity, { results: [row], fields: [] } as any);
+    // A join of a hierarchy's root builds each row as the subclass its
+    // discriminator names, holding that class's columns, as find() does.
+    const hierarchy = this.joinedSourceContext();
+    const classifiers = new Map(
+      this.joinedSelections.map((sel) => [
+        sel.alias,
+        hierarchy ? polymorphicRowClassifier(hierarchy, sel.entity) : undefined,
+      ]),
+    );
+    const toJoinedEntity = (sel: { alias: string; entity: ClazzType<any> }, row: any) => {
+      const classify = classifiers.get(sel.alias);
+      if (!classify) return toEntity(sel.entity, row);
+      const classified = classify(row);
+      return toEntity(classified.entityClass, classified.row);
+    };
     const isAllNull = (row: any) =>
       !row || Object.values(row).every((v) => v === null || v === undefined);
     const pkKeyOf = (pkCols: string[], row: any): string | null => {
@@ -3582,7 +3627,7 @@ export class SelectQueryBuilder<T, TResult = T> {
           const childKey = `${parentKey}/${sel.alias}:${childPk ?? `${ordered.length}:${parentInst[sel.property].length}`}`;
           let childInst = instanceRegistry.get(childKey);
           if (!childInst) {
-            childInst = toEntity(sel.entity, subRow);
+            childInst = toJoinedEntity(sel, subRow);
             instanceRegistry.set(childKey, childInst);
             parentInst[sel.property].push(childInst);
           }
@@ -3598,7 +3643,7 @@ export class SelectQueryBuilder<T, TResult = T> {
           const childKey = `${parentKey}/${sel.alias}`;
           let childInst = instanceRegistry.get(childKey);
           if (!childInst) {
-            childInst = toEntity(sel.entity, subRow);
+            childInst = toJoinedEntity(sel, subRow);
             instanceRegistry.set(childKey, childInst);
           }
           parentInst[sel.property] = childInst;
@@ -4325,7 +4370,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     for (const j of this.joinClauses) {
       qb.join(
         j.type,
-        this.em.wrapTable(j.table),
+        this.joinTarget(j),
         this.em.wrap(j.alias),
         this.scopedJoinCondition(j),
       );
@@ -4802,7 +4847,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     for (const j of this.joinClauses) {
       qb.join(
         j.type,
-        this.em.wrapTable(j.table),
+        this.joinTarget(j),
         this.em.wrap(j.alias),
         this.scopedJoinCondition(j),
       );
@@ -4971,15 +5016,67 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
+   * The resolvers and identifier wrappers a JOINED hierarchy's derived table
+   * is built with — undefined on an EntityManager double that lacks them
+   * (query-builder unit tests).
+   */
+  private joinedSourceContext(): JoinedChildSourceContext | undefined {
+    const inheritanceResolver = this.emInternals._ctx?.getInheritanceResolver?.();
+    const resolver = this.emInternals.resolver;
+    if (!inheritanceResolver || !resolver) return undefined;
+    return {
+      inheritanceResolver,
+      resolver,
+      wrap: (n) => this.em.wrap(n),
+      wrapTable: (n) => this.em.wrapTable(n),
+    };
+  }
+
+  /**
+   * The derived table a JOIN of `entity` reads when the entity spans tables
+   * of a JOINED hierarchy; undefined reads the entity's own table.
+   *
+   * - A child keeps its inherited columns on the root's table: its table is
+   *   joined to the root's, so `alias.column` reads every column of the
+   *   child, as find(Child) does.
+   * - The root, when the JOIN selects it (`andSelect`), is joined to every
+   *   subclass table, each subclass's own columns named
+   *   `<childTable>_<column>`, so each row is built as its subclass. A JOIN
+   *   that only filters reads the root's table, which holds every column
+   *   the root declares.
+   */
+  private hierarchyJoinSource(entity: ClazzType<any>, andSelect: boolean): Sql | undefined {
+    const ctx = this.joinedSourceContext();
+    if (!ctx) return undefined;
+    if (isJoinedChild(ctx.inheritanceResolver, entity)) {
+      return buildJoinedChildSelect(ctx, entity) ?? undefined;
+    }
+    if (!andSelect || !isJoinedPolymorphicRoot(ctx.inheritanceResolver, entity)) return undefined;
+    const metadata = ctx.resolver.resolveEntityMetadata(entity);
+    if (!metadata) return undefined;
+    const columns = new Set(this.buildPropertyToColumnMapFromMetadata(metadata).values());
+    return buildJoinedRootSelect(ctx, entity, [...columns]) ?? undefined;
+  }
+
+  /** What a JOIN reads: its derived table under the join's alias, or its table. */
+  private joinTarget(j: { table: string; alias: string; source?: Sql }): string | Sql {
+    return j.source
+      ? sql`(${j.source}) AS ${raw(this.em.wrap(j.alias))}`
+      : this.em.wrapTable(j.table);
+  }
+
+  /**
    * Return a JOIN's ON condition with the predicates the joined side always
    * carries: for a relation join, the joined entity's soft-delete filter
-   * (unless `withDeleted()`), and for every entity-aware join the tenant
-   * predicate when the entity is tenant-scoped. Both go in the ON clause,
-   * not WHERE, so a filtered-out target of a LEFT JOIN hydrates as null
-   * instead of dropping the root row — the same shape `find()` gives an
-   * eager relation. Called at render time — never at join-declaration time
-   * — so the tenant predicate binds the tenant active when the query
-   * EXECUTES, and `withDeleted()` may be called after the join.
+   * (unless `withDeleted()`), and for every entity-aware join the subtype
+   * predicate of a SINGLE_TABLE child — its table holds every sibling's rows
+   * too — and the tenant predicate when the entity is tenant-scoped. They go
+   * in the ON clause, not WHERE, so a filtered-out target of a LEFT JOIN
+   * hydrates as null instead of dropping the root row — the same shape
+   * `find()` gives an eager relation. Called at render time — never at
+   * join-declaration time — so the tenant predicate binds the tenant active
+   * when the query EXECUTES, and `withDeleted()` may be called after the
+   * join.
    */
   protected scopedJoinCondition(j: {
     condition: Sql;
@@ -4991,6 +5088,17 @@ export class SelectQueryBuilder<T, TResult = T> {
     const joinPredicates: Sql[] = [];
     if (j.relationJoin) {
       this.appendSoftDeletePredicate(joinPredicates, j.joinedEntity, j.alias);
+    }
+    const subtype = this.emInternals._ctx
+      ?.getInheritanceResolver?.()
+      ?.getSingleTableChildDiscriminator(j.joinedEntity);
+    if (subtype) {
+      joinPredicates.push(
+        Conditions.equals(
+          `${this.em.wrap(j.alias)}.${this.em.wrap(subtype.columnName)}`,
+          subtype.value,
+        ),
+      );
     }
     this.appendTenantPredicate(joinPredicates, j.joinedEntity, j.alias);
     if (joinPredicates.length === 0) return j.condition;
