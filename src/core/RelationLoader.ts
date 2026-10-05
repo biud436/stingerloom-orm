@@ -30,8 +30,14 @@ import { RelationWhereFilterBuilder } from "./RelationWhereFilter";
 import { createDialectExpression } from "../dialects/DialectExpression";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
-import { singleTableRowShape } from "./SingleTableRows";
-import { buildJoinedChildSelect, isJoinedChild } from "./JoinedChildSource";
+import {
+  buildJoinedChildSelect,
+  buildJoinedRootSelect,
+  isJoinedChild,
+  isJoinedPolymorphicRoot,
+  joinedSubclassColumns,
+} from "./JoinedChildSource";
+import { polymorphicRowClassifier } from "./PolymorphicRows";
 
 /** Alias of the per-parent row number a paged collection read ranks by. */
 const ROW_NUMBER_ALIAS = "__stg_rn";
@@ -90,10 +96,14 @@ export class RelationLoader {
    * from the UNION ALL over every concrete table and each row instantiated
    * as its subclass, as find() on the root reads them — reading the root's
    * table alone left out every subclass row.
+   *
+   * `subclasses` is off for a read that only counts rows: it needs no
+   * subclass columns (see {@link relatedTable}).
    */
   private relatedRowSource(
     RelatedEntity: ClazzType<any>,
     relatedMetadata: { name?: string; columns: ColumnMetadata[] },
+    subclasses = true,
   ): {
     columns: string[];
     from: Sql | string;
@@ -127,58 +137,93 @@ export class RelationLoader {
     }
     const tableName = relatedMetadata.name ?? RelatedEntity.name;
     return {
-      columns: this.readColumns(RelatedEntity, relatedMetadata).map((name) => this.ctx.wrap(name)),
-      ...this.relatedTable(RelatedEntity, tableName),
+      columns: this.relatedColumns(RelatedEntity, relatedMetadata, subclasses).map((name) =>
+        this.ctx.wrap(name),
+      ),
+      ...this.relatedTable(RelatedEntity, tableName, subclasses),
       qualifier: tableName,
       toEntities: (rows) => this.hydrateRelated(RelatedEntity, rows),
     };
   }
 
   /**
-   * The FROM of a batched read of `RelatedEntity` rows under `tableName`.
-   * A JOINED child keeps its inherited columns on the root's table, so it is
-   * read as its table joined to the root's — a derived table aliased by the
-   * child's table name, so a column qualified by that name, or left
-   * unqualified, reads every column of the child as find(Child) does.
+   * The FROM of a batched read of `RelatedEntity` rows under `tableName`:
+   * the table, or a derived table aliased by `tableName` — so a column
+   * qualified by that name, or left unqualified, reads the derived table —
+   * when the target spans tables of a JOINED hierarchy:
+   *
+   * - a child keeps its inherited columns on the root's table, so it is read
+   *   as its table joined to the root's, every column of the child as
+   *   find(Child) reads it;
+   * - with `subclasses`, the root is read as its table joined to every
+   *   subclass table, each subclass's own columns named
+   *   `<childTable>_<column>` (see {@link relatedColumns}), so each row can
+   *   be built as its subclass. A read that only counts rows leaves it off.
    */
   private relatedTable(
     RelatedEntity: ClazzType<any>,
     tableName: string,
+    subclasses = true,
   ): { from: Sql | string; alias?: string } {
-    if (isJoinedChild(this.ctx.getInheritanceResolver(), RelatedEntity)) {
-      const select = buildJoinedChildSelect(tpcSourceContextOf(this.ctx, this.resolver), RelatedEntity);
-      if (select) return { from: sql`(${select})`, alias: this.ctx.wrap(tableName) };
+    const inheritanceResolver = this.ctx.getInheritanceResolver();
+    let select: Sql | null = null;
+    if (isJoinedChild(inheritanceResolver, RelatedEntity)) {
+      select = buildJoinedChildSelect(tpcSourceContextOf(this.ctx, this.resolver), RelatedEntity);
+    } else if (subclasses && isJoinedPolymorphicRoot(inheritanceResolver, RelatedEntity)) {
+      const metadata = this.resolver.resolveEntityMetadata(RelatedEntity);
+      select = metadata
+        ? buildJoinedRootSelect(
+            tpcSourceContextOf(this.ctx, this.resolver),
+            RelatedEntity,
+            this.readColumns(RelatedEntity, metadata),
+          )
+        : null;
     }
+    if (select) return { from: sql`(${select})`, alias: this.ctx.wrap(tableName) };
     return { from: this.ctx.wrapTable(tableName) };
   }
 
   /**
+   * The columns a batched read selects of `RelatedEntity`: those find()
+   * reads of it ({@link readColumns}), plus — with `subclasses`, for the
+   * root of a JOINED hierarchy — each subclass's own columns under the names
+   * {@link relatedTable} gives them.
+   */
+  private relatedColumns(
+    RelatedEntity: ClazzType<any>,
+    relatedMetadata: { name?: string; columns: ColumnMetadata[] },
+    subclasses = true,
+  ): readonly string[] {
+    const columns = this.readColumns(RelatedEntity, relatedMetadata);
+    if (!subclasses || !isJoinedPolymorphicRoot(this.ctx.getInheritanceResolver(), RelatedEntity)) {
+      return columns;
+    }
+    return [
+      ...columns,
+      ...joinedSubclassColumns(tpcSourceContextOf(this.ctx, this.resolver), RelatedEntity).map(
+        (col) => col.alias,
+      ),
+    ];
+  }
+
+  /**
    * Rows of a batched relation read as instances of `RelatedEntity` — the
-   * way `find()` on it builds them. A SINGLE_TABLE root is read
-   * polymorphically: each row becomes its subclass, cut to that class's
-   * columns, as a `find(Root)` row is. Anything else hydrates as the class.
+   * way `find()` on it builds them. The root of a SINGLE_TABLE or JOINED
+   * hierarchy is read polymorphically: each row becomes its subclass,
+   * holding that class's columns, as a `find(Root)` row does (see
+   * {@link polymorphicRowClassifier}). Anything else hydrates as the class.
    */
   private hydrateRelated(RelatedEntity: ClazzType<any>, rows: any[]): any[] {
     const transformer = ResultTransformerFactory.create();
-    const inheritanceResolver = this.ctx.getInheritanceResolver();
-    if (
-      inheritanceResolver.getStrategy(RelatedEntity) === "SINGLE_TABLE" &&
-      inheritanceResolver.isPolymorphicQuery(RelatedEntity)
-    ) {
-      const discMap = inheritanceResolver.buildDiscriminatorMap(RelatedEntity);
-      if (discMap.size > 0) {
-        const discColumn = inheritanceResolver.getDiscriminatorColumn(RelatedEntity)?.name ?? "dtype";
-        return transformer.toPolymorphicEntities(
-          RelatedEntity,
-          { results: rows } as QueryResult,
-          discMap,
-          discColumn,
-          undefined,
-          singleTableRowShape({ inheritanceResolver, resolver: this.resolver }, RelatedEntity),
-        );
-      }
-    }
-    return transformer.toEntities(RelatedEntity, { results: rows } as QueryResult);
+    const classify = polymorphicRowClassifier(
+      { inheritanceResolver: this.ctx.getInheritanceResolver(), resolver: this.resolver },
+      RelatedEntity,
+    );
+    if (!classify) return transformer.toEntities(RelatedEntity, { results: rows } as QueryResult);
+    return rows.map((row) => {
+      const { entityClass, row: classRow } = classify(row);
+      return transformer.toEntity(entityClass, { results: [classRow] } as QueryResult);
+    });
   }
 
   /**
@@ -540,7 +585,7 @@ export class RelationLoader {
       const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
       const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
-        const selectCols = this.readColumns(RelatedEntity, relatedMetadata).map(
+        const selectCols = this.relatedColumns(RelatedEntity, relatedMetadata).map(
           (name) => this.ctx.wrap(name),
         );
         const whereConditions: Sql[] = [
@@ -831,7 +876,7 @@ export class RelationLoader {
 
       const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
-        const selectCols = this.readColumns(RelatedEntity, relatedMetadata).map(
+        const selectCols = this.relatedColumns(RelatedEntity, relatedMetadata).map(
           (name) => `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(name)}`,
         );
         const parentKey = `${this.ctx.wrap(joinInfo.joinTableName)}.${this.ctx.wrap(joinInfo.joinColumn)}`;
@@ -1252,7 +1297,7 @@ export class RelationLoader {
         .resolveManyToOneMetadata(RelatedEntity)
         .find((m) => m.columnName === o2m.mappedBy);
       const fk = this.ctx.wrap(owner?.joinColumn ?? o2m.mappedBy);
-      const source = this.relatedRowSource(RelatedEntity, relatedMetadata);
+      const source = this.relatedRowSource(RelatedEntity, relatedMetadata, false);
       const table = relatedMetadata.name ?? RelatedEntity.name;
 
       return {
@@ -1291,7 +1336,7 @@ export class RelationLoader {
     const related = this.ctx.wrap(table);
     const joinTable = this.ctx.wrap(joinInfo.joinTableName);
     const parentKey = `${joinTable}.${this.ctx.wrap(joinInfo.joinColumn)}`;
-    const { from, alias } = this.relatedTable(RelatedEntity, table);
+    const { from, alias } = this.relatedTable(RelatedEntity, table, false);
 
     return {
       table,

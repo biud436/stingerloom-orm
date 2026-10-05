@@ -5,11 +5,14 @@
  * - a JOINED child target is read as its table joined to the root's — the
  *   to-one JOIN, the batched OneToMany / ManyToMany / inverse OneToOne
  *   reads, per-parent paging over an inherited column;
- * - a SINGLE_TABLE child target is limited to its subtype, and a root target
- *   builds each row as its subclass.
+ * - a SINGLE_TABLE child target is limited to its subtype;
+ * - a SINGLE_TABLE or JOINED root target builds each row as its subclass —
+ *   the to-one JOIN, a cursor page's to-one read, the batched OneToMany and
+ *   the query builder's relation joins.
  *
  * SQLite: __tests__/integration/sqlite/inheritance/joined-child-relation-targets.test.ts,
- * __tests__/integration/sqlite/inheritance/sti-relation-targets.test.ts
+ * __tests__/integration/sqlite/inheritance/sti-relation-targets.test.ts,
+ * __tests__/integration/sqlite/inheritance/relation-root-targets.test.ts
  */
 import "reflect-metadata";
 import { EntityManager } from "../../src/core/EntityManager";
@@ -50,6 +53,7 @@ describe.each(getTestDrivers())(
       owner: shortName("irto"),
       asset: shortName("irta"),
       vehicle: shortName("irtv"),
+      building: shortName("irtb"),
       trip: shortName("irtt"),
       garage: shortName("irtg"),
       garageVehicles: shortName("irtgv"),
@@ -69,6 +73,7 @@ describe.each(getTestDrivers())(
             @OneToMany(() => Vehicle, { mappedBy: "owner" }) vehicles!: any[];
             @OneToMany(() => Vehicle, { mappedBy: "driver" }) driven!: any[];
             @OneToOne(() => Vehicle, { inverseSide: "keeper" }) kept!: any;
+            @OneToMany(() => Asset, { mappedBy: "owner" }) assets!: any[];
           }
 
           @Entity({ name: t.asset })
@@ -95,6 +100,12 @@ describe.each(getTestDrivers())(
             keeper!: any;
           }
 
+          @Entity({ name: t.building })
+          @DiscriminatorValue("building")
+          class Building extends Asset {
+            @Column({ type: "int", nullable: true }) floors!: number | null;
+          }
+
           @Entity({ name: t.trip })
           class Trip {
             @PrimaryGeneratedColumn() id!: number;
@@ -102,6 +113,14 @@ describe.each(getTestDrivers())(
             @ManyToOne(() => Vehicle, (v: any) => v.id)
             @RelationColumn({ name: "vehicle_id", nullable: true })
             vehicle!: any;
+            /** The JOINED root. */
+            @ManyToOne(() => Asset, (a: any) => a.id)
+            @RelationColumn({ name: "asset_id", nullable: true })
+            asset!: any;
+            /** The SINGLE_TABLE root. */
+            @ManyToOne(() => Comment, (c: any) => c.id)
+            @RelationColumn({ name: "note_id", nullable: true })
+            note!: any;
           }
 
           @Entity({ name: t.garage })
@@ -145,7 +164,7 @@ describe.each(getTestDrivers())(
             @Column({ type: "varchar", length: 10, nullable: true }) mood!: string | null;
           }
 
-          E = { Owner, Asset, Vehicle, Trip, Garage, Post, Comment, Premium, Plain };
+          E = { Owner, Asset, Vehicle, Building, Trip, Garage, Post, Comment, Premium, Plain };
           return { entities: Object.values(E) };
         },
       );
@@ -159,7 +178,9 @@ describe.each(getTestDrivers())(
       const van = await em.save(E.Vehicle, { label: "van", wheels: 4, owner: alice, driver: alice });
       const gone = await em.save(E.Vehicle, { label: "gone", wheels: 2, owner: alice });
       await em.softDelete(E.Vehicle, { id: gone.id });
-      ids.trip = (await em.save(E.Trip, { dest: "coast", vehicle: truck })).id;
+      const hq = await em.save(E.Building, { label: "hq", floors: 3, owner: alice });
+      ids.hq = hq.id;
+      ids.trip = (await em.save(E.Trip, { dest: "coast", vehicle: truck, asset: hq })).id;
       const garage = await em.save(E.Garage, { city: "seoul" });
       ids.garage = garage.id;
       const q = (name: string) => (type === "postgres" ? `"${name}"` : `\`${name}\``);
@@ -170,14 +191,25 @@ describe.each(getTestDrivers())(
       const post = await em.save(E.Post, { title: "p1" });
       ids.post = post.id;
       await em.save(E.Plain, { body: "plain", mood: "ok", post });
-      await em.save(E.Premium, { body: "premium", tier: 2, post });
+      const premium = await em.save(E.Premium, { body: "premium", tier: 2, post });
       await em.save(E.Premium, { body: "premium-2", tier: 1, post });
+      await em.updateMany(E.Trip, { noteId: premium.id }, { where: { id: ids.trip } });
     }, 60000);
 
     afterAll(async () => {
       try {
         await rawQuery(disableFkChecksSql(type));
-        for (const name of [t.garageVehicles, t.garage, t.trip, t.vehicle, t.asset, t.owner, t.comment, t.post]) {
+        for (const name of [
+          t.garageVehicles,
+          t.garage,
+          t.trip,
+          t.vehicle,
+          t.building,
+          t.asset,
+          t.owner,
+          t.comment,
+          t.post,
+        ]) {
           await dropTestTable(name);
         }
         await rawQuery(enableFkChecksSql(type));
@@ -219,6 +251,59 @@ describe.each(getTestDrivers())(
 
         const bob = await em.findOne(E.Owner, { where: { id: ids.bob }, relations: ["kept"] });
         expect(bob.kept).toMatchObject({ label: "truck", wheels: 6 });
+      });
+    });
+
+    describe("root target", () => {
+      it("JOINs a ManyToOne as each row's subclass, and on a cursor page", async () => {
+        const trip = await em.findOne(E.Trip, { where: { id: ids.trip }, relations: ["asset", "note"] });
+        expect(trip.asset).toBeInstanceOf(E.Building);
+        expect(trip.asset).toMatchObject({ id: ids.hq, label: "hq", floors: 3 });
+        expect("wheels" in trip.asset).toBe(false);
+        expect("dtype" in trip.asset).toBe(false);
+        expect(trip.note).toBeInstanceOf(E.Premium);
+        expect(trip.note).toMatchObject({ body: "premium", tier: 2 });
+        expect("mood" in trip.note).toBe(false);
+        expect("kind" in trip.note).toBe(false);
+
+        const page = await em.findWithCursor(E.Trip, { take: 5, relations: ["asset"] });
+        expect(page.data[0].asset).toBeInstanceOf(E.Building);
+        expect(page.data[0].asset.floors).toBe(3);
+      });
+
+      it("batches a OneToMany targeting the JOINED root as subclasses, paged per parent", async () => {
+        const owner = await em.findOne(E.Owner, {
+          where: { id: ids.alice },
+          relations: { assets: { orderBy: { label: "ASC" } } },
+        });
+        expect(owner.assets.map((a: any) => [a.constructor, a.label])).toEqual([
+          [E.Building, "hq"],
+          [E.Vehicle, "truck"],
+          [E.Vehicle, "van"],
+        ]);
+        expect(owner.assets[0].floors).toBe(3);
+        expect(owner.assets[1].wheels).toBe(6);
+
+        const paged = await em.findOne(E.Owner, {
+          where: { id: ids.alice },
+          relations: { assets: { orderBy: { label: "DESC" }, take: 1 } },
+        });
+        expect(paged.assets.map((a: any) => [a.constructor, a.label, a.wheels])).toEqual([[E.Vehicle, "van", 4]]);
+      });
+
+      it("builds the query builder's relation joins as subclasses and reads a JOINED child's inherited columns", async () => {
+        const [trip] = await em
+          .createQueryBuilder(E.Trip, "t")
+          .leftJoinRelationAndSelect("asset", "a")
+          .leftJoinRelationAndSelect("note", "n")
+          .leftJoinRelationAndSelect("vehicle", "v")
+          .where({ id: ids.trip })
+          .getMany();
+        expect(trip.asset).toBeInstanceOf(E.Building);
+        expect(trip.asset.floors).toBe(3);
+        expect(trip.note).toBeInstanceOf(E.Premium);
+        expect("mood" in trip.note).toBe(false);
+        expect(trip.vehicle).toMatchObject({ label: "truck", wheels: 6 });
       });
     });
 

@@ -13,7 +13,12 @@ import { RawQueryBuilderFactory } from "../RawQueryBuilderFactory";
 import type { BaseRawQueryBuilder } from "../BaseRawQueryBuilder";
 import { Conditions } from "../Conditions";
 import { ResultTransformerFactory } from "../ResultTransformerFactory";
-import { joinedColumnAlias, type ResultTransformer } from "../ResultTransformer";
+import {
+  joinedColumnAlias,
+  type JoinedRelations,
+  type ResultTransformer,
+  type RowClassifier,
+} from "../ResultTransformer";
 import { injectLazyProxy } from "../LazyLoader";
 import { MetadataContext } from "../../metadata/MetadataContext";
 import { EntityMetadataNotFoundError } from "../../errors/EntityMetadataNotFoundError";
@@ -72,14 +77,17 @@ import {
 } from "../TpcUnionSource";
 import {
   buildJoinedChildSelect,
+  buildJoinedRootSelect,
   isJoinedChild,
-  joinedChildJoinColumns,
+  isJoinedPolymorphicRoot,
   JOINED_CHILD_ALIAS,
   joinedRootColumns,
+  joinedSubclassColumns,
+  joinedSubclassPrefixes,
 } from "../JoinedChildSource";
+import { polymorphicRowClassifier } from "../PolymorphicRows";
 import { createDialectExpression } from "../../dialects/DialectExpression";
 import { singleTableRowShape, type RowShape } from "../SingleTableRows";
-import { collectTableComputedColumns } from "../generators/entityColumns";
 
 /**
  * Per-entity read-path column plan: the physical SELECT list (plain and
@@ -362,6 +370,14 @@ export class ReadExecutor {
    * The rows of a TPC root read with each row limited to its own table's
    * columns — see {@link pruneTpcSiblingColumns}.
    */
+  /** How a row of `entity` is built as its subclass — see {@link polymorphicRowClassifier}. */
+  private rowClassifier(entity: ClazzType<any>): RowClassifier | undefined {
+    return polymorphicRowClassifier(
+      { inheritanceResolver: this.inheritanceResolver, resolver: this.resolver },
+      entity,
+    );
+  }
+
   /** The SINGLE_TABLE row shape of `entity` — see {@link singleTableRowShape}. */
   private singleTableShape(entity: ClazzType<any>): RowShape | undefined {
     return singleTableRowShape(
@@ -876,45 +892,9 @@ export class ReadExecutor {
     op: FindOperation<T>,
     selectMap: string[],
   ): void {
-    selectMap.push(...this.polymorphicChildColumns(op.entity, op.metadata));
-  }
-
-  private polymorphicChildColumns(
-    root: ClazzType<any>,
-    rootMetadata: { columns: ColumnMetadata[] },
-  ): string[] {
-    const columns: string[] = [];
-    const pk = rootMetadata.columns.find((c: any) => c.options?.primary);
-    if (!pk) return columns;
-    for (const ChildEntity of this.tptChildren(root)) {
-      const childMeta = this.resolver.resolveEntityMetadata(ChildEntity);
-      if (!childMeta) continue;
-      const childTableName = childMeta.name;
-      const childColumns = new Set(
-        this.inheritanceResolver
-          .getOwnColumns(ChildEntity)
-          .map((col) => col.name as string),
-      );
-      for (const name of joinedChildJoinColumns(this.resolver, ChildEntity, root)) {
-        childColumns.add(name);
-      }
-      for (const computed of collectTableComputedColumns(ChildEntity)) {
-        childColumns.add(computed.name);
-      }
-      for (const name of childColumns) {
-        columns.push(
-          `${this.ctx.wrap(childTableName)}.${this.ctx.wrap(name)} AS ${this.ctx.wrap(`${childTableName}_${name}`)}`,
-        );
-      }
-    }
-    return columns;
-  }
-
-  /** The subclasses of a JOINED root, each with a table of its own. */
-  private tptChildren(root: ClazzType<any>): ClazzType<any>[] {
-    return this.inheritanceResolver
-      .getConcreteEntities(root)
-      .filter((c) => c !== root);
+    selectMap.push(
+      ...joinedSubclassColumns(this.tpcSourceContext(), op.entity).map((col) => col.select),
+    );
   }
 
   /**
@@ -922,43 +902,7 @@ export class ReadExecutor {
    * read gives each subclass's columns.
    */
   private tptChildPrefixMap(root: ClazzType<any>): Map<string, string> {
-    const prefixes = new Map<string, string>();
-    for (const child of this.tptChildren(root)) {
-      const childMeta = this.resolver.resolveEntityMetadata(child);
-      const value = this.inheritanceResolver.getDiscriminatorValue(child);
-      if (childMeta && value) prefixes.set(value, childMeta.name);
-    }
-    return prefixes;
-  }
-
-  /**
-   * `SELECT <root columns>, <child columns as childTable_column> FROM root
-   * LEFT JOIN child ...` — a JOINED root's rows with each subclass's columns,
-   * as find() reads them. Wrapped as a derived table, the unqualified WHERE
-   * and keyset of a cursor page read the root's columns under their names.
-   */
-  private buildJoinedRootSelect(
-    root: ClazzType<any>,
-    rootMetadata: EntityScannerMetadata,
-    plan: ReadColumnPlan,
-  ): Sql | null {
-    const pk = rootMetadata.columns.find((c: any) => c.options?.primary);
-    if (!pk) return null;
-    const rootTable = this.ctx.wrap(rootMetadata.name);
-    const columns = [
-      ...plan.selectQualified,
-      ...this.polymorphicChildColumns(root, rootMetadata),
-    ];
-    const joins: string[] = [];
-    for (const child of this.tptChildren(root)) {
-      const childMeta = this.resolver.resolveEntityMetadata(child);
-      if (!childMeta) continue;
-      const childTable = this.ctx.wrap(childMeta.name);
-      joins.push(
-        ` LEFT JOIN ${this.ctx.wrapTable(childMeta.name)} AS ${childTable} ON ${rootTable}.${this.ctx.wrap(pk.name)} = ${childTable}.${this.ctx.wrap(pk.name)}`,
-      );
-    }
-    return sql`SELECT ${raw(columns.join(", "))} FROM ${raw(this.ctx.wrapTable(rootMetadata.name))} AS ${raw(rootTable)}${raw(joins.join(""))}`;
+    return joinedSubclassPrefixes(this.tpcSourceContext(), root);
   }
 
   /**
@@ -981,7 +925,7 @@ export class ReadExecutor {
       if (!relatedMetadata) continue;
 
       const relAlias = rel.columnName;
-      for (const name of this.readColumnNames(RelatedEntity, relatedMetadata)) {
+      for (const name of this.relationColumnNames(RelatedEntity, relatedMetadata)) {
         const alias = joinedColumnAlias(rel.columnName, name);
         selectMap.push(
           `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(name)} AS ${this.ctx.wrap(alias)}`,
@@ -996,13 +940,31 @@ export class ReadExecutor {
       if (!relatedMetadata) continue;
 
       const relAlias = rel.propertyKey;
-      for (const name of this.readColumnNames(RelatedEntity, relatedMetadata)) {
+      for (const name of this.relationColumnNames(RelatedEntity, relatedMetadata)) {
         const alias = joinedColumnAlias(rel.propertyKey, name);
         selectMap.push(
           `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(name)} AS ${this.ctx.wrap(alias)}`,
         );
       }
     }
+  }
+
+  /**
+   * The columns a JOINed relation reads of `RelatedEntity`: those find()
+   * reads of it, plus — for the root of a JOINED hierarchy — each
+   * subclass's own columns, under the names {@link relationJoinSource}
+   * gives them, so the row can be built as its subclass.
+   */
+  private relationColumnNames(
+    RelatedEntity: ClazzType<any>,
+    relatedMetadata: { name: string; columns: ColumnMetadata[] },
+  ): readonly string[] {
+    const names = this.readColumnNames(RelatedEntity, relatedMetadata);
+    if (!isJoinedPolymorphicRoot(this.inheritanceResolver, RelatedEntity)) return names;
+    return [
+      ...names,
+      ...joinedSubclassColumns(this.tpcSourceContext(), RelatedEntity).map((col) => col.alias),
+    ];
   }
 
   /**
@@ -1267,20 +1229,36 @@ export class ReadExecutor {
   }
 
   /**
-   * What a to-one relation is JOINed from: the related table, or — for a
-   * JOINED child, whose inherited columns live on the root's table — the
-   * child's table joined to the root's, as a derived table under the
-   * relation's alias, so `alias.column` reads every column of the child.
+   * What a to-one relation is JOINed from: the related table, or a derived
+   * table under the relation's alias when the target spans tables of a
+   * JOINED hierarchy —
+   *
+   * - a child, whose inherited columns live on the root's table: the child's
+   *   table joined to the root's, so `alias.column` reads every column of
+   *   the child;
+   * - the root, whose rows may be any subclass's: the root's table joined to
+   *   every subclass table, each subclass's columns named
+   *   `<childTable>_<column>`, as find() on the root reads it.
    */
   private relationJoinSource(
     RelatedEntity: ClazzType<any>,
     relatedTableName: string,
     relAlias: string,
   ): string | Sql {
+    let select: Sql | null = null;
     if (isJoinedChild(this.inheritanceResolver, RelatedEntity)) {
-      const select = buildJoinedChildSelect(this.tpcSourceContext(), RelatedEntity);
-      if (select) return sql`(${select}) AS ${raw(this.ctx.wrap(relAlias))}`;
+      select = buildJoinedChildSelect(this.tpcSourceContext(), RelatedEntity);
+    } else if (isJoinedPolymorphicRoot(this.inheritanceResolver, RelatedEntity)) {
+      const metadata = this.resolver.resolveEntityMetadata(RelatedEntity);
+      select = metadata
+        ? buildJoinedRootSelect(
+            this.tpcSourceContext(),
+            RelatedEntity,
+            this.readColumnNames(RelatedEntity, metadata),
+          )
+        : null;
     }
+    if (select) return sql`(${select}) AS ${raw(this.ctx.wrap(relAlias))}`;
     return this.ctx.wrapTable(relatedTableName);
   }
 
@@ -1464,10 +1442,11 @@ export class ReadExecutor {
     const { entity, hasEagerJoins } = op;
     const isEntityArray = queryResult.results.length > 1;
     // The relations JOINed into the rows — `hasEagerJoins` also covers the
-    // JOINs of an inheritance hierarchy's tables.
-    const joined = new Set<string>([
-      ...op.eagerM2O.map((rel) => rel.columnName),
-      ...op.eagerO2O.map((rel) => rel.propertyKey),
+    // JOINs of an inheritance hierarchy's tables. A relation targeting the
+    // root of a hierarchy builds its row as the subclass the row names.
+    const joined: JoinedRelations = new Map([
+      ...op.eagerM2O.map((rel) => [rel.columnName, this.rowClassifier(rel.getMappingEntity())] as const),
+      ...op.eagerO2O.map((rel) => [rel.propertyKey, this.rowClassifier(rel.getRelatedEntity())] as const),
     ]);
 
     // STI/TPC: polymorphic query on the root entity — instantiate the correct subclass via the discriminator
@@ -1808,10 +1787,10 @@ export class ReadExecutor {
       const joinedSelect = isJoinedChild(this.inheritanceResolver, entity)
         ? buildJoinedChildSelect(this.tpcSourceContext(), entity)
         : this.isTptPolymorphicRoot(entity)
-          ? this.buildJoinedRootSelect(
+          ? buildJoinedRootSelect(
+              this.tpcSourceContext(),
               entity,
-              metadata,
-              this.getColumnPlan(entity, metadata),
+              this.getColumnPlan(entity, metadata).allColNames,
             )
           : null;
       if (keyset.subKeyColumn !== undefined) {
@@ -2127,10 +2106,7 @@ export class ReadExecutor {
 
   /** A JOINED root whose reads are polymorphic: it has subclasses. */
   private isTptPolymorphicRoot(entity: ClazzType<any>): boolean {
-    return (
-      this.inheritanceResolver.getStrategy(entity) === "JOINED" &&
-      this.inheritanceResolver.isPolymorphicQuery(entity)
-    );
+    return isJoinedPolymorphicRoot(this.inheritanceResolver, entity);
   }
 
   /**

@@ -435,12 +435,26 @@ const cards = await em.find(CreditCardPayment, {
 
 ### A relation that targets a child
 
-A relation of another entity can point at a child -- `Refund.payment` typed `CreditCardPayment`, `Bank.cards`, a ManyToMany of card payments. The child's row is split between its table and the root's, so every read of the relation -- the JOIN of a ManyToOne or owning OneToOne, the batched OneToMany, ManyToMany and inverse OneToOne reads, a cursor page's to-one reads -- reads the child's table joined to the root's, the way `find(CreditCardPayment)` does. The inherited columns are there, and a relation's `where` / `orderBy` / `take` can name them.
+A relation of another entity can point at a child -- `Refund.payment` typed `CreditCardPayment`, `Bank.cards`, a ManyToMany of card payments. The child's row is split between its table and the root's, so every read of the relation -- the JOIN of a ManyToOne or owning OneToOne, the batched OneToMany, ManyToMany and inverse OneToOne reads, a cursor page's to-one reads, the query builder's relation joins -- reads the child's table joined to the root's, the way `find(CreditCardPayment)` does. The inherited columns are there, and a relation's `where` / `orderBy` / `take` -- or a query builder `where("p.amount", ...)` on the join alias -- can name them.
 
 ```sql
 LEFT JOIN (SELECT "credit_card_payment"."id", "credit_card_payment"."cardNumber", "payment"."amount", ...
            FROM "credit_card_payment" AS "credit_card_payment"
            INNER JOIN "payment" AS "payment" ON "credit_card_payment"."id" = "payment"."id") AS "payment"
+  ON "refund"."payment_id" = "payment"."id"
+```
+
+### A relation that targets the root
+
+A relation typed as the root -- `Refund.payment` typed `Payment` -- can reach a row of any subclass, and that subclass's own columns live on its table. Every read of the relation joins the root's table to every child table, as `find(Payment)` does, and builds each row as the subclass its discriminator names: `refund.payment` is a `CreditCardPayment` with its `cardNumber`, or a `BankTransferPayment` with its `bankCode`. This holds for the same paths as above, the query builder's `leftJoinRelationAndSelect()` included; a query builder join that only filters (`leftJoinRelation()`) reads the root's table alone.
+
+```sql
+LEFT JOIN (SELECT "payment"."id", "payment"."amount", "payment"."dtype", ...,
+                  "credit_card_payment"."cardNumber" AS "credit_card_payment_cardNumber",
+                  "bank_transfer_payment"."bankCode" AS "bank_transfer_payment_bankCode"
+           FROM "payment" AS "payment"
+           LEFT JOIN "credit_card_payment" AS "credit_card_payment" ON "payment"."id" = "credit_card_payment"."id"
+           LEFT JOIN "bank_transfer_payment" AS "bank_transfer_payment" ON "payment"."id" = "bank_transfer_payment"."id") AS "payment"
   ON "refund"."payment_id" = "payment"."id"
 ```
 

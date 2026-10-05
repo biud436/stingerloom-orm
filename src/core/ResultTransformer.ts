@@ -51,6 +51,54 @@ export function joinedColumnAlias(relation: string, column: string): string {
 
 const JOINED_COLUMN_SEPARATOR = "__";
 
+/**
+ * How a row is built when it may belong to any class of an inheritance
+ * hierarchy: the class its discriminator names, and the row cut to that
+ * class's columns.
+ */
+export type RowClassifier = (row: Record<string, any>) => {
+  entityClass: MyClassConstructor<any>;
+  row: Record<string, any>;
+};
+
+/**
+ * The relations a read JOINed into its rows, by property name. A relation
+ * whose target is the root of a hierarchy carries the {@link RowClassifier}
+ * its rows are built through; the others are built as the declared class.
+ */
+export type JoinedRelations = ReadonlyMap<string, RowClassifier | undefined>;
+
+/**
+ * One row of a polymorphic JOINED read, cut to the subclass whose table is
+ * `prefix`: that subclass's columns (`<prefix>_<column>`) under their bare
+ * names, the root's columns as they are, and neither the other subclasses'
+ * columns nor the discriminator. `allPrefixes` are every subclass's table.
+ */
+export function joinedSubclassRow(
+  row: Record<string, any>,
+  discriminatorColumnName: string,
+  prefix: string | undefined,
+  allPrefixes: Iterable<string>,
+): Record<string, any> {
+  const flatRow: Record<string, any> = {};
+  for (const key in row) {
+    if (key === discriminatorColumnName) continue;
+    if (prefix && key.startsWith(`${prefix}_`)) {
+      flatRow[key.substring(prefix.length + 1)] = row[key];
+      continue;
+    }
+    let isOtherChild = false;
+    for (const other of allPrefixes) {
+      if (other !== prefix && key.startsWith(`${other}_`)) {
+        isOtherChild = true;
+        break;
+      }
+    }
+    if (!isOtherChild) flatRow[key] = row[key];
+  }
+  return flatRow;
+}
+
 // ── Strategy 1: Per-entity metadata cache ─────────────────
 // Instead of calling Reflect.getMetadata() + rebuilding Maps on every row,
 // we compute once per entity class and cache the result.
@@ -416,7 +464,7 @@ export class ResultTransformer implements BaseResultTransformer {
   private toRowEntity<T>(
     entityClass: MyClassConstructor<T>,
     row: any,
-    joined?: ReadonlySet<string>,
+    joined?: JoinedRelations,
   ): T {
     if (!joined || joined.size === 0) {
       return this.applyColumnTransforms(
@@ -443,7 +491,7 @@ export class ResultTransformer implements BaseResultTransformer {
     result: QueryResult<any> | undefined,
     discriminatorMap: Map<string, MyClassConstructor<any>>,
     discriminatorColumnName: string,
-    joined?: ReadonlySet<string>,
+    joined?: JoinedRelations,
     rowShape?: (entityClass: MyClassConstructor<any>, row: any) => any,
   ): T[] {
     if (this.hasNoResults(result)) {
@@ -476,14 +524,12 @@ export class ResultTransformer implements BaseResultTransformer {
     discriminatorMap: Map<string, MyClassConstructor<any>>,
     discriminatorColumnName: string,
     childTablePrefixMap: Map<string, string>,
-    joined?: ReadonlySet<string>,
+    joined?: JoinedRelations,
   ): T[] {
     if (this.hasNoResults(result)) {
       return this.buildEmptyEntities<T>();
     }
 
-    // Build a reverse lookup: for each disc value, get the set of all prefixes
-    // from OTHER children so we can skip them.
     const allPrefixes = new Set(childTablePrefixMap.values());
 
     const r = result!;
@@ -498,27 +544,7 @@ export class ResultTransformer implements BaseResultTransformer {
         ? childTablePrefixMap.get(String(discValue))
         : undefined;
 
-      const flatRow: any = {};
-      for (const [key, value] of Object.entries(item)) {
-        if (key === discriminatorColumnName) continue;
-        if (childPrefix && key.startsWith(`${childPrefix}_`)) {
-          // This child's prefixed column — strip prefix
-          flatRow[key.substring(childPrefix.length + 1)] = value;
-        } else {
-          // Check if it belongs to another child's prefix — skip if so
-          let isOtherChild = false;
-          for (const prefix of allPrefixes) {
-            if (prefix !== childPrefix && key.startsWith(`${prefix}_`)) {
-              isOtherChild = true;
-              break;
-            }
-          }
-          if (!isOtherChild) {
-            flatRow[key] = value;
-          }
-        }
-      }
-
+      const flatRow = joinedSubclassRow(item, discriminatorColumnName, childPrefix, allPrefixes);
       return this.toRowEntity(TargetClass, flatRow, joined) as T;
     });
   }
@@ -554,15 +580,15 @@ export class ResultTransformer implements BaseResultTransformer {
    * only joins one level deep anyway, so deeper expansion would yield empty
    * objects regardless.
    *
-   * `joined` names the relations the query JOINed. The others are null
-   * without reading the row.
+   * `joined` names the relations the query JOINed (see
+   * {@link JoinedRelations}). The others are null without reading the row.
    */
   private fillPropertiesToForeignObject<T>(
     entityClass: MyClassConstructor<T>,
     baseEntity: ForeignObject<any>,
     resultSet: any,
     visited: Set<Function> = new Set(),
-    joined?: ReadonlySet<string>,
+    joined?: JoinedRelations,
   ) {
     visited.add(entityClass as unknown as Function);
 
@@ -595,40 +621,12 @@ export class ResultTransformer implements BaseResultTransformer {
           }
         }
 
-        // Recursively handle nested foreign-key relations, matching their
-        // prefix inside this relation's prefix-stripped columns as the
-        // OneToOne branch does (`author__team__id` → `team__id`). Matching it
-        // against the whole row picked up any JOIN of the reading entity that
-        // shares the name — a Post's own `team` became its author's `team`.
-        const relatedManyToOneMappings =
-          getCachedRelationInfo(ForeignClass).manyToOne;
-
-        if (
-          relatedManyToOneMappings &&
-          !visited.has(ForeignClass as unknown as Function)
-        ) {
-          this.fillPropertiesToForeignObject(
-            ForeignClass,
-            foreignObject,
-            foreignObject,
-            visited,
-          );
-        }
-
-        // If the LEFT JOIN produced no match, all values are null → assign null.
-        // Reverse-map the prefix-stripped DB column names to the related
-        // entity's property keys (so a NamingStrategy / @Column({name}) on the
-        // FK side hydrates correctly), then apply that entity's read transforms
-        // (boolean/json/custom) — the eager-join path skipped both before.
-        baseEntity[columnName] = this.isDeepNull(foreignObject)
-          ? null
-          : this.applyColumnTransforms(
-              ForeignClass,
-              deserializeEntity(
-                ForeignClass,
-                remapRowToPropertyKeys(ForeignClass, foreignObject),
-              ),
-            );
+        baseEntity[columnName] = this.buildJoinedRelation(
+          ForeignClass,
+          foreignObject,
+          visited,
+          joined?.get(columnName),
+        );
       }
     }
 
@@ -655,34 +653,12 @@ export class ResultTransformer implements BaseResultTransformer {
           }
         }
 
-        // #116: Recursively process nested ManyToOne relations within OneToOne entities
-        // Pass foreignObject as resultSet so nested prefix matching works correctly
-        const relatedManyToOneMappings =
-          getCachedRelationInfo(RelatedClass).manyToOne;
-
-        if (
-          relatedManyToOneMappings &&
-          !visited.has(RelatedClass as unknown as Function)
-        ) {
-          this.fillPropertiesToForeignObject(
-            RelatedClass,
-            foreignObject,
-            foreignObject,
-            visited,
-          );
-        }
-
-        // Assign null when the LEFT JOIN did not match. Reverse-map + apply
-        // read transforms for the related entity (see the ManyToOne branch).
-        baseEntity[propertyKey] = this.isDeepNull(foreignObject)
-          ? null
-          : this.applyColumnTransforms(
-              RelatedClass,
-              deserializeEntity(
-                RelatedClass,
-                remapRowToPropertyKeys(RelatedClass, foreignObject),
-              ),
-            );
+        baseEntity[propertyKey] = this.buildJoinedRelation(
+          RelatedClass,
+          foreignObject,
+          visited,
+          joined?.get(propertyKey),
+        );
       }
     }
 
@@ -690,6 +666,47 @@ export class ResultTransformer implements BaseResultTransformer {
     // the recursive calls both build it fresh), and deserializeEntity only
     // reads it — no defensive copy needed.
     return deserializeEntity(entityClass, baseEntity);
+  }
+
+  /**
+   * The entity one JOINed relation's columns build — `foreignObject` holds
+   * them under their DB names, the relation prefix stripped — or null when
+   * the LEFT JOIN matched no row.
+   *
+   * `classify`, given when the relation targets the root of a hierarchy,
+   * builds the row as the subclass its discriminator names, cut to that
+   * class's columns, as a read of the root does.
+   */
+  private buildJoinedRelation(
+    DeclaredClass: MyClassConstructor<any>,
+    foreignObject: ForeignObject<any>,
+    visited: Set<Function>,
+    classify: RowClassifier | undefined,
+  ): any {
+    if (this.isDeepNull(foreignObject)) return null;
+    const { entityClass, row } = classify
+      ? classify(foreignObject)
+      : { entityClass: DeclaredClass, row: foreignObject };
+
+    // Nested relations match their prefix inside this relation's
+    // prefix-stripped columns (`author__team__id` → `team__id`). Matching it
+    // against the whole row picked up any JOIN of the reading entity that
+    // shares the name — a Post's own `team` became its author's `team`.
+    if (
+      getCachedRelationInfo(entityClass).manyToOne &&
+      !visited.has(entityClass as unknown as Function)
+    ) {
+      this.fillPropertiesToForeignObject(entityClass, row, row, visited);
+    }
+
+    // Reverse-map the DB column names to the related entity's property keys
+    // (so a NamingStrategy / @Column({name}) on the FK side hydrates
+    // correctly), then apply that entity's read transforms
+    // (boolean/json/custom).
+    return this.applyColumnTransforms(
+      entityClass,
+      deserializeEntity(entityClass, remapRowToPropertyKeys(entityClass, row)),
+    );
   }
 
   /**
@@ -714,7 +731,7 @@ export class ResultTransformer implements BaseResultTransformer {
     entityClass: MyClassConstructor<T>,
     queryResult: QueryResult<any> | undefined,
     relations?: { [key: string]: MyClassConstructor<any> },
-    joined?: ReadonlySet<string>,
+    joined?: JoinedRelations,
   ): T | T[] | undefined {
     if (this.hasNoResults(queryResult)) {
       return this.buildNullEntity();

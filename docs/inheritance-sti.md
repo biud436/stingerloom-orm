@@ -404,7 +404,7 @@ const cards = await em.find(CreditCardPayment, { relations: ["store", "issuer"] 
 
 ### A relation that targets the hierarchy
 
-A relation of another entity can point at the root or at one subtype. One pointing at a subtype reads that subtype's rows only -- the discriminator is added to its JOIN or batched read, as `find(CreditCardPayment)` adds it -- so `Store.cardPayments` holds no bank transfers. One pointing at the root builds each row as its subclass, in that subclass's shape, as `find(Payment)` does.
+A relation of another entity can point at the root or at one subtype. One pointing at a subtype reads that subtype's rows only -- the discriminator is added to its JOIN or batched read, as `find(CreditCardPayment)` adds it -- so `Store.cardPayments` holds no bank transfers. One pointing at the root builds each row as its subclass, in that subclass's shape, as `find(Payment)` does. Both hold on every read of the relation: the JOIN of a ManyToOne or owning OneToOne, the batched OneToMany, ManyToMany and inverse OneToOne reads, a cursor page's to-one reads, and the query builder's joins (`leftJoinRelationAndSelect()`, `leftJoinAndSelect(CreditCardPayment, ...)`) -- where a key that points at a sibling's row joins nothing.
 
 ```typescript
 @Entity()
