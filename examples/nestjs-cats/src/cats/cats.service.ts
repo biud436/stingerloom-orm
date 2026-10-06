@@ -24,7 +24,10 @@ export class CatsService {
   ) {}
 
   async onModuleInit() {
+    // Cats reference owners: clear them first, or the owners' DELETE fails
+    // on the foreign key.
     await this.truncateCats();
+    await this.ownersService.truncateOwners();
   }
 
   @Transactional()
@@ -189,7 +192,7 @@ export class CatsService {
   }
 
   /**
-   * clear — removes all rows from the table (TRUNCATE).
+   * clear — deletes every row of the table.
    */
   async clear(): Promise<void> {
     await this.catRepository.clear();

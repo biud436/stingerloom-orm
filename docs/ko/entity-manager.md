@@ -680,9 +680,7 @@ UPDATE `post` SET `deletedAt` = NULL WHERE `id` = ?
 
 ### clear()가 있는 이유와 쓸 때
 
-`clear()`는 테이블의 **모든 행**을 지웁니다. `delete()`와 달리 내부적으로 `TRUNCATE`를 써요. 개별 행 삭제 로그를 남기지 않기 때문에 훨씬 빠릅니다.
-
-테스트 사이의 정리 작업이나 시드 데이터 초기화에 쓰세요. 프로덕션에서는 정말로 테이블을 비우려는 게 아니라면 손대지 않는 게 좋습니다.
+`clear()`는 호출한 쪽이 볼 수 있는 **엔티티의 모든 행**을 지웁니다. 테스트 사이의 정리 작업이나 시드 데이터 초기화에 쓰세요. 프로덕션에서는 정말로 테이블을 비우려는 게 아니라면 손대지 않는 게 좋습니다.
 
 ```typescript
 await em.clear(User);
@@ -690,18 +688,24 @@ await em.clear(User);
 ```
 
 ```sql
--- PostgreSQL
-TRUNCATE TABLE "user"
-
--- MySQL (FK 안전 처리 포함)
-SET FOREIGN_KEY_CHECKS = 0;
-TRUNCATE TABLE `user`;
-SET FOREIGN_KEY_CHECKS = 1;
+DELETE FROM "user"
 ```
 
-MySQL은 외래 키로 참조되는 테이블에서 `TRUNCATE`를 실행할 수 없어서 외래 키 체크를 임시로 비활성화해야 해요. ORM이 단일 연결 내에서 이를 자동으로 처리해요.
+PostgreSQL, MySQL, SQLite 모두 같은 `DELETE` 문을 쓰기 때문에 다른 쓰기 연산과 똑같이 동작합니다.
 
-`SINGLE_TABLE` 자식 엔티티는 형제 서브타입과 테이블을 함께 쓰므로, 자식에 대한 `clear()`는 테이블을 TRUNCATE하지 않고 그 서브타입의 행만 지웁니다(`DELETE FROM "payment" WHERE "payment_type" = 'credit_card'`). [Single Table Inheritance](./inheritance-sti.md#delete)를 참고하세요.
+- **호출한 쪽의 트랜잭션 안에서 실행됩니다.** `em.transaction()`이나 `@Transactional()` 안에서 부르면 나머지 작업과 함께 커밋되거나 롤백돼요.
+- **테넌트 스코프를 지킵니다.** `tenantStrategy: "tenant_column"`에서는 현재 테넌트의 행만 지웁니다(`DELETE FROM "user" WHERE "tenant_id" = $1`). 테넌트 컨텍스트 밖에서는 `delete()`와 마찬가지로 `tenantOnMissingContext` 정책을 따르고, 스키마 전략에서는 활성 테넌트의 테이블에서 지웁니다.
+- **다른 테이블에는 쓰지 않습니다.** 지우는 행을 참조하는 외래 키는 선언한 `onDelete` 동작을 따릅니다. `CASCADE`면 참조하는 행도 지워지고, `SET NULL`이면 그 키가 비워지며, 기본값(`NO ACTION`)이면 참조하는 행이 있을 때 `clear()`가 실패하고 아무 행도 지워지지 않아요. 참조하는 테이블을 먼저 비우세요.
+
+  ```typescript
+  await em.clear(Post); // post가 user를 참조
+  await em.clear(User);
+  ```
+
+- **아이덴티티 카운터를 재시작하지 않습니다.** 다음에 넣는 행은 1이 아니라 이어지는 id를 받습니다.
+- **엔티티의 상속 계층 전체를 다룹니다.** `SINGLE_TABLE` 자식은 자기 서브타입의 행만 지우고(`DELETE FROM "payment" WHERE "payment_type" = 'credit_card'`, [Single Table Inheritance](./inheritance-sti.md#delete) 참고), `JOINED` 자식은 자기 테이블과 루트 테이블에서 그 행을, `JOINED` 루트는 계층의 모든 테이블에서 지웁니다. `TABLE_PER_CLASS` 루트는 모든 구체 테이블에서 지워요.
+
+soft delete된 행도 함께 지워집니다. 생명주기 훅, 이벤트, `cascade` 옵션은 실행되지 않아요.
 
 ::: warning
 `clear()`는 영구적이고 되돌릴 수 없는 작업이에요. Soft delete 버전은 없어요.

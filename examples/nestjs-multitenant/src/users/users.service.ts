@@ -2,8 +2,9 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { User } from "./user.entity";
-import { BaseRepository } from "@stingerloom/orm";
-import { InjectRepository } from "@stingerloom/orm/nestjs";
+import { Post } from "../posts/post.entity";
+import { BaseRepository, EntityManager } from "@stingerloom/orm";
+import { InjectEntityManager, InjectRepository } from "@stingerloom/orm/nestjs";
 import { OnModuleInit } from "@nestjs/common";
 
 @Injectable()
@@ -11,9 +12,13 @@ export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: BaseRepository<User>,
+    @InjectEntityManager() private readonly em: EntityManager,
   ) {}
 
   async onModuleInit() {
+    // Posts reference users: clear them first, or the users' DELETE fails on
+    // the foreign key.
+    await this.em.clear(Post);
     await this.userRepository.clear();
   }
 

@@ -616,7 +616,7 @@ WHERE `id` = 1 AND `payment_type` = 'credit_card';
 
 Notice: auto-increment IDs are unique across the whole table, so any ID can name another subtype's row -- the discriminator condition is what keeps the write on this subtype. If you delete via the root entity (`em.delete(Payment, { id: 1 })`), no discriminator filter is added.
 
-The other writes through a child follow the same rule: `deleteMany()`, `update()` / `updateMany()`, `increment()` / `decrement()`, `softDelete()` / `restore()` and `createUpdateBuilder()` all add the discriminator to their WHERE clause. `clear()` on a child cannot truncate a table its siblings live in, so it deletes the subtype's rows instead:
+The other writes through a child follow the same rule: `deleteMany()`, `update()` / `updateMany()`, `increment()` / `decrement()`, `softDelete()` / `restore()` and `createUpdateBuilder()` all add the discriminator to their WHERE clause. `clear()` on a child deletes the subtype's rows only:
 
 ```typescript
 await em.clear(CreditCardPayment);
@@ -626,7 +626,7 @@ await em.clear(CreditCardPayment);
 DELETE FROM "payment" WHERE "payment_type" = 'credit_card';
 ```
 
-`em.clear(Payment)` -- the root -- still truncates the whole table.
+`em.clear(Payment)` -- the root -- deletes every row of the table.
 
 ## Pros and Cons
 

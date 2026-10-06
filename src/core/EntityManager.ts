@@ -1313,6 +1313,15 @@ export class EntityManager implements BaseEntityManager {
     return this.finishWrite(entity, this.writeExecutor.deleteMany(entity, ids));
   }
 
+  /**
+   * Deletes every row of `entity` the caller can see, with DELETE in the
+   * caller's transaction: the current tenant's rows under `tenant_column`,
+   * a SINGLE_TABLE child's own subtype, every table of a JOINED or
+   * TABLE_PER_CLASS hierarchy that holds the entity's rows. No other table
+   * is written — referencing rows follow their foreign key's `onDelete`, and
+   * the default (`NO ACTION`) fails the clear. Identity counters are not
+   * restarted; no hooks, events or cascades run.
+   */
   async clear<T>(entity: ClazzType<T>): Promise<void> {
     this.assertEntityInScope(entity, "clear");
     return this.finishWrite(entity, this.writeExecutor.clear(entity));
