@@ -2853,7 +2853,8 @@ export class WriteExecutor {
     orderBySql?: Sql,
     limit?: number,
   ): Promise<RawValue[]> {
-    let query = sql`SELECT ${raw(this.ctx.wrap("tpt_root"))}.${raw(this.ctx.wrap(scope.pk.name))} AS ${raw(this.ctx.wrap("pk"))} FROM ${scope.from} WHERE ${join(predicates, " AND ")}`;
+    let query = sql`SELECT ${raw(this.ctx.wrap("tpt_root"))}.${raw(this.ctx.wrap(scope.pk.name))} AS ${raw(this.ctx.wrap("pk"))} FROM ${scope.from}`;
+    if (predicates.length > 0) query = sql`${query} WHERE ${join(predicates, " AND ")}`;
     if (orderBySql) query = sql`${query} ${orderBySql}`;
     if (limit !== undefined) query = sql`${query} LIMIT ${raw(String(limit))}`;
     if (!this.ctx.isSqlite()) query = sql`${query} FOR UPDATE`;
@@ -2913,7 +2914,23 @@ export class WriteExecutor {
       whereMap.push(tenantWhere);
     }
 
-    const ids = await this.selectJoinedKeys(scope, whereMap, session);
+    return this.deleteJoinedKeys(entity, scope, whereMap, session);
+  }
+
+  /**
+   * Deletes the rows of a JOINED hierarchy member that `predicates` match
+   * (every row when there are none) from each table that holds part of
+   * them: the matching keys are read first, then every child table and the
+   * root are deleted by those keys, child tables first. Returns the root
+   * DELETE's affected count.
+   */
+  private async deleteJoinedKeys<T>(
+    entity: ClazzType<T>,
+    scope: JoinedWriteScope,
+    predicates: Sql[],
+    session: TransactionSessionManager,
+  ): Promise<number> {
+    const ids = await this.selectJoinedKeys(scope, predicates, session);
     const pkCol = this.ctx.wrap(scope.pk.name);
     let affected = 0;
     await this.forEachKeyChunk(ids, async (keys) => {
@@ -3138,6 +3155,23 @@ export class WriteExecutor {
     });
   }
 
+  /**
+   * Deletes every row of `entity` the caller can see, with DELETE in the
+   * caller's transaction — the same rows on every dialect:
+   *
+   * - under `tenant_column`, the current tenant's rows only (a missing
+   *   context is handled by the `tenantOnMissingContext` policy, as for
+   *   delete());
+   * - a SINGLE_TABLE child's own subtype's rows;
+   * - a JOINED child's rows in its table and the root's, and a JOINED
+   *   root's in every table of the hierarchy, child tables first;
+   * - a TABLE_PER_CLASS root's rows in every concrete table.
+   *
+   * No other table is written: a foreign key that references the deleted
+   * rows applies its declared ON DELETE action, and a RESTRICT / NO ACTION
+   * key with referencing rows fails the clear. Identity counters are not
+   * restarted. No hooks, events or cascades run.
+   */
   async clear<T>(entity: ClazzType<T>): Promise<void> {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
@@ -3151,19 +3185,31 @@ export class WriteExecutor {
       );
     }
 
-    // A SINGLE_TABLE child's table holds its siblings' rows too: truncating
-    // it would empty the whole hierarchy. Delete this subtype's rows instead.
-    const subtypeWhere = this.stiDiscriminatorClause(entity);
-    if (subtypeWhere) {
-      await this.ctx.executeInTransaction((session) =>
-        session.query(
-          sql`DELETE FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${subtypeWhere}`,
-        ),
-      );
-      return;
-    }
+    const strategy = this.inheritanceResolver.getStrategy(entity);
+    await this.ctx.executeInTransaction(async (session) => {
+      const scope = this.isJoinedHierarchyDelete(entity, strategy)
+        ? this.joinedWriteScope(entity, metadata)
+        : null;
+      if (scope) {
+        const tenantWhere = this.writeTenantWhere(entity, scope);
+        await this.deleteJoinedKeys(entity, scope, tenantWhere ? [tenantWhere] : [], session);
+        return;
+      }
 
-    await this.driver.clear(metadata.name);
+      const where = [
+        this.ctx.buildTenantWhereClause(entity),
+        this.stiDiscriminatorClause(entity, strategy),
+      ].filter((clause): clause is Sql => clause !== null);
+      await this.executePerTable(
+        entity,
+        this.resolveWriteTables(entity, metadata),
+        (tableName) => {
+          const statement = sql`DELETE FROM ${raw(this.ctx.wrapTable(tableName))}`;
+          return where.length > 0 ? sql`${statement} WHERE ${join(where, " AND ")}` : statement;
+        },
+        session,
+      );
+    });
   }
 
   async update<T>(

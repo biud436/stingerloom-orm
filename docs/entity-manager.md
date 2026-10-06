@@ -682,28 +682,32 @@ UPDATE `post` SET `deletedAt` = NULL WHERE `id` = ?
 
 ### Why clear() exists (and when to use it)
 
-`clear()` deletes **all rows** from a table. Unlike `delete()`, it uses the database's `TRUNCATE` command (or equivalent), which is significantly faster because it does not generate individual row deletion logs.
-
-Use it for test teardown or resetting seed data. Never use it in production unless you genuinely want to empty the table.
+`clear()` deletes **every row of the entity** that the caller can see. Use it for test teardown or resetting seed data. Never use it in production unless you genuinely want to empty the table.
 
 ```typescript
 await em.clear(User);
-// All rows in the "user" table are deleted
+// Every row of the "user" table is deleted
 ```
 
 ```sql
--- PostgreSQL
-TRUNCATE TABLE "user"
-
--- MySQL (with FK safety)
-SET FOREIGN_KEY_CHECKS = 0;
-TRUNCATE TABLE `user`;
-SET FOREIGN_KEY_CHECKS = 1;
+DELETE FROM "user"
 ```
 
-MySQL requires temporarily disabling foreign key checks because `TRUNCATE` cannot run on a table referenced by foreign keys. The ORM handles this automatically within a single connection to ensure isolation.
+It is a plain `DELETE`, the same statement on PostgreSQL, MySQL and SQLite, so it behaves like any other write:
 
-A `SINGLE_TABLE` child shares its table with its sibling subtypes, so `clear()` on a child deletes only that subtype's rows (`DELETE FROM "payment" WHERE "payment_type" = 'credit_card'`) instead of truncating the table. See [Single Table Inheritance](./inheritance-sti.md#delete).
+- **It runs in the caller's transaction.** Inside `em.transaction()` or `@Transactional()` it commits or rolls back with the rest of the work.
+- **It respects the tenant scope.** Under `tenantStrategy: "tenant_column"` it deletes the current tenant's rows only (`DELETE FROM "user" WHERE "tenant_id" = $1`); outside a tenant context the `tenantOnMissingContext` policy applies, as for `delete()`. Under the schema strategies it deletes from the active tenant's table.
+- **It writes no other table.** A foreign key that references the deleted rows applies the `onDelete` action you declared: `CASCADE` deletes the referencing rows, `SET NULL` clears their key, and the default (`NO ACTION`) makes `clear()` fail when referencing rows exist, leaving every row in place. Clear the referencing table first:
+
+  ```typescript
+  await em.clear(Post); // posts reference users
+  await em.clear(User);
+  ```
+
+- **It does not restart the identity counter.** The next row inserted gets the next id, not 1.
+- **It covers the entity's whole hierarchy.** A `SINGLE_TABLE` child deletes its own subtype's rows (`DELETE FROM "payment" WHERE "payment_type" = 'credit_card'`, see [Single Table Inheritance](./inheritance-sti.md#delete)); a `JOINED` child deletes its rows from its table and the root's, and a `JOINED` root from every table of the hierarchy; a `TABLE_PER_CLASS` root deletes from every concrete table.
+
+Soft-deleted rows are deleted too. No lifecycle hooks, events or `cascade` options run.
 
 ::: warning
 `clear()` is a permanent, irreversible operation. There is no soft-delete equivalent.

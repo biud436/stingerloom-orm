@@ -391,7 +391,8 @@ export class BaseRepository<T> {
   }
 
   /**
-   * Removes all rows from the entity table (TRUNCATE or DELETE FROM).
+   * Deletes every row of the entity the caller can see — see
+   * {@link EntityManager.clear}.
    */
   async clear(): Promise<void> {
     return await this.em.clear<T>(this.entity);

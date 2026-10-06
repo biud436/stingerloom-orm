@@ -213,12 +213,11 @@ export class CatsController {
     return this.catsService.update(id, updateCatDto);
   }
 
-  /** DELETE /cats/clear -- delete all rows (TRUNCATE) */
+  /** DELETE /cats/clear -- delete all rows */
   @Delete("clear")
   @ApiOperation({
     summary: "고양이 전체 삭제",
-    description:
-      "고양이 테이블의 모든 데이터를 제거합니다 (TRUNCATE TABLE).",
+    description: "고양이 테이블의 모든 행을 삭제합니다.",
   })
   @ApiResponse({ status: 200, description: "테이블 데이터 전체 삭제 완료" })
   clear() {

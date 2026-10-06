@@ -580,7 +580,7 @@ With `tenantStrategy: "tenant_column"` the ORM applies four behaviors to every e
 | `update()` / `updateMany()` / `increment()` / `decrement()` / `delete()` / `deleteMany()` / `softDelete()` / `restore()` | `affected: 0`, nothing written |
 | `createUpdateBuilder()` | `affected: 0`, nothing written |
 | any write that sets the tenant column itself | `TENANT_MISMATCH` — a tenant cannot hand one of its own rows to another tenant either. `save()` / `updateMany()` accept the *current* tenant and drop it from the `SET` list; `createUpdateBuilder().set()` and `createInsertBuilder().doUpdate()` reject the column outright, because their values are already rendered by the time the statement runs. The guard applies while a tenant context is active — `MetadataContext.runUnscoped()` and `MetadataContext.run("public", ...)` are the way to move a row deliberately |
-| `clear()` | **not scoped** — it empties the table for every tenant, like the DDL-shaped operation it is |
+| `clear()` | deletes tenant A's rows only — tenant B's rows stay |
 | `attachRelation()` / `detachRelation()` on a `@ManyToMany` pivot | **not scoped** — the join table has no tenant column; scope the owning entity instead |
 | `em.query()` raw SQL | **not scoped** — warns once per call site |
 

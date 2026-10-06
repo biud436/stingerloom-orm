@@ -421,8 +421,13 @@ export interface ISqlDriver<T = any> {
   releaseSavepointSql(name: string): string;
 
   /**
-   * Removes all rows from the specified table.
-   * Uses TRUNCATE where supported, or DELETE FROM as fallback.
+   * Removes all rows from the specified table with the dialect's own
+   * statement, outside any transaction session and tenant scope:
+   * PostgreSQL `TRUNCATE ... RESTART IDENTITY CASCADE` (which also empties
+   * every table that references this one), MySQL `TRUNCATE` with foreign key
+   * checks off, SQLite `DELETE FROM`. `EntityManager.clear()` does not call
+   * it — it deletes the entity's rows with DELETE in the caller's
+   * transaction.
    *
    * @param tableName - The name of the table to clear.
    * @returns A promise that resolves when the operation is complete.

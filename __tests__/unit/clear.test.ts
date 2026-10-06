@@ -62,15 +62,25 @@ describe("EntityManager.clear()", () => {
     };
   });
 
-  it("should call driver.clear() with the table name", async () => {
+  /** The statements the mocked transaction session ran. */
+  const sessionStatements = (): string[] => {
+    const { TransactionSessionManager } = jest.requireMock(
+      "../../src/dialects/TransactionSessionManager",
+    );
+    return (TransactionSessionManager as jest.Mock).mock.results.flatMap((r) =>
+      r.value.query.mock.calls.map(([q]: [any]) => (typeof q === "string" ? q : q.sql)),
+    );
+  };
+
+  it("deletes the rows with DELETE in a transaction session, not the driver's TRUNCATE", async () => {
     jest
       .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
 
     await em.clear(User);
 
-    expect(mockClear).toHaveBeenCalledTimes(1);
-    expect(mockClear).toHaveBeenCalledWith("User");
+    expect(mockClear).not.toHaveBeenCalled();
+    expect(sessionStatements()).toContain("DELETE FROM `User`");
   });
 
   it("should throw EntityMetadataNotFoundError if metadata is not found", async () => {
@@ -92,13 +102,23 @@ describe("EntityManager.clear()", () => {
     );
   });
 
-  it("should propagate driver errors", async () => {
+  it("propagates a failed DELETE", async () => {
     jest
       .spyOn((em as any).resolver, "resolveEntityMetadata")
       .mockReturnValue(userMetadata);
-    mockClear.mockRejectedValue(new Error("TRUNCATE failed"));
+    const { TransactionSessionManager } = jest.requireMock(
+      "../../src/dialects/TransactionSessionManager",
+    );
+    (TransactionSessionManager as jest.Mock).mockImplementationOnce(() => ({
+      connect: jest.fn().mockResolvedValue(undefined),
+      startTransaction: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockRejectedValue(new Error("FOREIGN KEY constraint failed")),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    }));
 
-    await expect(em.clear(User)).rejects.toThrow("TRUNCATE failed");
+    await expect(em.clear(User)).rejects.toThrow("FOREIGN KEY constraint failed");
   });
 });
 
