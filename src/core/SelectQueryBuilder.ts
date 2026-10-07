@@ -17,7 +17,6 @@ import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { EntityNotFoundError } from "../errors/EntityNotFoundError";
-import { DeserializerRegistry } from "./deserializer/DeserializerRegistry";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import { CompiledQuery } from "./CompiledQuery";
 import type { QueryCachePolicy } from "./cache/QueryResultCache";
@@ -50,6 +49,7 @@ import {
   buildJoinedRootSelect,
   isJoinedChild,
   isJoinedPolymorphicRoot,
+  joinedRootColumnQualifier,
   joinedSubclassColumns,
   type JoinedChildSourceContext,
 } from "./JoinedChildSource";
@@ -423,6 +423,13 @@ export class SelectQueryBuilder<T, TResult = T> {
 
   /** TPT polymorphic: discriminator value → child table name (for result prefix stripping). */
   protected tptChildPrefixMap?: Map<string, string>;
+
+  /**
+   * TPT polymorphic: qualifies a column with the table that holds it — a
+   * subclass table (LEFT JOINed under its own name) for a column only
+   * subclasses hold, the queried alias otherwise.
+   */
+  protected tptRootColumn?: (dbCol: string) => string;
   /** TPT polymorphic: extra SELECT expressions for child own columns (prefixed). */
   protected tptPolymorphicSelectColumns?: string[];
 
@@ -653,25 +660,29 @@ export class SelectQueryBuilder<T, TResult = T> {
           condition: joinCond,
         });
 
-        // Add child own columns, generated ones included, to SELECT with
-        // prefix aliases
-        const ownCols = [
-          ...ir.getOwnColumns(ChildEntity).map((col) => col.name as string),
-          ...collectTableComputedColumns(ChildEntity).map((col) => col.name),
-        ];
-        for (const name of ownCols) {
-          extraSelectCols.push(
-            `${this.em.wrap(childTableName)}.${this.em.wrap(name)} AS ${this.em.wrap(`${childTableName}_${name}`)}`,
-          );
-        }
-
         if (dv) {
           childPrefixMap.set(dv, childTableName);
         }
       }
 
+      // Each child's own columns — generated ones and the join columns of
+      // the relations it declares included — with prefix aliases, as find()
+      // reads them.
+      const sourceContext = {
+        inheritanceResolver: ir,
+        resolver,
+        wrap: (n: string) => this.em.wrap(n),
+      };
+      extraSelectCols.push(
+        ...joinedSubclassColumns(sourceContext, this.entity).map((col) => col.select),
+      );
+
       this.tptPolymorphicSelectColumns = extraSelectCols;
       this.tptChildPrefixMap = childPrefixMap;
+      this.tptRootColumn = joinedRootColumnQualifier(sourceContext, this.entity, {
+        root: (column) => `${this.em.wrap(this.alias)}.${this.em.wrap(column)}`,
+        child: (table, column) => `${this.em.wrap(table)}.${this.em.wrap(column)}`,
+      });
     }
   }
 
@@ -709,11 +720,15 @@ export class SelectQueryBuilder<T, TResult = T> {
     if (this.tptParentInfo?.parentOnlyColumns.has(dbCol)) {
       return `${this.em.wrap(this.tptParentInfo.alias)}.${this.em.wrap(dbCol)}`;
     }
+    if (this.tptRootColumn) return this.tptRootColumn(dbCol);
     return `${this.em.wrap(this.alias)}.${this.em.wrap(dbCol)}`;
   }
 
   /** Qualify a column for a different alias, resolving property names via alias registry. */
   protected qualifiedCol(tableAlias: string, column: string): string {
+    // The queried alias routes a column to the table of the hierarchy that
+    // holds it, as an unqualified reference does.
+    if (tableAlias === this.alias) return this.col(column);
     const entry = this.aliasRegistry.get(tableAlias);
     if (entry) {
       const dbCol = entry.propertyToColumnMap.get(column) ?? column;
@@ -4965,6 +4980,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     cloned.discriminatorColumnName = this.discriminatorColumnName;
     cloned.discriminatorMap = this.discriminatorMap;
     cloned.tptParentInfo = this.tptParentInfo;
+    cloned.tptRootColumn = this.tptRootColumn;
     cloned.tptSelectColumns = this.tptSelectColumns ? [...this.tptSelectColumns] : undefined;
     cloned.tptChildPrefixMap = this.tptChildPrefixMap;
     cloned.tptPolymorphicSelectColumns = this.tptPolymorphicSelectColumns
@@ -5414,59 +5430,18 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
-   * TPT polymorphic: read discriminator, strip child table prefixes,
-   * and instantiate correct subclass.
+   * TPT polymorphic: each row as the subclass its discriminator names, with
+   * that subclass's prefixed columns under their bare names — through
+   * ResultTransformer, so `@Column({ name })` / NamingStrategy columns map
+   * to their properties and transformers apply, as find() on the root.
    */
   private deserializeTPTPolymorphic(rows: any[]): any[] {
-    const registry = DeserializerRegistry.getInstance();
-    const discColName = this.discriminatorColumnName!;
-    const discMap = this.discriminatorMap!;
-    const childPrefixMap = this.tptChildPrefixMap!;
-    const allPrefixes = new Set(childPrefixMap.values());
-
-    return rows.map((row) => {
-      const discValue = row[discColName];
-      const TargetClass =
-        (discValue != null ? discMap.get(String(discValue)) : undefined) ??
-        this.entity;
-
-      if (TargetClass === this.entity) {
-        // Root entity: strip all prefixed columns
-        const cleaned: Record<string, any> = {};
-        for (const key of Object.keys(row)) {
-          let isPrefixed = false;
-          for (const prefix of allPrefixes) {
-            if (key.startsWith(`${prefix}_`)) {
-              isPrefixed = true;
-              break;
-            }
-          }
-          if (!isPrefixed) {
-            cleaned[key] = row[key];
-          }
-        }
-        return registry.deserialize(TargetClass, cleaned);
-      }
-
-      // Child entity: move matching prefix columns to unprefixed names
-      const matchingPrefix = childPrefixMap.get(String(discValue));
-      const cleaned: Record<string, any> = {};
-      for (const key of Object.keys(row)) {
-        let isPrefixed = false;
-        for (const prefix of allPrefixes) {
-          if (key.startsWith(`${prefix}_`)) {
-            isPrefixed = true;
-            if (prefix === matchingPrefix) {
-              cleaned[key.substring(prefix.length + 1)] = row[key];
-            }
-            break;
-          }
-        }
-        if (!isPrefixed) {
-          cleaned[key] = row[key];
-        }
-      }
-      return registry.deserialize(TargetClass, cleaned);
-    });
+    return ResultTransformerFactory.create().toTPTPolymorphicEntities(
+      this.entity,
+      { results: rows } as any,
+      this.discriminatorMap!,
+      this.discriminatorColumnName!,
+      this.tptChildPrefixMap!,
+    );
   }
 }

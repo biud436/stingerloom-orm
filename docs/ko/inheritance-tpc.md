@@ -271,6 +271,8 @@ SELECT * FROM (
 
 `ResultTransformer.toPolymorphicEntities()` 메서드가 합성된 `payment_type` 컬럼을 읽고, discriminator 맵에서 매칭되는 엔티티 클래스를 찾아서 올바른 서브클래스를 인스턴스화해요. 반환된 배열의 각 객체는 해당 클래스의 올바른 `instanceof`예요.
 
+루트를 읽을 때 서브클래스의 프로퍼티로 거르고, 정렬하고, 집계할 수 있습니다(`em.find(Payment, { where: { cardNumber: "4111-1111-1111-1111" } })`). 컬럼 이름이 다른 프로퍼티(`@Column({ name: "card_number" })`)도 마찬가지예요. 쿼리 빌더를 포함한 모든 읽기 경로에서 루트가 서브클래스의 프로퍼티를 UNION의 컬럼으로 매핑합니다.
+
 ### UNION ALL이 느린 이유
 
 이 쿼리가 왜 비용이 많이 드는지 하나씩 살펴볼게요.

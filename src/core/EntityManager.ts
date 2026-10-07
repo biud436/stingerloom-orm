@@ -239,6 +239,12 @@ export class EntityManager implements BaseEntityManager {
     WeakMap<object, Map<string, string>>
   >();
 
+  /** {@link buildReadPropertyToColumnMap}'s cache, keyed like `propToColCache`. */
+  private readonly readPropToColCache = new WeakMap<
+    object,
+    WeakMap<object, Map<string, string>>
+  >();
+
   /**
    * Classes already approved by {@link assertEntityInScope}. Replaced whenever
    * `_entities` is reassigned (connect/attach), so a re-registration cannot
@@ -421,6 +427,7 @@ export class EntityManager implements BaseEntityManager {
     buildTenantWhereClause: (e, alias, target) =>
       this.buildTenantWhereClause(e, alias, target),
     buildPropertyToColumnMap: (m) => this.buildPropertyToColumnMap(m),
+    buildReadPropertyToColumnMap: (m) => this.buildReadPropertyToColumnMap(m),
     propKey: (col) => this.propKey(col),
     applyWriteTransform: (col, v, site) =>
       this.applyWriteTransform(col, v, site),
@@ -2304,6 +2311,47 @@ export class EntityManager implements BaseEntityManager {
     return map;
   }
 
+  /**
+   * The property → column map a read resolves names with: the entity's own
+   * ({@link buildPropertyToColumnMap}), plus — for the root of a hierarchy
+   * with subclasses — every subclass's columns and FK shadow properties, so
+   * a polymorphic read filters and orders by a subclass property as a read
+   * of that subclass does. Writes keep the entity's own map: a write on the
+   * root sets the root's columns only.
+   */
+  private buildReadPropertyToColumnMap(metadata: {
+    target?: ClazzType<any>;
+    columns: ColumnMetadata[];
+  }): Map<string, string> {
+    const own = this.buildPropertyToColumnMap(metadata);
+    const entity = metadata.target;
+    if (!entity || !this.inheritanceResolver.isPolymorphicQuery(entity)) return own;
+
+    const mergedView = MetadataLayerRegistry.getInstance().resolveAll();
+    let byMetadata = this.readPropToColCache.get(mergedView);
+    if (!byMetadata) {
+      byMetadata = new WeakMap();
+      this.readPropToColCache.set(mergedView, byMetadata);
+    }
+    const cached = byMetadata.get(metadata);
+    if (cached) return cached;
+
+    const map = new Map(own);
+    const columns = [...metadata.columns];
+    for (const subclass of this.inheritanceResolver.getConcreteEntities(entity)) {
+      if (subclass === entity) continue;
+      const subMetadata = this.resolver.resolveEntityMetadata(subclass);
+      if (!subMetadata) continue;
+      for (const [property, column] of this.buildPropertyToColumnMap(subMetadata)) {
+        if (!map.has(property)) map.set(property, column);
+      }
+      columns.push(...subMetadata.columns);
+    }
+    attachWhereValueTransform(map, columns);
+    byMetadata.set(metadata, map);
+    return map;
+  }
+
   wrap(columnName: string) {
     if (this.driver && "wrap" in this.driver) {
       return (this.driver as any).wrap(columnName);
@@ -2736,7 +2784,7 @@ export class EntityManager implements BaseEntityManager {
       qb.setDialectExpression(createDialectExpression(this._ctx.getDialect()));
       const meta = this.resolver.resolveEntityMetadata(entity);
       if (meta) {
-        qb.setPropertyToColumnMap(this.buildPropertyToColumnMap(meta));
+        qb.setPropertyToColumnMap(this.buildReadPropertyToColumnMap(meta));
       }
       // Inheritance-aware setup
       const strategy = this.inheritanceResolver.getStrategy(entity);

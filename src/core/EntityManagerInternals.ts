@@ -214,6 +214,16 @@ export interface EntityManagerInternals {
   }): Map<string, string>;
 
   /**
+   * {@link buildPropertyToColumnMap} for a read: for the root of a hierarchy
+   * with subclasses it also maps every subclass's properties, so a
+   * polymorphic read can filter and order by them.
+   */
+  buildReadPropertyToColumnMap(metadata: {
+    target?: ClazzType<any>;
+    columns: ColumnMetadata[];
+  }): Map<string, string>;
+
+  /**
    * Tenant-column strategy configuration. Returns null when strategy is not
    * `"tenant_column"`. Used by SchemaRegistrar to auto-inject the tenant column
    * into DDL and by query-building paths to inject WHERE predicates.

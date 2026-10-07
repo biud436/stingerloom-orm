@@ -12,7 +12,13 @@ import { relationTargetOf } from "./RelationNameValidator";
 import type { RelationTree } from "./RelationTree";
 import type { RelationCountSpec } from "./RelationCount";
 import { buildTpcUnionSource, isTpcPolymorphicRoot, tpcSourceContextOf } from "./TpcUnionSource";
-import { buildJoinedChildSelect, isJoinedChild } from "./JoinedChildSource";
+import {
+  buildJoinedChildSelect,
+  buildJoinedRootSelect,
+  isJoinedChild,
+  isJoinedPolymorphicRoot,
+  joinedRootColumnQualifier,
+} from "./JoinedChildSource";
 
 /** Keys of a filter on a collection relation (`@OneToMany`, `@ManyToMany`). */
 const COLLECTION_FILTER_KEYS = ["some", "none", "every"] as const;
@@ -28,9 +34,14 @@ interface RelationPath {
   /**
    * The predicates and FROM clause that tie a related row, read under
    * `alias`, to the current row. `outer` qualifies a column of the current
-   * row.
+   * row. `subclasses`: read a JOINED root target with its subclass tables
+   * (see {@link RelationWhereFilterBuilder.sourceOf}).
    */
-  correlate: (alias: string, outer: (column: string) => string) => { from: Sql; on: Sql[] };
+  correlate: (
+    alias: string,
+    outer: (column: string) => string,
+    subclasses: boolean,
+  ) => { from: Sql; on: Sql[] };
 }
 
 /**
@@ -131,8 +142,10 @@ export class RelationWhereFilterBuilder {
     if (!relatedMetadata) {
       throw new InvalidQueryError(`Entity metadata for "${RelatedEntity.name}" does not exist.`);
     }
-    const { from, on } = path.correlate(alias, outer);
-    const conditions: Sql[] = [...on, ...this.scopeOf(RelatedEntity, alias)];
+    // The where is resolved first: whether it names a subclass's column
+    // decides what the subquery reads.
+    let readsSubclassColumn = false;
+    const filterConditions: Sql[] = [];
 
     if (where !== undefined && where !== null) {
       const inner = (column: string) => `${this.ctx.wrap(alias)}.${this.ctx.wrap(column)}`;
@@ -140,21 +153,25 @@ export class RelationWhereFilterBuilder {
       const resolved = resolveWhereClause(where as any, {
         wrapColumn: (n) => this.ctx.wrap(n),
         qualified: true,
-        tableName: alias,
+        qualifyColumn: this.columnOf(RelatedEntity, alias, () => {
+          readsSubclassColumn = true;
+        }),
         dialect,
         dialectExpression: createDialectExpression(dialect),
-        propertyToColumn: this.ctx.buildPropertyToColumnMap(relatedMetadata),
+        propertyToColumn: this.ctx.buildReadPropertyToColumnMap(relatedMetadata),
         relationFilter: this.hookFor(RelatedEntity, inner, depth + 1),
       });
       if (resolved.length > 0) {
         const combined = resolved.length === 1 ? resolved[0] : Conditions.and(resolved);
-        conditions.push(negateWhere ? sql`CASE WHEN (${combined}) THEN 1 ELSE 0 END = 0` : combined);
+        filterConditions.push(negateWhere ? sql`CASE WHEN (${combined}) THEN 1 ELSE 0 END = 0` : combined);
       } else if (negateWhere) {
         // every: {} — no row can fail an empty filter.
-        conditions.push(sql`1 = 0`);
+        filterConditions.push(sql`1 = 0`);
       }
     }
 
+    const { from, on } = path.correlate(alias, outer, readsSubclassColumn);
+    const conditions: Sql[] = [...on, ...this.scopeOf(RelatedEntity, alias), ...filterConditions];
     return sql`EXISTS (SELECT 1 FROM ${from} WHERE ${join(conditions, " AND ")})`;
   }
 
@@ -179,7 +196,7 @@ export class RelationWhereFilterBuilder {
    * TABLE_PER_CLASS root, or a JOINED child's two tables — the rows a
    * relation load reads.
    */
-  private sourceOf(RelatedEntity: ClazzType<any>, alias: string): Sql {
+  private sourceOf(RelatedEntity: ClazzType<any>, alias: string, subclasses: boolean): Sql {
     const metadata = this.resolver.resolveEntityMetadata(RelatedEntity)!;
     const inheritance = this.ctx.getInheritanceResolver();
     const context = tpcSourceContextOf(this.ctx, this.resolver);
@@ -191,7 +208,40 @@ export class RelationWhereFilterBuilder {
       const select = buildJoinedChildSelect(context, RelatedEntity);
       if (select) return sql`(${select}) AS ${wrappedAlias}`;
     }
+    // A JOINED root's rows may be any subclass's, whose own columns live in
+    // that subclass's table: a filter that names one reads them under
+    // `<childTable>_<column>` (see {@link columnOf}).
+    if (subclasses && isJoinedPolymorphicRoot(inheritance, RelatedEntity)) {
+      const select = buildJoinedRootSelect(
+        context,
+        RelatedEntity,
+        this.ctx.getReadColumnNames(RelatedEntity, metadata),
+      );
+      if (select) return sql`(${select}) AS ${wrappedAlias}`;
+    }
     return sql`${raw(this.ctx.wrapTable(metadata.name))} AS ${wrappedAlias}`;
+  }
+
+  /**
+   * How a filter names a column of `RelatedEntity` read under `alias` (see
+   * {@link sourceOf}): `alias.column`, or — for a column only a JOINED
+   * root's subclasses hold — the subclass table's column under its
+   * `<childTable>_<column>` name.
+   */
+  private columnOf(
+    RelatedEntity: ClazzType<any>,
+    alias: string,
+    onSubclassColumn: () => void,
+  ): (column: string) => string {
+    const ref = (column: string) => `${this.ctx.wrap(alias)}.${this.ctx.wrap(column)}`;
+    if (!isJoinedPolymorphicRoot(this.ctx.getInheritanceResolver(), RelatedEntity)) return ref;
+    return joinedRootColumnQualifier(tpcSourceContextOf(this.ctx, this.resolver), RelatedEntity, {
+      root: ref,
+      child: (_table, _column, columnAlias) => {
+        onSubclassColumn();
+        return ref(columnAlias);
+      },
+    });
   }
 
   /**
@@ -233,8 +283,8 @@ export class RelationWhereFilterBuilder {
       return {
         kind: "ManyToOne",
         RelatedEntity,
-        correlate: (alias, outer) => ({
-          from: this.sourceOf(RelatedEntity, alias),
+        correlate: (alias, outer, subclasses) => ({
+          from: this.sourceOf(RelatedEntity, alias, subclasses),
           on: [sql`${col(alias, targetKey)} = ${raw(outer(joinColumn))}`],
         }),
       };
@@ -251,8 +301,8 @@ export class RelationWhereFilterBuilder {
       return {
         kind: "OneToMany",
         RelatedEntity,
-        correlate: (alias, outer) => ({
-          from: this.sourceOf(RelatedEntity, alias),
+        correlate: (alias, outer, subclasses) => ({
+          from: this.sourceOf(RelatedEntity, alias, subclasses),
           on: [sql`${col(alias, fkColumn)} = ${raw(outer(parentKey))}`],
         }),
       };
@@ -274,10 +324,10 @@ export class RelationWhereFilterBuilder {
       return {
         kind: "ManyToMany",
         RelatedEntity,
-        correlate: (alias, outer) => {
+        correlate: (alias, outer, subclasses) => {
           const joinAlias = `${alias}_jt`;
           return {
-            from: sql`${raw(this.ctx.wrapTable(joinInfo.joinTableName))} AS ${raw(wrap(joinAlias))} INNER JOIN ${this.sourceOf(RelatedEntity, alias)} ON ${col(alias, relatedKey)} = ${col(joinAlias, joinInfo.inverseJoinColumn)}`,
+            from: sql`${raw(this.ctx.wrapTable(joinInfo.joinTableName))} AS ${raw(wrap(joinAlias))} INNER JOIN ${this.sourceOf(RelatedEntity, alias, subclasses)} ON ${col(alias, relatedKey)} = ${col(joinAlias, joinInfo.inverseJoinColumn)}`,
             on: [sql`${col(joinAlias, joinInfo.joinColumn)} = ${raw(outer(parentKey))}`],
           };
         },
@@ -293,8 +343,8 @@ export class RelationWhereFilterBuilder {
         return {
           kind: "OneToOne",
           RelatedEntity,
-          correlate: (alias, outer) => ({
-            from: this.sourceOf(RelatedEntity, alias),
+          correlate: (alias, outer, subclasses) => ({
+            from: this.sourceOf(RelatedEntity, alias, subclasses),
             on: [sql`${col(alias, targetKey)} = ${raw(outer(joinColumn))}`],
           }),
         };
@@ -316,8 +366,8 @@ export class RelationWhereFilterBuilder {
       return {
         kind: "OneToOne",
         RelatedEntity,
-        correlate: (alias, outer) => ({
-          from: this.sourceOf(RelatedEntity, alias),
+        correlate: (alias, outer, subclasses) => ({
+          from: this.sourceOf(RelatedEntity, alias, subclasses),
           on: [sql`${col(alias, ownerColumn)} = ${raw(outer(parentKey))}`],
         }),
       };
@@ -418,7 +468,7 @@ export function relationAwareScope(
   const scope = buildEntityColumnScope({
     entity,
     metadata: resolved ?? { columns: [] },
-    propertyToColumn: resolved ? ctx.buildPropertyToColumnMap(resolved as any) : new Map(),
+    propertyToColumn: resolved ? ctx.buildReadPropertyToColumnMap(resolved as any) : new Map(),
     computedColumns: ctx.getComputedColumnNames(entity),
     inheritanceResolver: ctx.getInheritanceResolver(),
   });

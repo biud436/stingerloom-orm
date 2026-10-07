@@ -304,6 +304,8 @@ console.log(JSON.stringify(all, null, 2));
 
 주목할 점: 배열의 각 요소가 **올바른 서브클래스 인스턴스**예요. `CreditCardPayment` 객체에는 `cardNumber`가 있지만 `bankCode`는 없어요. `BankTransferPayment` 객체에는 `bankCode`가 있지만 `cardNumber`는 없어요. 루트 `Payment` 객체에는 둘 다 없어요.
 
+서브클래스가 선언한 관계의 조인 컬럼도 공유 테이블에 있으므로 루트 조회가 이 컬럼을 고르고, 그 서브클래스의 인스턴스는 `find(CreditCardPayment)`와 똑같이 FK 섀도를 갖습니다(`issuer` 관계가 있는 `CreditCardPayment`의 `issuerId`). 루트에서 `where: { issuerId }`로 거르는 것도 됩니다.
+
 ### Polymorphic 역직렬화 작동 원리
 
 내부적으로 ORM은 각 행에 대해 다음 과정을 따라요:

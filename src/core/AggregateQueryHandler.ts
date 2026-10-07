@@ -17,7 +17,14 @@ import {
   TPC_UNION_ALIAS,
   tpcSourceContextOf,
 } from "./TpcUnionSource";
-import { buildJoinedChildFromSource, isJoinedChild, JOINED_CHILD_ALIAS } from "./JoinedChildSource";
+import {
+  buildJoinedChildFromSource,
+  buildJoinedRootSelect,
+  isJoinedChild,
+  isJoinedPolymorphicRoot,
+  JOINED_CHILD_ALIAS,
+  joinedRootColumnQualifier,
+} from "./JoinedChildSource";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { aggregateToNumber } from "./BigintColumnTransformer";
 import { aggregateFromStored } from "./WhereValueTransform";
@@ -68,18 +75,31 @@ export class AggregateQueryHandler {
       // it aggregates over the two tables joined, as find() reads it.
       const sourceContext = tpcSourceContextOf(this.ctx, this.resolver);
       const { inheritanceResolver } = sourceContext;
-      const fromSource: Sql =
-        (isTpcPolymorphicRoot(inheritanceResolver, entity)
-          ? buildTpcFromSource(sourceContext, entity)
-          : isJoinedChild(inheritanceResolver, entity)
-            ? buildJoinedChildFromSource(sourceContext, entity)
-            : null) ?? raw(this.ctx.wrapTable(metadata.name));
+
+      // A polymorphic JOINED root keeps each subclass's own columns in that
+      // subclass's table. Its aggregate reads them under `<childTable>_<column>`
+      // from the root joined to every subclass table — joined only when the
+      // aggregate names such a column, so a plain count() reads one table.
+      const joinedRoot = isJoinedPolymorphicRoot(inheritanceResolver, entity);
+      let readsSubclassColumn = false;
+      const rootQualifier = joinedRoot
+        ? joinedRootColumnQualifier(sourceContext, entity, {
+            root: (column) => this.ctx.wrap(column),
+            child: (_table, _column, alias) => {
+              readsSubclassColumn = true;
+              return this.ctx.wrap(alias);
+            },
+          })
+        : undefined;
+      const qualify = (column: string) =>
+        rootQualifier ? rootQualifier(column) : this.ctx.wrap(column);
 
       // Resolve property names to DB columns exactly like findInternal so the
-      // aggregate field and WHERE honor a NamingStrategy and FK shadow props.
-      const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+      // aggregate field and WHERE honor a NamingStrategy and FK shadow props —
+      // and, on a polymorphic root, its subclasses' properties.
+      const propToCol = this.ctx.buildReadPropertyToColumnMap(metadata);
       const mappedField =
-        field === "*" ? "*" : this.ctx.wrap(propToCol.get(field) ?? field);
+        field === "*" ? "*" : qualify(propToCol.get(field) ?? field);
       const selectExpr = raw(`${fn}(${mappedField})`);
 
       // Same identifier guard as findInternal — count()/sum()/avg()/min()/max()
@@ -95,11 +115,13 @@ export class AggregateQueryHandler {
       // A relation filter's subquery names the aggregated row by its source.
       const sourceName = isTpcPolymorphicRoot(inheritanceResolver, entity)
         ? TPC_UNION_ALIAS
-        : isJoinedChild(inheritanceResolver, entity)
+        : isJoinedChild(inheritanceResolver, entity) || joinedRoot
           ? JOINED_CHILD_ALIAS
           : metadata.name;
       const whereMap: Sql[] = resolveWhereClause(where, {
         wrapColumn: (n) => this.ctx.wrap(n),
+        qualified: rootQualifier !== undefined,
+        qualifyColumn: rootQualifier,
         dialect: this.ctx.getDialect(),
         dialectExpression: createDialectExpression(this.ctx.getDialect()),
         propertyToColumn: propToCol,
@@ -151,18 +173,31 @@ export class AggregateQueryHandler {
         whereMap.push(tenantPredicate);
       }
 
+      const groupCols =
+        groupOptions && groupOptions.groupBy.length > 0
+          ? join(
+              groupOptions.groupBy.map((col) =>
+                raw(qualify(propToCol.get(String(col)) ?? String(col))),
+              ),
+              ", ",
+            )
+          : undefined;
+
+      const fromSource: Sql =
+        (isTpcPolymorphicRoot(inheritanceResolver, entity)
+          ? buildTpcFromSource(sourceContext, entity)
+          : isJoinedChild(inheritanceResolver, entity)
+            ? buildJoinedChildFromSource(sourceContext, entity)
+            : joinedRoot
+              ? this.joinedRootFromSource(entity, metadata, readsSubclassColumn)
+              : null) ?? raw(this.ctx.wrapTable(metadata.name));
+
       let queryStr: Sql;
-      if (groupOptions && groupOptions.groupBy.length > 0) {
+      if (groupOptions && groupCols) {
         // Grouped count: the caller (findAndCount/findWithPage) pairs the
         // count with grouped data rows, so `total` must be the number of
         // groups surviving HAVING — a plain COUNT(*) counted raw rows.
         // Portable across MySQL / PostgreSQL / SQLite via a derived table.
-        const groupCols = join(
-          groupOptions.groupBy.map((col) =>
-            raw(this.ctx.wrap(propToCol.get(String(col)) ?? String(col))),
-          ),
-          ", ",
-        );
         let inner = sql`SELECT ${groupCols} FROM ${fromSource}`;
         if (whereMap.length > 0) {
           inner = sql`${inner} WHERE ${join(whereMap, " AND ")}`;
@@ -199,6 +234,30 @@ export class AggregateQueryHandler {
             aggregateToNumber(value, `${fn}(${entity.name}.${field})`),
           );
     });
+  }
+
+  /**
+   * The FROM of an aggregate over a polymorphic JOINED root, under the alias
+   * its relation filters name it by: the root's table joined to every
+   * subclass table when the aggregate reads a subclass's column, the root's
+   * table alone otherwise.
+   */
+  private joinedRootFromSource(
+    entity: ClazzType<any>,
+    metadata: { name: string; columns: any[] },
+    withSubclasses: boolean,
+  ): Sql {
+    const alias = raw(this.ctx.wrap(JOINED_CHILD_ALIAS));
+    const select = withSubclasses
+      ? buildJoinedRootSelect(
+          tpcSourceContextOf(this.ctx, this.resolver),
+          entity,
+          this.ctx.getReadColumnNames(entity, metadata),
+        )
+      : null;
+    return select
+      ? sql`(${select}) AS ${alias}`
+      : sql`${raw(this.ctx.wrapTable(metadata.name))} AS ${alias}`;
   }
 
   /**
