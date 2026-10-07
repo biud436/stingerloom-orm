@@ -123,6 +123,14 @@ function createMockCtx(overrides: Partial<EntityManagerInternals> = {}): jest.Mo
       }
       return map;
     }),
+    // Entities outside an inheritance hierarchy read with their own map.
+    buildReadPropertyToColumnMap: jest.fn((m: any) => {
+      const map = new Map<string, string>();
+      for (const c of m?.columns ?? []) {
+        map.set(c.propertyKey ?? c.name, c.name);
+      }
+      return map;
+    }),
     // explain() runs the same identifier guard as find(), which asks the ctx
     // for computed columns and the inheritance hierarchy.
     getComputedColumnNames: jest.fn().mockReturnValue(new Set<string>()),

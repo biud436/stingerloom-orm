@@ -285,6 +285,8 @@ all[2] instanceof Payment             // true
 
 Notice: each element in the array is the **correct subclass instance**. The `CreditCardPayment` object has `cardNumber` but not `bankCode`. The `BankTransferPayment` object has `bankCode` but not `cardNumber`. The root `Payment` object has neither.
 
+The join column of a relation a subclass declares lives in the shared table too, so the root read selects it and each instance of that subclass carries its FK shadow (`issuerId` on a `CreditCardPayment` with an `issuer` relation), as `find(CreditCardPayment)` gives it; `where: { issuerId }` works on the root as well.
+
 ### How Polymorphic Deserialization Works
 
 Internally, the ORM follows this process for each row:

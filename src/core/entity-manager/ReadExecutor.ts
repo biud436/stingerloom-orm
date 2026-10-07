@@ -81,7 +81,9 @@ import {
   isJoinedChild,
   isJoinedPolymorphicRoot,
   JOINED_CHILD_ALIAS,
+  joinedRootColumnQualifier,
   joinedRootColumns,
+  joinedSubclassColumnHolders,
   joinedSubclassColumns,
   joinedSubclassPrefixes,
 } from "../JoinedChildSource";
@@ -151,10 +153,12 @@ interface FindOperation<T> {
   /** True when the statement carries any JOIN, so columns must be qualified. */
   hasEagerJoins: boolean;
   /**
-   * TPT child only: qualifies a DB column with the table that physically
-   * holds it (parent for inherited columns, child otherwise). Undefined for
-   * every other shape, where {@link ReadExecutor.qualifyColumn} falls back to
-   * the plain `hasEagerJoins` rule.
+   * JOINED hierarchy only: qualifies a DB column with the table that
+   * physically holds it — for a child, the parent for inherited columns and
+   * the child otherwise; for a polymorphic root, the subclass table(s) for a
+   * column only subclasses hold and the root otherwise. Undefined for every
+   * other shape, where {@link ReadExecutor.qualifyColumn} falls back to the
+   * plain `hasEagerJoins` rule.
    */
   tptQualifyColumn?: (dbCol: string) => string;
   /**
@@ -245,6 +249,16 @@ export class ReadExecutor {
         seen.add(rel.joinColumn);
       }
     }
+    // A SINGLE_TABLE root's rows may be any subclass's, and the shared table
+    // holds the join columns of the relations its subclasses declare: read
+    // them too, so each row keeps its subclass's FK shadows (the row shape
+    // leaves them off the other classes' rows).
+    for (const name of this.singleTableSubclassJoinColumns(entity)) {
+      if (!seen.has(name)) {
+        allColNames.push(name);
+        seen.add(name);
+      }
+    }
     // @ComputedColumn values: the SELECT list is enumerated from
     // metadata.columns, so generated columns must be merged explicitly —
     // without this, find/findOne silently returned undefined for them even
@@ -276,6 +290,31 @@ export class ReadExecutor {
     };
     byMetadata.set(metadata, plan);
     return plan;
+  }
+
+  /**
+   * The join columns of the relations a SINGLE_TABLE root's subclasses
+   * declare — columns of the shared table the root's own metadata lacks.
+   * Empty for any other entity.
+   */
+  private singleTableSubclassJoinColumns(entity: ClazzType<any>): string[] {
+    if (
+      this.inheritanceResolver.getStrategy(entity) !== "SINGLE_TABLE" ||
+      !this.inheritanceResolver.isPolymorphicQuery(entity)
+    ) {
+      return [];
+    }
+    const columns: string[] = [];
+    for (const subclass of this.inheritanceResolver.getConcreteEntities(entity)) {
+      if (subclass === entity) continue;
+      for (const rel of [
+        ...this.resolver.resolveManyToOneMetadata(subclass),
+        ...this.resolver.resolveOneToOneMetadata(subclass),
+      ]) {
+        if (rel.joinColumn) columns.push(rel.joinColumn);
+      }
+    }
+    return columns;
   }
 
   /**
@@ -614,8 +653,9 @@ export class ReadExecutor {
       eagerM2O.length > 0 || eagerO2O.length > 0
       || isTPTChild || isTPTPolymorphic;
 
-    // Build property-to-column map once and reuse throughout findInternal
-    const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+    // Build property-to-column map once and reuse throughout findInternal.
+    // A polymorphic root's map also names its subclasses' properties.
+    const propToCol = this.ctx.buildReadPropertyToColumnMap(metadata);
 
     const op: FindOperation<T> = {
       entity,
@@ -793,6 +833,14 @@ export class ReadExecutor {
   private createTptColumnQualifier<T>(
     op: FindOperation<T>,
   ): ((dbCol: string) => string) | undefined {
+    // A polymorphic JOINED root reads every subclass table LEFT JOINed under
+    // its own name: a column only subclasses hold is read from theirs.
+    if (op.isTPTPolymorphic) {
+      return joinedRootColumnQualifier(this.tpcSourceContext(), op.entity, {
+        root: (column) => `${this.ctx.wrap(op.tableName)}.${this.ctx.wrap(column)}`,
+        child: (table, column) => `${this.ctx.wrap(table)}.${this.ctx.wrap(column)}`,
+      });
+    }
     if (!op.isTPTChild) return undefined;
 
     const tptRoot = this.inheritanceResolver.getRoot(op.entity)!;
@@ -855,10 +903,25 @@ export class ReadExecutor {
       // when relations are JOINed onto it.
       selectMap.push(hasEagerJoins ? `${this.ctx.wrap(tableName)}.*` : "*");
     } else if (select) {
+      // A polymorphic JOINED root reads every subclass's own columns below,
+      // prefixed per subclass, whatever `select` says; a selected subclass
+      // column is left to that list.
+      const subclassOnly = (column: string) =>
+        op.isTPTPolymorphic &&
+        joinedSubclassColumnHolders(this.tpcSourceContext(), entity, column).length > 0;
       const selectedColumns = this.ctx.resolveSelectColumns<T>(select)
-        .map((prop) => propToCol.get(prop) ?? prop);
+        .map((prop) => propToCol.get(prop) ?? prop)
+        .filter((column) => !subclassOnly(column));
       // Key columns a deferred relation loader matches parents by.
       selectedColumns.push(...op.addedKeyColumns);
+      // Each row of a polymorphic JOINED root is built as the subclass its
+      // discriminator names, which holds the subclass columns read below.
+      const discriminator = op.isTPTPolymorphic
+        ? this.inheritanceResolver.getDiscriminatorColumn(entity)?.name
+        : undefined;
+      if (discriminator && !selectedColumns.includes(discriminator)) {
+        selectedColumns.push(discriminator);
+      }
       if (hasEagerJoins) {
         selectMap.push(
           ...selectedColumns.map(
@@ -1887,7 +1950,7 @@ export class ReadExecutor {
     // honors the naming strategy (e.g. SnakeNamingStrategy maps `createdAt`
     // -> `created_at`). Mirrors the find() orderBy mapping. The default value
     // is already a column name (pk.name), so it passes through unchanged.
-    const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
+    const propToCol = this.ctx.buildReadPropertyToColumnMap(metadata);
 
     validateReadIdentifiers(
       { where, orderBy: { [order.orderByColumn]: order.direction } },
@@ -1895,7 +1958,11 @@ export class ReadExecutor {
       relationAwareScope(this.ctx, this.resolver, entity, metadata),
     );
 
-    const dbOrderByColumn = propToCol.get(order.orderByColumn) ?? order.orderByColumn;
+    const dbOrderByColumn = this.cursorOrderColumn(
+      entity,
+      propToCol.get(order.orderByColumn) ?? order.orderByColumn,
+      order.orderByColumn,
+    );
     const dbPkColumn = order.pk?.name as string | undefined;
     const keyset: KeysetPlan = {
       orderColumn: dbOrderByColumn,
@@ -1919,6 +1986,32 @@ export class ReadExecutor {
     }
 
     return { selectList: plan.selectPlain, keyset, whereMap };
+  }
+
+  /**
+   * The column a cursor page of `entity` is ordered and keyed by. A
+   * polymorphic JOINED root pages over its table joined to every subclass
+   * table, each subclass's own columns named `<childTable>_<column>`: a
+   * column one subclass declares is read under that name. A column several
+   * subclasses declare has no single column every row is keyed by.
+   *
+   * @throws InvalidQueryError for a column several subclasses declare.
+   */
+  private cursorOrderColumn(
+    entity: ClazzType<any>,
+    column: string,
+    property: string,
+  ): string {
+    if (!this.isTptPolymorphicRoot(entity)) return column;
+    const holders = joinedSubclassColumnHolders(this.tpcSourceContext(), entity, column);
+    if (holders.length === 0) return column;
+    if (holders.length === 1) return holders[0].alias;
+    throw new InvalidQueryError(
+      `Cannot page "${entity.name}" by "${property}": the subclass tables ${holders
+        .map((h) => `"${h.table}"`)
+        .join(", ")} each hold a column of that name, so no single column orders every row.`,
+      `Order the page by a column of "${entity.name}" itself, or page one subclass with findWithCursor() on it.`,
+    );
   }
 
   /**
@@ -2121,8 +2214,18 @@ export class ReadExecutor {
     option: CursorPaginationOption<T>,
   ): Sql[] {
     const source = this.cursorSourceName(entity);
+    // A polymorphic JOINED root pages over its table joined to every subclass
+    // table, each subclass's own columns named `<childTable>_<column>`.
+    const qualifyColumn = this.isTptPolymorphicRoot(entity)
+      ? joinedRootColumnQualifier(this.tpcSourceContext(), entity, {
+          root: (column) => this.ctx.wrap(column),
+          child: (_table, _column, alias) => this.ctx.wrap(alias),
+        })
+      : undefined;
     const whereMap: Sql[] = resolveWhereClause(where, {
       wrapColumn: (n) => this.ctx.wrap(n),
+      qualified: qualifyColumn !== undefined,
+      qualifyColumn,
       dialect: this.ctx.getDialect(),
       dialectExpression: createDialectExpression(this.ctx.getDialect()),
       propertyToColumn: propToCol,

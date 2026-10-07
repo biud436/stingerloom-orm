@@ -68,6 +68,14 @@ function createMockCtx(
       }
       return map;
     }),
+    // Entities outside an inheritance hierarchy read with their own map.
+    buildReadPropertyToColumnMap: jest.fn((m: any) => {
+      const map = new Map<string, string>();
+      for (const c of m?.columns ?? []) {
+        map.set(c.propertyKey ?? c.name, c.name);
+      }
+      return map;
+    }),
     ...overrides,
   } as unknown as EntityManagerInternals;
 }

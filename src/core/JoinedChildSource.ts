@@ -194,9 +194,9 @@ export function joinedSubclassPrefixes(
 export function joinedSubclassColumns(
   ctx: Pick<JoinedChildSourceContext, "inheritanceResolver" | "resolver" | "wrap">,
   root: ClazzType<any>,
-): Array<{ select: string; alias: string }> {
+): Array<{ table: string; column: string; select: string; alias: string }> {
   const { inheritanceResolver, resolver, wrap } = ctx;
-  const columns: Array<{ select: string; alias: string }> = [];
+  const columns: Array<{ table: string; column: string; select: string; alias: string }> = [];
   const pk = resolver.resolveEntityMetadata(root)?.columns.find((c: any) => c.options?.primary);
   if (!pk) return columns;
   for (const child of joinedSubclasses(inheritanceResolver, root)) {
@@ -210,10 +210,61 @@ export function joinedSubclassColumns(
     for (const computed of collectTableComputedColumns(child)) names.add(computed.name);
     for (const name of names) {
       const alias = `${childTable}_${name}`;
-      columns.push({ select: `${wrap(childTable)}.${wrap(name)} AS ${wrap(alias)}`, alias });
+      columns.push({
+        table: childTable,
+        column: name,
+        select: `${wrap(childTable)}.${wrap(name)} AS ${wrap(alias)}`,
+        alias,
+      });
     }
   }
   return columns;
+}
+
+/**
+ * How a read of a JOINED root refers to `column`: the root's own columns
+ * through `root(column)`; a column only subclass tables hold through
+ * `child(table, column)` of the one subclass that declares it, or — when
+ * several do — the first non-null of them, since each row has exactly one
+ * subclass row. Returns the qualifier, built once per read.
+ */
+export function joinedRootColumnQualifier(
+  ctx: Pick<JoinedChildSourceContext, "inheritanceResolver" | "resolver" | "wrap">,
+  root: ClazzType<any>,
+  refs: {
+    root: (column: string) => string;
+    child: (table: string, column: string, alias: string) => string;
+  },
+): (column: string) => string {
+  const rootColumns = joinedRootTableColumns(ctx.resolver, root);
+  const holders = new Map<string, Array<{ table: string; alias: string }>>();
+  for (const { table, column, alias } of joinedSubclassColumns(ctx, root)) {
+    if (rootColumns.has(column)) continue;
+    const list = holders.get(column) ?? [];
+    list.push({ table, alias });
+    holders.set(column, list);
+  }
+  return (column) => {
+    const tables = holders.get(column);
+    if (!tables) return refs.root(column);
+    const refList = tables.map(({ table, alias }) => refs.child(table, column, alias));
+    return refList.length === 1 ? refList[0] : `COALESCE(${refList.join(", ")})`;
+  };
+}
+
+/**
+ * The subclass tables of a JOINED root that hold `column` when the root's
+ * table does not — empty for a root column.
+ */
+export function joinedSubclassColumnHolders(
+  ctx: Pick<JoinedChildSourceContext, "inheritanceResolver" | "resolver" | "wrap">,
+  root: ClazzType<any>,
+  column: string,
+): Array<{ table: string; alias: string }> {
+  if (joinedRootTableColumns(ctx.resolver, root).has(column)) return [];
+  return joinedSubclassColumns(ctx, root)
+    .filter((col) => col.column === column)
+    .map(({ table, alias }) => ({ table, alias }));
 }
 
 /**
@@ -249,4 +300,16 @@ export function buildJoinedRootSelect(
     );
   }
   return sql`SELECT ${raw(columns.join(", "))} FROM ${raw(wrapTable(rootMeta.name))} AS ${raw(rootTable)}${raw(joins.join(""))}`;
+}
+
+/** Every column of a JOINED root's table: its key and {@link joinedRootColumns}. */
+function joinedRootTableColumns(
+  resolver: RelationMetadataResolver,
+  root: ClazzType<any>,
+): Set<string> {
+  const columns = joinedRootColumns(resolver, root);
+  for (const col of resolver.resolveEntityMetadata(root)?.columns ?? []) {
+    if (col.options?.primary) columns.add(col.name);
+  }
+  return columns;
 }

@@ -35,6 +35,7 @@ import {
   buildJoinedRootSelect,
   isJoinedChild,
   isJoinedPolymorphicRoot,
+  joinedRootColumnQualifier,
   joinedSubclassColumns,
 } from "./JoinedChildSource";
 import { polymorphicRowClassifier } from "./PolymorphicRows";
@@ -286,6 +287,26 @@ export class RelationLoader {
   }
 
   /**
+   * How a relation read names a column of `RelatedEntity`: through `ref` —
+   * bare, or qualified by the table the statement reads it from. A JOINED
+   * root read with its subclass tables (see {@link relatedTable}) holds a
+   * column only subclasses declare as `<childTable>_<column>`.
+   */
+  private relatedColumnRef(
+    RelatedEntity: ClazzType<any>,
+    subclasses: boolean,
+    ref: (column: string) => string,
+  ): (column: string) => string {
+    if (!subclasses || !isJoinedPolymorphicRoot(this.ctx.getInheritanceResolver(), RelatedEntity)) {
+      return ref;
+    }
+    return joinedRootColumnQualifier(tpcSourceContextOf(this.ctx, this.resolver), RelatedEntity, {
+      root: ref,
+      child: (_table, _column, alias) => ref(alias),
+    });
+  }
+
+  /**
    * The relation's own `where`, resolved against the related entity's
    * columns. `table` qualifies the columns when the statement reads a second
    * table (the ManyToMany join table).
@@ -296,17 +317,17 @@ export class RelationLoader {
     options: RelationQueryOptions | undefined,
     withDeleted: boolean | undefined,
     source: string,
-    table?: string,
+    qualify: (column: string) => string,
   ): Sql[] {
     if (options?.where === undefined) return [];
     const dialect = this.ctx.getDialect();
     return resolveWhereClause(options.where as any, {
       wrapColumn: (n) => this.ctx.wrap(n),
-      qualified: table !== undefined,
-      tableName: table,
+      qualified: true,
+      qualifyColumn: qualify,
       dialect,
       dialectExpression: createDialectExpression(dialect),
-      propertyToColumn: this.ctx.buildPropertyToColumnMap(relatedMetadata as any),
+      propertyToColumn: this.ctx.buildReadPropertyToColumnMap(relatedMetadata as any),
       relationFilter: new RelationWhereFilterBuilder(this.ctx, this.resolver, withDeleted).hookFor(
         RelatedEntity,
         (column) => `${this.ctx.wrap(source)}.${this.ctx.wrap(column)}`,
@@ -325,7 +346,7 @@ export class RelationLoader {
     qualify: (column: string) => string,
   ): Array<{ column: string; direction: "ASC" | "DESC" }> {
     if (!options?.orderBy) return [];
-    const propToCol = this.ctx.buildPropertyToColumnMap(relatedMetadata as any);
+    const propToCol = this.ctx.buildReadPropertyToColumnMap(relatedMetadata as any);
     return Object.entries(options.orderBy).map(([property, direction]) => ({
       column: qualify(propToCol.get(property) ?? property),
       direction,
@@ -713,7 +734,8 @@ export class RelationLoader {
         selectCols.push(
           `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
         );
-        const order = this.relationOrder(relatedMetadata, options, (col) => this.ctx.wrap(col));
+        const qualify = this.relatedColumnRef(RelatedEntity, true, (col) => this.ctx.wrap(col));
+        const order = this.relationOrder(relatedMetadata, options, qualify);
         const paged = RelationLoader.pagesRows(options);
         if (paged) {
           const relatedKeys = relatedMetadata.columns
@@ -737,6 +759,7 @@ export class RelationLoader {
             options,
             relationWithDeleted,
             source.qualifier,
+            qualify,
           ),
         ];
 
@@ -881,8 +904,11 @@ export class RelationLoader {
         );
         const parentKey = `${this.ctx.wrap(joinInfo.joinTableName)}.${this.ctx.wrap(joinInfo.joinColumn)}`;
         selectCols.push(`${parentKey} AS ${this.ctx.wrap(fkAlias)}`);
-        const qualify = (col: string) =>
-          `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(col)}`;
+        const qualify = this.relatedColumnRef(
+          RelatedEntity,
+          true,
+          (col) => `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(col)}`,
+        );
         const order = this.relationOrder(relatedMetadata, options, qualify);
         const paged = RelationLoader.pagesRows(options);
         if (paged) {
@@ -904,7 +930,7 @@ export class RelationLoader {
             options,
             relationWithDeleted,
             relatedTableName,
-            relatedTableName,
+            qualify,
           ),
         ];
 
@@ -1297,7 +1323,10 @@ export class RelationLoader {
         .resolveManyToOneMetadata(RelatedEntity)
         .find((m) => m.columnName === o2m.mappedBy);
       const fk = this.ctx.wrap(owner?.joinColumn ?? o2m.mappedBy);
-      const source = this.relatedRowSource(RelatedEntity, relatedMetadata, false);
+      // Subclass tables are read only for a where that may name their columns.
+      const subclasses = options !== undefined;
+      const source = this.relatedRowSource(RelatedEntity, relatedMetadata, subclasses);
+      const qualify = this.relatedColumnRef(RelatedEntity, subclasses, (col) => this.ctx.wrap(col));
       const table = relatedMetadata.name ?? RelatedEntity.name;
 
       return {
@@ -1305,7 +1334,7 @@ export class RelationLoader {
         build: (ids) => {
           const where: Sql[] = [
             Conditions.in(fk, ids),
-            ...this.relationWhere(RelatedEntity, relatedMetadata, options, countWithDeleted, source.qualifier),
+            ...this.relationWhere(RelatedEntity, relatedMetadata, options, countWithDeleted, source.qualifier, qualify),
           ];
           const deletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
           if (deletedAt && !countWithDeleted) where.push(Conditions.isNull(this.ctx.wrap(deletedAt)));
@@ -1336,14 +1365,21 @@ export class RelationLoader {
     const related = this.ctx.wrap(table);
     const joinTable = this.ctx.wrap(joinInfo.joinTableName);
     const parentKey = `${joinTable}.${this.ctx.wrap(joinInfo.joinColumn)}`;
-    const { from, alias } = this.relatedTable(RelatedEntity, table, false);
+    // Subclass tables are read only for a where that may name their columns.
+    const subclasses = options !== undefined;
+    const { from, alias } = this.relatedTable(RelatedEntity, table, subclasses);
+    const qualify = this.relatedColumnRef(
+      RelatedEntity,
+      subclasses,
+      (col) => `${related}.${this.ctx.wrap(col)}`,
+    );
 
     return {
       table,
       build: (ids) => {
         const where: Sql[] = [
           Conditions.in(parentKey, ids),
-          ...this.relationWhere(RelatedEntity, relatedMetadata, options, countWithDeleted, table, table),
+          ...this.relationWhere(RelatedEntity, relatedMetadata, options, countWithDeleted, table, qualify),
         ];
         const deletedAt = this.resolver.getDeletedAtColumn(RelatedEntity);
         if (deletedAt && !countWithDeleted) {

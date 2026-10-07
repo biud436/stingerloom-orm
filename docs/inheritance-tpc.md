@@ -248,6 +248,8 @@ Notice five things:
 
 The `ResultTransformer.toPolymorphicEntities()` method reads the synthesized `payment_type` column, looks up the matching entity class from the discriminator map, and instantiates the correct subclass. Each object in the returned array is a proper `instanceof` its respective class.
 
+A read of the root can filter, order and aggregate by a subclass's property -- `em.find(Payment, { where: { cardNumber: "4111-1111-1111-1111" } })` -- including one whose column has another name (`@Column({ name: "card_number" })`): the root maps its subclasses' properties to the UNION's columns on every read path, the query builder included.
+
 ### Why UNION ALL Is Slow
 
 Let's break down why this query can be expensive.

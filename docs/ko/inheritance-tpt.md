@@ -338,7 +338,25 @@ ORM이 다형성 쿼리에서 LEFT JOIN을 사용하는 것을 주목하세요. 
 4. 다른 자식 타입에 속하는 접두사 컬럼을 버려요 (예: `credit_card` 타입 행일 때 `bank_transfer_payment_bankCode`를 제거해요)
 5. 평탄화된 행 데이터로 올바른 클래스를 인스턴스화해요
 
-`findWithCursor(Payment)`도 같은 행을 페이지로 나눕니다. 이 SELECT를 파생 테이블로 읽기 때문에 키셋과 조건은 루트 컬럼을 가리키고, 페이지의 각 행은 자기 서브클래스로 반환돼요. 커서 정렬 컬럼은 루트 컬럼이어야 합니다.
+`findWithCursor(Payment)`도 같은 행을 페이지로 나눕니다. 이 SELECT를 파생 테이블로 읽고, 페이지의 각 행은 자기 서브클래스로 반환돼요.
+
+### 서브클래스 컬럼으로 거르기
+
+루트를 읽을 때 `where`, `orderBy`, `groupBy`, `select`, 집계에서 서브클래스의 컬럼을 프로퍼티 이름이나 컬럼 이름으로 쓸 수 있습니다. 그 컬럼은 컬럼을 가진 서브클래스 테이블에서 읽기 때문에, 다른 서브클래스의 행에서는 NULL로 읽혀요.
+
+```typescript
+const cards = await em.find(Payment, { where: { cardNumber: { startsWith: "4111" } } });
+// [CreditCardPayment { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" }]
+```
+
+```sql
+SELECT ... FROM "payment"
+LEFT JOIN "credit_card_payment" ON "payment"."id" = "credit_card_payment"."id"
+LEFT JOIN "bank_transfer_payment" ON "payment"."id" = "bank_transfer_payment"."id"
+WHERE "credit_card_payment"."cardNumber" LIKE $1
+```
+
+여러 서브클래스가 같은 이름으로 선언한 컬럼은 그 행을 가진 테이블에서 읽습니다: `COALESCE("credit_card_payment"."fee", "bank_transfer_payment"."fee")`. `count()` / `exists()` / `sum()` 같은 집계(이런 컬럼을 쓸 때만 서브클래스 테이블을 조인), `findWithCursor()`, 쿼리 빌더(`where("p.cardNumber", ...)`), 루트를 대상으로 하는 관계의 `where` / `orderBy` / `withCount`와 관계 필터(`some` / `none` / ...)도 마찬가지예요. 커서 페이지는 한 서브클래스만 선언한 컬럼으로 정렬할 수 있습니다. 여러 서브클래스가 선언한 컬럼은 모든 행을 담은 단일 컬럼이 없어서 정렬 기준으로 쓰면 거부돼요. 루트에 대한 쓰기(`delete()`, `updateMany()`)는 여전히 루트 컬럼만 받습니다.
 
 ## 6. SELECT -- 관계와 함께
 

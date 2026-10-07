@@ -319,7 +319,25 @@ The `ResultTransformer.toTPTPolymorphicEntities()` method handles this deseriali
 4. Discards prefixed columns that belong to other child types (e.g., drops `bank_transfer_payment_bankCode` when the row is a `credit_card` type)
 5. Instantiates the correct class with the flattened row data
 
-`findWithCursor(Payment)` pages the same rows: it reads this SELECT as a derived table, so the keyset and the criteria name the root's columns, and each row of the page is its subclass. The cursor order must be a root column.
+`findWithCursor(Payment)` pages the same rows: it reads this SELECT as a derived table, and each row of the page is its subclass.
+
+### Filtering by a subclass column
+
+A read of the root can name a subclass's column -- by property or column name -- in `where`, `orderBy`, `groupBy`, `select` and the aggregates. The column is read from the subclass table that holds it, so rows of the other subclasses read it as NULL:
+
+```typescript
+const cards = await em.find(Payment, { where: { cardNumber: { startsWith: "4111" } } });
+// [CreditCardPayment { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" }]
+```
+
+```sql
+SELECT ... FROM "payment"
+LEFT JOIN "credit_card_payment" ON "payment"."id" = "credit_card_payment"."id"
+LEFT JOIN "bank_transfer_payment" ON "payment"."id" = "bank_transfer_payment"."id"
+WHERE "credit_card_payment"."cardNumber" LIKE $1
+```
+
+A column several subclasses declare under the same name is read from whichever of their tables holds the row: `COALESCE("credit_card_payment"."fee", "bank_transfer_payment"."fee")`. The same holds for `count()` / `exists()` / `sum()` and the other aggregates (which join the subclass tables only when they name such a column), `findWithCursor()`, the query builder (`where("p.cardNumber", ...)`), a relation's `where` / `orderBy` / `withCount` and the relation filters (`some` / `none` / ...) of a relation targeting the root. A cursor page can be ordered by a subclass column one subclass declares; ordering it by one several subclasses declare is rejected, since no single column holds it for every row. A write on the root (`delete()`, `updateMany()`) still takes the root's columns only.
 
 ## 6. SELECT -- With Relations
 
@@ -586,7 +604,7 @@ LEFT JOIN "bank_transfer_payment"
 // Child column prefixes (e.g., credit_card_payment_cardNumber) are stripped automatically.
 ```
 
-The `ResultTransformer.toTPTPolymorphicEntities()` method handles the prefix stripping and subclass instantiation, just like `em.find()`. All QueryBuilder methods (`getMany()`, `getOne()`, `getCount()`, `exists()`) support TPT polymorphic deserialization.
+The `ResultTransformer.toTPTPolymorphicEntities()` method handles the prefix stripping and subclass instantiation, just like `em.find()` -- so a subclass column renamed with `@Column({ name })` comes back under its property, and the discriminator is not left on the instance. All QueryBuilder methods (`getMany()`, `getOne()`, `getCount()`, `exists()`) support TPT polymorphic deserialization, and `where()` / `orderBy()` on the root alias can name a subclass column (see [Filtering by a subclass column](#filtering-by-a-subclass-column)).
 
 ## 9. SELECT -- With WriteBuffer
 
