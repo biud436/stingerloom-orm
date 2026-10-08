@@ -86,7 +86,7 @@ describe("resolveEntityGlobs", () => {
     expect(userCount).toBe(1);
   });
 
-  it("warns and skips files that fail to require()", async () => {
+  it("loads a pattern that also matches files without entities", async () => {
     // Create a mock that will fail on require
     const badPattern = path.join(__dirname, "fixtures", "glob-entities", "not-entity.ts");
     // not-entity.ts should load fine, but won't have entities.

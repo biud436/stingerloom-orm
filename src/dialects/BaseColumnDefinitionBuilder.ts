@@ -1,4 +1,9 @@
-import { ColumnOption, ColumnType } from "../decorators/Column";
+import {
+  ColumnOption,
+  ColumnType,
+  isKnownColumnType,
+  KNOWN_COLUMN_TYPE_NAMES,
+} from "../decorators/Column";
 import type { ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import { ColumnDefinitionBuilder, ColumnDefContext } from "./ColumnDefinitionBuilder";
 import { CommonCapabilities, ALL_COMMON } from "./DialectCapabilities";
@@ -7,6 +12,34 @@ import { renderComputedColumnExpression } from "../core/expressions/ComputedColu
 import type { ColumnResolver } from "../core/expressions/ConditionLike";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { closestIdentifier } from "../utils/closestIdentifier";
+
+/**
+ * Throws for a column type that is neither built in nor registered with
+ * {@link ColumnTypeRegistry}.
+ *
+ * An unknown name used to reach the DDL as written: PostgreSQL and MySQL
+ * rejected the CREATE TABLE, while SQLite accepted any name and gave the
+ * column the affinity its spelling implied — `"varchr"` became a NUMERIC
+ * column that stored `"007"` as `7`.
+ *
+ * @param where - The column the type belongs to, for the message.
+ */
+export function assertColumnType(type: string, where?: string): void {
+  const registry = ColumnTypeRegistry.getInstance();
+  if (isKnownColumnType(type) || registry.has(type)) return;
+  const suggestion = closestIdentifier(type, [
+    ...KNOWN_COLUMN_TYPE_NAMES,
+    ...registry.getRegisteredNames(),
+  ]);
+  throw new OrmError(
+    OrmErrorCode.INVALID_CONFIG,
+    `Unknown column type ${JSON.stringify(type)}${where ? ` on ${where}` : ""}.` +
+      (suggestion ? ` Did you mean "${suggestion}"?` : ""),
+    `Use a built-in type (${KNOWN_COLUMN_TYPE_NAMES.join(", ")}), or register ` +
+      `${JSON.stringify(type)} with ColumnTypeRegistry to map it to each database's type.`,
+  );
+}
 
 /**
  * Abstract base class for column definition builders.
@@ -33,12 +66,15 @@ export abstract class BaseColumnDefinitionBuilder
   /**
    * Converts a ColumnType to the dialect-specific SQL type string.
    * First checks the ColumnTypeRegistry for custom types, then falls back
-   * to the dialect's built-in type mapping.
+   * to the dialect's built-in type mapping. A registered type without a
+   * mapping for this dialect is declared as written; any other type that is
+   * not built in throws ({@link assertColumnType}).
    */
   castType(type: ColumnType): string {
     const registry = ColumnTypeRegistry.getInstance();
     const custom = registry.resolve(type, this.dialectName);
     if (custom !== undefined) return custom;
+    if (!registry.has(type)) assertColumnType(type);
     return this.castBuiltinType(type);
   }
 

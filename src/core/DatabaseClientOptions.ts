@@ -7,6 +7,7 @@ import { OrmErrorCode } from "../errors/OrmErrorCode";
 import type { QueryCacheOptions } from "./cache/QueryResultCache";
 import { Logger } from "../utils/Logger";
 import { closestIdentifier } from "../utils/closestIdentifier";
+import { DbVersion } from "../dialects/DbVersion";
 
 /**
  * Connection pool configuration options.
@@ -352,6 +353,7 @@ interface BaseDatabaseClientOptions {
    * Override the detected database version.
    * Useful for testing version-specific DDL behavior without connecting to a specific DB version.
    * When set, the ORM uses this version instead of auto-detecting from the connected database.
+   * A value that does not read as a version is rejected at registration.
    * @example "5.7.0", "13.0.0", "3.24.0"
    */
   versionOverride?: string;
@@ -679,6 +681,18 @@ export function validateDatabaseClientOptions(
   ) {
     errors.push(
       `'unknownWriteKeys' must be one of ${UNKNOWN_WRITE_KEY_POLICIES.map((p) => `"${p}"`).join(", ")}, got ${JSON.stringify(options.unknownWriteKeys)}.`,
+    );
+  }
+
+  // versionOverride — a value that does not read as a version used to
+  // stand for an unknown server, under which every version gate is open.
+  if (
+    options.versionOverride !== undefined &&
+    (typeof options.versionOverride !== "string" ||
+      DbVersion.parse(options.versionOverride) === DbVersion.UNKNOWN)
+  ) {
+    errors.push(
+      `'versionOverride' must be a version such as "8.0.36", "16.2" or "3.45.0", got ${JSON.stringify(options.versionOverride)}.`,
     );
   }
 

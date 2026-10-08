@@ -14,7 +14,7 @@ import { MetadataContext } from "../../metadata/MetadataContext";
 import { validateIsolationLevel } from "../../utils/validateIsolationLevel";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
-import { DbVersion } from "../DbVersion";
+import { DbVersion, detectDbVersion } from "../DbVersion";
 
 export class PostgresConnector extends IConnector {
   pool?: Pool;
@@ -120,18 +120,14 @@ export class PostgresConnector extends IConnector {
         client.query(`SET search_path TO ${safeSchema}`);
       });
 
-      // Detect database version
-      try {
-        if (options.versionOverride) {
-          this._dbVersion = DbVersion.parse(options.versionOverride);
-        } else {
-          const rows: any[] = await this.query("SELECT version() as v");
-          this._dbVersion = DbVersion.parse(rows[0]?.v ?? "unknown");
-        }
-      } catch {
-        // Version detection failure is non-fatal — default to UNKNOWN
-        this._dbVersion = DbVersion.UNKNOWN;
-      }
+      // Detect the server version (validated `versionOverride` wins).
+      this._dbVersion = options.versionOverride
+        ? DbVersion.parse(options.versionOverride)
+        : await detectDbVersion(
+            async () => ((await this.query("SELECT version() as v")) as any[])[0]?.v,
+            (message) => this.logger.warn(message),
+            "PostgreSQL",
+          );
     } catch (e: unknown) {
       if (e instanceof OrmError) throw e;
       throw new OrmError(

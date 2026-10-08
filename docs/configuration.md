@@ -153,7 +153,7 @@ await em.register({
 | Flag | Default | What it does |
 |------|---------|--------------|
 | `mode` | required | Base mode — same as the bare-form values. |
-| `continueOnError` | `true` | When `false`, the first DDL failure throws `OrmError(SCHEMA_SYNC_FAILED)` instead of degrading to a warning. Use this when you'd rather see boot fail loudly than discover a half-migrated schema in the logs. |
+| `continueOnError` | `true` | When `false`, the first DDL failure throws `OrmError(SCHEMA_SYNC_FAILED)` instead of degrading to a warning. Use this when you'd rather see boot fail loudly than discover a half-migrated schema in the logs. Whatever its value, boot fails when the existing tables cannot be read to compare them with the entities, and on a column type that is neither built in nor registered with `ColumnTypeRegistry` — those are not failing statements. |
 | `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN, narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) and RENAME COLUMN throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing — useful as a production tripwire. (Tables are never dropped by synchronize, so there is nothing to guard there.) |
 | `logDDL` | `false` | When `true`, every emitted DDL is logged at info level (CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX, etc.). Under `"safe"` it also logs the statements the mode skipped, prefixed with `[skipped: safe mode]`. Pairs well with `"dry-run"` for full visibility. |
 

@@ -20,6 +20,7 @@ import { PostgresCapabilities } from "../DialectCapabilities";
 import { resolvePostgresCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 import { escapeSqlLiteral } from "../../utils/escapeSqlLiteral";
+import { isStatementTimeoutError } from "../../core/entity-manager/internal-utils";
 import {
   ForeignKeyActions,
   referentialActionClause,
@@ -927,10 +928,15 @@ export class PostgresDriver implements ISqlDriver {
     // Use a single dedicated connection so SET and the lock query share the same session
     const client = await this.connector.getConnection();
     try {
-      const savedTimeout = await this.connector.query(
+      // Read on a dedicated client, the connector answers `{ results }`.
+      const saved: any = await this.connector.query(
         `SHOW statement_timeout`,
         client,
       );
+      const savedRows = Array.isArray(saved)
+        ? saved
+        : (saved?.results ?? saved?.rows ?? []);
+      const original = String(savedRows[0]?.statement_timeout ?? "0");
 
       // PostgreSQL does not accept bind parameters in SET, so the timeout must
       // be interpolated as a literal (mirrors setQueryTimeout()).
@@ -940,27 +946,33 @@ export class PostgresDriver implements ISqlDriver {
         client,
       );
 
+      // Restore the client's own timeout before it goes back to the pool.
+      // The value comes from SHOW statement_timeout (Postgres-controlled),
+      // but quotes are escaped defensively before it is interpolated.
+      const restore = () =>
+        this.connector.query(
+          `SET statement_timeout = '${original.replace(/'/g, "''")}'`,
+          client,
+        );
+
       try {
         await this.connector.query(
           sql`SELECT pg_advisory_lock(${hash})`,
           client,
         );
-        return true;
-      } catch {
+      } catch (e) {
+        // Only the timeout means another session holds the lock. Any other
+        // failure is reported as itself — and a restore that fails on a
+        // broken session must not replace it.
+        if (!isStatementTimeoutError(e)) {
+          await restore().catch(() => undefined);
+          throw e;
+        }
+        await restore();
         return false;
-      } finally {
-        // Restore original timeout on the same connection. The value comes from
-        // SHOW statement_timeout (Postgres-controlled), but escape quotes
-        // defensively before interpolating it as a literal.
-        const rows = Array.isArray(savedTimeout) ? savedTimeout : savedTimeout?.rows ?? [];
-        const original = String(
-          rows.length > 0 ? rows[0]?.statement_timeout ?? "0" : "0",
-        ).replace(/'/g, "''");
-        await this.connector.query(
-          `SET statement_timeout = '${original}'`,
-          client,
-        );
       }
+      await restore();
+      return true;
     } finally {
       client.release();
     }

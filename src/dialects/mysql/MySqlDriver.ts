@@ -534,7 +534,16 @@ export class MySqlDriver implements ISqlDriver {
     );
     const rows = Array.isArray(result) ? result : result?.results ?? result?.rows ?? [];
     if (rows.length === 0) return false;
-    return rows[0]?.lock_result === 1;
+    const value = rows[0]?.lock_result;
+    // 1 is acquired and 0 timed out. NULL is GET_LOCK's report of an error,
+    // which is not a lock another session holds.
+    if (value === null || value === undefined) {
+      throw new OrmError(
+        OrmErrorCode.ADVISORY_LOCK_FAILED,
+        `GET_LOCK(${JSON.stringify(lockId)}) returned NULL: the server reported an error while acquiring the lock.`,
+      );
+    }
+    return Number(value) === 1;
   }
 
   async releaseAdvisoryLock(lockId: string): Promise<void> {

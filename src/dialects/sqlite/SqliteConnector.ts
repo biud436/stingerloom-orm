@@ -11,7 +11,7 @@ import { IConnection } from "../IConnection";
 import { SqliteConnection } from "./SqliteConnection";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
-import { DbVersion } from "../DbVersion";
+import { DbVersion, detectDbVersion } from "../DbVersion";
 import { parseInlineFlags } from "../../core/expressions/RegexPattern";
 import { planSafeIntegers, normalizeSafeIntegerRows } from "./SqliteSafeIntegers";
 import { sanitizeSqliteBindValues } from "./SqliteBindValues";
@@ -74,17 +74,14 @@ export class SqliteConnector extends IConnector {
       // operator but ships no engine. SQLite invokes `regexp(pattern, value)`.
       this.registerRegexpFunction();
 
-      // Detect SQLite version
-      try {
-        if (options.versionOverride) {
-          this._dbVersion = DbVersion.parse(options.versionOverride);
-        } else {
-          const rows: any[] = await this.query("SELECT sqlite_version() as v");
-          this._dbVersion = DbVersion.parse(rows[0]?.v ?? "unknown");
-        }
-      } catch {
-        this._dbVersion = DbVersion.UNKNOWN;
-      }
+      // Detect the server version (validated `versionOverride` wins).
+      this._dbVersion = options.versionOverride
+        ? DbVersion.parse(options.versionOverride)
+        : await detectDbVersion(
+            async () => ((await this.query("SELECT sqlite_version() as v")) as any[])[0]?.v,
+            (message) => this.logger.warn(message),
+            "SQLite",
+          );
     } catch (e: unknown) {
       if (e instanceof OrmError) throw e;
       throw new OrmError(

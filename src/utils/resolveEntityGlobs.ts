@@ -3,10 +3,7 @@
 import { pathToFileURL } from "url";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
-import { Logger } from "./Logger";
 import { ReflectManager } from "./ReflectManager";
-
-const logger = new Logger("resolveEntityGlobs");
 
 /**
  * Resolves an array of entity classes and/or glob patterns into entity classes.
@@ -14,6 +11,7 @@ const logger = new Logger("resolveEntityGlobs");
  * Class references are passed through as-is. Glob pattern strings are resolved
  * using `fast-glob` (optional peer dependency), and each matched file is
  * `require()`-d — only exports decorated with `@Entity()` are collected.
+ * A matched file that fails to load throws `ENTITY_GLOB_LOAD_FAILED`.
  *
  * @param entities - Mixed array of entity class constructors and glob pattern strings
  * @param cwd - Working directory for glob resolution (defaults to `process.cwd()`)
@@ -76,6 +74,7 @@ export async function resolveEntityGlobs(
   }
 
   const resolved: Function[] = [];
+  const failures: string[] = [];
 
   for (const filePath of matched) {
     try {
@@ -101,8 +100,20 @@ export async function resolveEntityGlobs(
         }
       }
     } catch (err: any) {
-      logger.warn(`Failed to load "${filePath}": ${err.message ?? err}`);
+      failures.push(`${filePath}: ${err?.message ?? err}`);
     }
+  }
+
+  // A matched file that does not load leaves its entities unregistered —
+  // no table, and a "not registered" error only at first use — so the
+  // resolution stops here, naming every such file.
+  if (failures.length > 0) {
+    throw new OrmError(
+      OrmErrorCode.ENTITY_GLOB_LOAD_FAILED,
+      `Could not load ${failures.length === 1 ? "a file" : `${failures.length} files`} matched by the entity glob patterns:\n` +
+        failures.map((f) => `  ${f}`).join("\n"),
+      "Fix the error in each file, or narrow the pattern so it matches only entity files.",
+    );
   }
 
   // Deduplicate using Set

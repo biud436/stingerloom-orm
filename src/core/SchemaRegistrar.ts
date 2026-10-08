@@ -48,6 +48,7 @@ import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundErr
 import { EntityNotFound } from "../dialects/EntityNotFound";
 import type { CreateTableForeignKey, ISqlDriver } from "../dialects/SqlDriver";
 import { createColumnDefinitionBuilder } from "../dialects/ColumnDefinitionBuilder";
+import { assertColumnType } from "../dialects/BaseColumnDefinitionBuilder";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
@@ -419,7 +420,10 @@ export class SchemaRegistrar {
         throw new EntityMetadataNotFoundError(tableName ?? "Unknown");
       }
       registeredEntities.push(TargetEntity);
-      if (synchronize) this.assertRelationActions(TargetEntity);
+      if (synchronize) {
+        this.assertRelationActions(TargetEntity);
+        this.assertColumnTypes(TargetEntity);
+      }
 
       // STI: child entities do not create their own table (they share the
       // parent's table) — and they do not pin it either: the root records
@@ -919,8 +923,16 @@ export class SchemaRegistrar {
         },
       );
     } catch (err) {
-      this.handleDdlError(err, "SchemaDiff failed, skipping ALTER operations", policy);
-      return;
+      // Not a failing DDL statement but a failure to read what the
+      // statements are computed from. Going on would skip every column
+      // change of every existing table and boot against tables the entities
+      // no longer match, so `continueOnError` does not downgrade it.
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new OrmError(
+        OrmErrorCode.SCHEMA_SYNC_FAILED,
+        `[sync] Could not compare the entities with the existing tables, so no column change was applied: ${msg}`,
+        "Fix the cause above, or set synchronize to false and apply schema changes with migrations.",
+      );
     }
 
     // addTables was already handled in pass 1, so skip it here (we only process existing tables here).
@@ -1807,6 +1819,30 @@ export class SchemaRegistrar {
     for (const rel of relations) {
       referentialActionClause("ON DELETE", rel.option?.onDelete);
       referentialActionClause("ON UPDATE", rel.option?.onUpdate);
+    }
+  }
+
+  /**
+   * Throws for a column type that is neither built in nor registered with
+   * `ColumnTypeRegistry`. Like {@link assertRelationActions}, it is a
+   * mistake in the entity rather than a failing statement, so it is checked
+   * before the entity's DDL and is not downgraded by `continueOnError`.
+   */
+  private assertColumnTypes(entity: ClazzType<any>): void {
+    const metadata = this.resolver.resolveEntityMetadata(entity);
+    if (!metadata) return;
+    const table = metadata.name ?? entity.name;
+    for (const col of metadata.columns) {
+      const where = `${table}.${col.name}`;
+      assertColumnType(col.options?.type ?? "varchar", where);
+      if (col.options?.arrayElementType) {
+        assertColumnType(col.options.arrayElementType, where);
+      }
+    }
+    for (const computed of collectTableComputedColumns(entity)) {
+      if (computed.options.type) {
+        assertColumnType(computed.options.type, `${table}.${computed.name}`);
+      }
     }
   }
 

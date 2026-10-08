@@ -210,7 +210,7 @@ export default {
 };
 ```
 
-`entities` 배열은 `migrate:generate`에서만 필요해요 -- CLI가 스키마가 어떤 모습이어야 하는지 파악하는 데 사용돼요. 클래스뿐 아니라 glob 패턴 문자열도 받습니다(`entities: ["./src/**/*.entity.ts"]`). 패턴은 CLI를 실행한 디렉터리 기준으로 해석돼요. `migrations` 배열은 실행 순서대로 마이그레이션 클래스를 나열해요.
+`entities` 배열은 `migrate:generate`에서만 필요해요 -- CLI가 스키마가 어떤 모습이어야 하는지 파악하는 데 사용돼요. 클래스뿐 아니라 glob 패턴 문자열도 받습니다(`entities: ["./src/**/*.entity.ts"]`). 패턴은 CLI를 실행한 디렉터리 기준으로 해석돼요. 매칭된 파일이 로드되지 않으면 `register()`와 마찬가지로 명령이 `OrmError(ENTITY_GLOB_LOAD_FAILED)`로 멈추고, 실패한 파일과 에러를 모두 알려 줍니다. `migrations` 배열은 실행 순서대로 마이그레이션 클래스를 나열해요.
 
 `connection` 래퍼 없이 평면 `DatabaseClientOptions` 객체도 그대로 사용할 수 있습니다: `export default { type: "sqlite", database: "./app.sqlite", migrations: [] }`.
 

@@ -289,7 +289,7 @@ Server B: acquireAdvisoryLock("stingerloom_migration_lock") -> acquired!
 Server B: checks __migrations table, finds nothing pending, exits
 ```
 
-타임아웃 (기본값: 10초) 내에 잠금을 획득하지 못하면 `AdvisoryLockError`가 발생해요.
+타임아웃 (기본값: 10초) 내에 잠금을 획득하지 못하면 `AdvisoryLockError`가 발생해요. 이렇게 보고되는 것은 타임아웃이 지났을 때뿐입니다. 잠금을 얻는 중의 다른 실패(끊긴 커넥션, 취소된 백엔드, MySQL `GET_LOCK`이 에러를 보고한 경우)는 그 에러 그대로 던져집니다.
 
 ### MigrationCli 사용 (프로그래밍 방식)
 

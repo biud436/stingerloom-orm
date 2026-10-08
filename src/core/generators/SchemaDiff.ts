@@ -22,8 +22,6 @@ import {
   ColumnDefinitionBuilder,
   createColumnDefinitionBuilder,
 } from "../../dialects/ColumnDefinitionBuilder";
-import { OrmError } from "../../errors/OrmError";
-import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 export interface ColumnChange {
   tableName: string;
@@ -537,10 +535,9 @@ export class SchemaDiff {
     let rawResult: any;
 
     if (dialect === "sqlite") {
-      // SQLite PRAGMA does not support parameterized queries, so validate the identifier strictly
-      if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(tableName)) {
-        throw new OrmError(OrmErrorCode.SCHEMA_ERROR, `Invalid table name: ${tableName}`);
-      }
+      // PRAGMA takes no bound parameters: the name goes in as a quoted
+      // identifier, so any name the table could be created with is read
+      // back — non-ASCII, hyphens and spaces included.
       const escaped = tableName.replace(/"/g, '""');
       // table_xinfo, not table_info: generated columns are hidden from
       // table_info, and the diff must see them to avoid re-adding an existing
