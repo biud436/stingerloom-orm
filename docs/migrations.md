@@ -289,7 +289,7 @@ Server B: acquireAdvisoryLock("stingerloom_migration_lock") -> acquired!
 Server B: checks __migrations table, finds nothing pending, exits
 ```
 
-If the lock cannot be acquired within the timeout (default: 10 seconds), the runner throws an `AdvisoryLockError`.
+If the lock cannot be acquired within the timeout (default: 10 seconds), the runner throws an `AdvisoryLockError`. Only an elapsed timeout is reported that way: any other failure while acquiring the lock (a dropped connection, a cancelled backend, MySQL's `GET_LOCK` reporting an error) is thrown as itself.
 
 ### Using MigrationCli (Programmatic)
 

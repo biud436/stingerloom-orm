@@ -150,8 +150,8 @@ describe("SqliteDriver - castType()", () => {
     expect(driver.castType("timestamp")).toBe("TEXT");
   });
 
-  it("should return unknown type as-is", () => {
-    expect(driver.castType("unknown_type" as any)).toBe("unknown_type");
+  it("throws for a type that is neither built in nor registered", () => {
+    expect(() => driver.castType("unknown_type" as any)).toThrow('Unknown column type "unknown_type"');
   });
 });
 

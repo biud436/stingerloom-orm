@@ -4,7 +4,7 @@ import { ColumnTransformer } from "../decorators/Column";
  * Per-dialect SQL type mapping for a custom column type.
  *
  * At least one dialect must be specified. If a dialect is omitted,
- * `castType()` falls back to the raw type name (uppercased).
+ * `castType()` declares the type name as written on that dialect.
  */
 export interface CustomColumnTypeDefinition {
   mysql?: string;

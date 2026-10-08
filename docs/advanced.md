@@ -453,7 +453,9 @@ Use the custom type in `@Column`:
 price!: number;
 ```
 
-The registry resolves the type to the appropriate SQL for each dialect. The transformer handles conversion between JavaScript and database values.
+The registry resolves the type to the appropriate SQL for each dialect; a dialect the definition leaves out declares the name as written. The transformer handles conversion between JavaScript and database values.
+
+A type that is neither built in nor registered is rejected when the schema is synchronized or generated — `Unknown column type "varchr". Did you mean "varchar"?` — rather than written into the DDL as is. To use a database-native type the ORM does not list, register it.
 
 | Method | Description |
 |--------|-------------|

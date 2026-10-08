@@ -94,3 +94,36 @@ export class DbVersion {
     "unknown",
   );
 }
+
+/**
+ * Reads the server version through `detect`. A failure, or a reply that
+ * does not read as a version, is reported through `warn` and yields
+ * {@link DbVersion.UNKNOWN} — under which every version-gated feature is
+ * assumed available, so the warning names `versionOverride` as the way to
+ * pin it.
+ *
+ * @param server - The database named in the warning ("MySQL", ...).
+ */
+export async function detectDbVersion(
+  detect: () => Promise<unknown>,
+  warn: (message: string) => void,
+  server: string,
+): Promise<DbVersion> {
+  const consequence =
+    "every version-gated feature is assumed available. Set versionOverride to the server's version to pin it.";
+  let raw: unknown;
+  try {
+    raw = await detect();
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    warn(`Could not read the ${server} server version (${reason}); ${consequence}`);
+    return DbVersion.UNKNOWN;
+  }
+  const version = DbVersion.parse(typeof raw === "string" ? raw : "");
+  if (version === DbVersion.UNKNOWN) {
+    warn(
+      `The ${server} server reported the version ${JSON.stringify(raw ?? null)}, which does not read as one; ${consequence}`,
+    );
+  }
+  return version;
+}

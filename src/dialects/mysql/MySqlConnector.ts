@@ -14,7 +14,7 @@ import { MysqlConnection } from "./MysqlConnection";
 import { validateIsolationLevel } from "../../utils/validateIsolationLevel";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
-import { DbVersion } from "../DbVersion";
+import { DbVersion, detectDbVersion } from "../DbVersion";
 export type AnyEntity = any;
 export type IDatabaseType = "mysql" | "mariadb" | "postgres" | "sqlite";
 
@@ -86,18 +86,14 @@ export class MySqlConnector extends IConnector {
 
       this.pool = pool;
 
-      // Detect database version
-      try {
-        if (options.versionOverride) {
-          this._dbVersion = DbVersion.parse(options.versionOverride);
-        } else {
-          const rows: any[] = await this.query("SELECT VERSION() as v");
-          this._dbVersion = DbVersion.parse(rows[0]?.v ?? "unknown");
-        }
-      } catch {
-        // Version detection failure is non-fatal — default to UNKNOWN
-        this._dbVersion = DbVersion.UNKNOWN;
-      }
+      // Detect the server version (validated `versionOverride` wins).
+      this._dbVersion = options.versionOverride
+        ? DbVersion.parse(options.versionOverride)
+        : await detectDbVersion(
+            async () => ((await this.query("SELECT VERSION() as v")) as any[])[0]?.v,
+            (message) => this.logger.warn(message),
+            "MySQL",
+          );
     } catch (e: unknown) {
       if (e instanceof OrmError) throw e;
       throw new OrmError(

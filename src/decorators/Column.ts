@@ -62,6 +62,43 @@ export type KnownColumnType =
 export type ColumnType = KnownColumnType | (string & {});
 
 /**
+ * The built-in column types at runtime. Keyed by {@link KnownColumnType}, so
+ * a type added there without an entry here fails to compile.
+ */
+const KNOWN_COLUMN_TYPES: Readonly<Record<KnownColumnType, true>> = {
+  int: true,
+  number: true,
+  float: true,
+  double: true,
+  timestamp: true,
+  timestamptz: true,
+  date: true,
+  datetime: true,
+  blob: true,
+  text: true,
+  varchar: true,
+  char: true,
+  boolean: true,
+  enum: true,
+  json: true,
+  jsonb: true,
+  array: true,
+  bigint: true,
+  longtext: true,
+  uuid: true,
+};
+
+/** The built-in column type names, in declaration order. */
+export const KNOWN_COLUMN_TYPE_NAMES: readonly KnownColumnType[] = Object.keys(
+  KNOWN_COLUMN_TYPES,
+) as KnownColumnType[];
+
+/** Whether `type` is one of the built-in column types (case-sensitive). */
+export function isKnownColumnType(type: string): type is KnownColumnType {
+  return Object.prototype.hasOwnProperty.call(KNOWN_COLUMN_TYPES, type);
+}
+
+/**
  * Bidirectional column value transformer.
  *
  * - `to`: transforms the entity value before writing to the database (INSERT/UPDATE).

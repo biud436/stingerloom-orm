@@ -210,7 +210,7 @@ export default {
 };
 ```
 
-The `entities` array is only needed for `migrate:generate` -- that is how the CLI knows what your schema *should* look like. It accepts glob pattern strings as well as classes (`entities: ["./src/**/*.entity.ts"]`), resolved from the directory the CLI runs in. The `migrations` array lists the migration classes in the order they should be executed.
+The `entities` array is only needed for `migrate:generate` -- that is how the CLI knows what your schema *should* look like. It accepts glob pattern strings as well as classes (`entities: ["./src/**/*.entity.ts"]`), resolved from the directory the CLI runs in. A matched file that fails to load stops the command with `OrmError(ENTITY_GLOB_LOAD_FAILED)`, naming each such file and its error — the same as at `register()`. The `migrations` array lists the migration classes in the order they should be executed.
 
 A flat `DatabaseClientOptions` object (no `connection` wrapper) is also accepted: `export default { type: "sqlite", database: "./app.sqlite", migrations: [] }`.
 
