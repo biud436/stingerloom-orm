@@ -78,7 +78,12 @@ SQLite stores everything in a single file. There is no server to connect to, whi
 
 ### Option validation
 
-`register()` validates the options before connecting. Missing or malformed required fields throw an `INVALID_CONFIG` error listing every problem at once, and — in multi-connection setups — naming the connection that failed. Unknown top-level keys are not silently ignored: a typo like `synchronise` logs a warning with the closest valid key (`Did you mean 'synchronize'?`), which matters when the options come from a ConfigService and TypeScript cannot catch the typo.
+`register()` validates the options before connecting and throws one `INVALID_CONFIG` error that lists every problem at once — naming the connection that failed in multi-connection setups.
+
+- **Required fields.** `type`, `database` and `entities`, plus `host`, `port`, `username` and `password` for MySQL, MariaDB and PostgreSQL.
+- **Values.** Every option that is set must hold a value it accepts. An option with a fixed list of values (`synchronize` and its `mode`, `tenantStrategy`, `tenantOnMissingContext`, `publicTenantBehavior`, `tenantColumnType`, `unknownWriteKeys`, `replication.strategy`) rejects anything else and names the closest value, so `tenantStrategy: "tenant-column"` fails with `Did you mean "tenant_column"?` instead of booting with no tenant scoping. Counts such as `pool.max`, `connectionLimit` and `retry.maxAttempts` must be positive integers; durations such as `queryTimeout` and `pool.idleTimeoutMs` must be finite numbers of zero or more, so `NaN` and `"10"` are rejected. `namingStrategy`, each `plugins` entry and `cache.store` must have their interface's methods: `namingStrategy: "snake"` fails here rather than as a `TypeError` while entities are set up.
+- **Nested objects.** `pool`, `retry`, `cache`, `logging`, `synchronize` and `replication` reject a key they do not declare and name the closest one: `pool: { maxx: 10 }` fails with `Did you mean 'max'?`. `ssl` is handed to the database driver as is, so it keeps keys the ORM does not list.
+- **Unknown top-level keys.** These log a warning with the closest valid key instead of failing: `synchronise` logs `Did you mean 'synchronize'?`. This matters when the options come from a ConfigService and TypeScript cannot catch the typo. It is a warning, not an error, because one config object may also carry fields for another consumer.
 
 ---
 
@@ -251,6 +256,8 @@ await em.register({
   },
 });
 ```
+
+Both fields are optional: a field left out takes its default, so `retry: {}` makes three attempts starting at 1000ms.
 
 ### The exponential backoff formula
 

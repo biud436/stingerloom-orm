@@ -329,7 +329,7 @@ interface TransactionOptions {
 
   // Parity with @Transactional (decorator-free) — see ./decorator-free.md
   isolationLevel?: TRANSACTION_ISOLATION_LEVEL;  // @Transactional("SERIALIZABLE")
-  propagation?: TransactionPropagation;          // REQUIRED | REQUIRES_NEW | NESTED
+  propagation?: TransactionPropagation | "REQUIRED" | "REQUIRES_NEW" | "NESTED";
   connectionName?: string;                       // multi-DB target connection
 }
 ```
@@ -716,8 +716,8 @@ interface PoolOptions {
 }
 
 interface RetryOptions {
-  maxAttempts: number;  // Default: 3
-  backoffMs: number;    // Default: 1000
+  maxAttempts?: number; // Default: 3
+  backoffMs?: number;   // Default: 1000
 }
 
 interface LoggingOptions {

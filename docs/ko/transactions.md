@@ -353,12 +353,14 @@ interface TransactionOptions {
 
   // @Transactional과의 동등성 (데코레이터 없는 형태)
   isolationLevel?: TRANSACTION_ISOLATION_LEVEL;  // 예: "SERIALIZABLE"
-  propagation?: TransactionPropagation;          // REQUIRED | REQUIRES_NEW | NESTED
+  propagation?: TransactionPropagation | "REQUIRED" | "REQUIRES_NEW" | "NESTED";
   connectionName?: string;                       // 멀티 DB 대상 연결
 }
 ```
 
 > 데드락 재시도는 `em.transaction()`에서만 쓸 수 있어요. `@Transactional()` 데코레이터는 지원하지 않아요 -- 데드락이 발생할 가능성이 높은 작업(재고 차감, 카운터 증가 등)에는 `em.transaction()`을 쓰세요. 그 외 모든 `@Transactional` 옵션(격리 수준, 전파, 연결)은 `em.transaction()`에서도 쓸 수 있으므로, 데코레이터가 꼭 필요한 경우는 없어요.
+
+`propagation`에는 `TransactionPropagation` 멤버나 그 문자열 값(`"REQUIRES_NEW"`)을 넣을 수 있습니다. 알 수 없는 `propagation`이나 `isolationLevel`, 음수 `maxRetries`, 숫자가 아닌 `retryDelayMs`는 트랜잭션을 시작하기 전에 가장 가까운 값(`Did you mean "REQUIRES_NEW"?`)과 함께 `INVALID_CONFIG`를 던집니다. `@Transactional()`은 클래스가 정의될 때 옵션을 검사합니다. 검사하지 않으면 전파 옵션 오타는 `REQUIRED`로 실행되고, SQLite는 어떤 격리 수준이든 아무 말 없이 받아들입니다.
 
 ---
 

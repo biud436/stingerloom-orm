@@ -353,12 +353,14 @@ interface TransactionOptions {
 
   // Decorator-free parity with @Transactional
   isolationLevel?: TRANSACTION_ISOLATION_LEVEL;  // e.g. "SERIALIZABLE"
-  propagation?: TransactionPropagation;          // REQUIRED | REQUIRES_NEW | NESTED
+  propagation?: TransactionPropagation | "REQUIRED" | "REQUIRES_NEW" | "NESTED";
   connectionName?: string;                       // multi-DB target connection
 }
 ```
 
 > Deadlock retry is only available with `em.transaction()`. The `@Transactional()` decorator does not support it -- use `em.transaction()` for operations where deadlocks are likely (e.g., inventory deduction, counter increments). Every *other* `@Transactional` option (isolation level, propagation, connection) is available on `em.transaction()` too, so the decorator is never required.
+
+`propagation` takes a `TransactionPropagation` member or its string value (`"REQUIRES_NEW"`). An unknown `propagation` or `isolationLevel`, a negative `maxRetries` or a `retryDelayMs` that is not a number throws `INVALID_CONFIG` before the transaction starts, with the closest valid value (`Did you mean "REQUIRES_NEW"?`). `@Transactional()` checks its options when the class is defined. A propagation typo would otherwise run as `REQUIRED`, and SQLite would accept any isolation level without a word.
 
 ---
 

@@ -78,7 +78,12 @@ SQLite는 단일 파일에 모든 걸 저장해요. 연결할 서버가 없어�
 
 ### 옵션 검증
 
-`register()`는 연결하기 전에 옵션을 검증합니다. 필수 필드가 빠지거나 형식이 잘못되면 모든 문제를 한 번에 나열하는 `INVALID_CONFIG` 에러를 던지고, 멀티 커넥션 구성에서는 실패한 연결 이름도 함께 알려줍니다. 알 수 없는 최상위 키도 그냥 넘기지 않아요. `synchronise` 같은 오타는 가장 가까운 유효 키를 제안하는 경고(`Did you mean 'synchronize'?`)를 남깁니다 — ConfigService에서 옵션이 넘어와 TypeScript가 오타를 못 잡는 경우에 특히 유용합니다.
+`register()`는 연결하기 전에 옵션을 검증하고, 문제를 모두 나열한 `INVALID_CONFIG` 에러 하나를 던집니다. 멀티 커넥션 구성에서는 실패한 연결 이름도 함께 알려줍니다.
+
+- **필수 필드.** `type`, `database`, `entities`가 필요하고, MySQL·MariaDB·PostgreSQL은 `host`, `port`, `username`, `password`도 필요합니다.
+- **값.** 지정한 옵션은 모두 받아들일 수 있는 값이어야 합니다. 값 목록이 정해진 옵션(`synchronize`와 그 `mode`, `tenantStrategy`, `tenantOnMissingContext`, `publicTenantBehavior`, `tenantColumnType`, `unknownWriteKeys`, `replication.strategy`)은 목록 밖의 값을 거부하고 가장 가까운 값을 알려줍니다. 그래서 `tenantStrategy: "tenant-column"`은 테넌트 격리 없이 부팅되는 대신 `Did you mean "tenant_column"?`과 함께 실패합니다. `pool.max`, `connectionLimit`, `retry.maxAttempts` 같은 개수는 양의 정수, `queryTimeout`, `pool.idleTimeoutMs` 같은 시간은 0 이상의 유한한 수여야 해서 `NaN`이나 `"10"`은 거부됩니다. `namingStrategy`, `plugins`의 각 원소, `cache.store`는 해당 인터페이스의 메서드를 갖춰야 합니다. `namingStrategy: "snake"`는 엔티티를 설정하다가 `TypeError`로 터지지 않고 여기서 실패합니다.
+- **중첩 객체.** `pool`, `retry`, `cache`, `logging`, `synchronize`, `replication`은 선언하지 않은 키를 거부하고 가장 가까운 키를 알려줍니다. `pool: { maxx: 10 }`은 `Did you mean 'max'?`와 함께 실패합니다. `ssl`은 데이터베이스 드라이버에 그대로 넘기므로 ORM이 나열하지 않은 키도 유지합니다.
+- **알 수 없는 최상위 키.** 실패시키지 않고 가장 가까운 유효 키를 제안하는 경고를 남깁니다. `synchronise`라고 쓰면 `Did you mean 'synchronize'?` 경고가 나와요. ConfigService에서 옵션이 넘어와 TypeScript가 오타를 못 잡을 때 특히 유용합니다. 설정 객체 하나에 다른 소비자의 필드가 함께 들어 있을 수 있어서 에러가 아니라 경고로 둡니다.
 
 ---
 
@@ -251,6 +256,8 @@ await em.register({
   },
 });
 ```
+
+두 필드 모두 선택 사항입니다. 생략한 필드는 기본값을 쓰므로 `retry: {}`는 1000ms부터 시작해 세 번 시도합니다.
 
 ### 지수 백오프 공식
 

@@ -329,7 +329,7 @@ interface TransactionOptions {
 
   // @Transactional과의 동등성 (데코레이터 없는 형태) — ./decorator-free.md 참고
   isolationLevel?: TRANSACTION_ISOLATION_LEVEL;  // @Transactional("SERIALIZABLE")
-  propagation?: TransactionPropagation;          // REQUIRED | REQUIRES_NEW | NESTED
+  propagation?: TransactionPropagation | "REQUIRED" | "REQUIRES_NEW" | "NESTED";
   connectionName?: string;                       // 멀티 DB 대상 연결
 }
 ```
@@ -716,8 +716,8 @@ interface PoolOptions {
 }
 
 interface RetryOptions {
-  maxAttempts: number;  // Default: 3
-  backoffMs: number;    // Default: 1000
+  maxAttempts?: number; // Default: 3
+  backoffMs?: number;   // Default: 1000
 }
 
 interface LoggingOptions {
