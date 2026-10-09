@@ -2,7 +2,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { DatabaseNotConnectedError } from "./errors/DatabaseNotConnectedError";
-import { DatabaseClientOptions } from "./core/DatabaseClientOptions";
+import {
+  DatabaseClientOptions,
+  DEFAULT_RETRY_OPTIONS,
+} from "./core/DatabaseClientOptions";
 import { IConnector } from "./core/IConnector";
 import { NotSupportedDatabaseTypeError } from "./errors/NotSupportedDatabaseTypeError";
 import { Exception } from "./errors";
@@ -119,7 +122,10 @@ export class DatabaseClient {
     connector: IConnector,
     options: DatabaseClientOptions,
   ): Promise<void> {
-    const { maxAttempts, backoffMs } = options.retry!;
+    const {
+      maxAttempts = DEFAULT_RETRY_OPTIONS.maxAttempts,
+      backoffMs = DEFAULT_RETRY_OPTIONS.backoffMs,
+    } = options.retry!;
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {

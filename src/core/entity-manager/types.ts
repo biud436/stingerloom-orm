@@ -89,7 +89,7 @@ export interface TransactionOptions {
    * - REQUIRES_NEW: always start a fresh, independent transaction.
    * - NESTED: create a savepoint inside the active transaction.
    */
-  propagation?: TransactionPropagation;
+  propagation?: TransactionPropagation | `${TransactionPropagation}`;
   /**
    * Named connection to run the transaction on (multi-DB).
    * Decorator-free equivalent of `@Transactional({ connectionName })`.

@@ -4,6 +4,7 @@ import { ReplicationNodeConfig } from "../../dialects/ReplicationRouter";
 import {
   transactionStorage,
   TransactionPropagation,
+  validateTransactionOptions,
 } from "../../decorators/Transactional";
 import { MetadataContext } from "../../metadata/MetadataContext";
 import { OrmError } from "../../errors/OrmError";
@@ -225,6 +226,7 @@ export class TransactionRunner {
     callback: (em: EntityManager) => Promise<R>,
     options?: TransactionOptions,
   ): Promise<R> {
+    if (options) validateTransactionOptions(options);
     const manager = this.ctx.getManager();
     const maxRetries = options?.retryOnDeadlock ? (options.maxRetries ?? 3) : 0;
     const retryDelayMs = options?.retryDelayMs ?? 100;

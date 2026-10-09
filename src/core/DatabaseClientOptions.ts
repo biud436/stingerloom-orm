@@ -8,6 +8,27 @@ import type { QueryCacheOptions } from "./cache/QueryResultCache";
 import { Logger } from "../utils/Logger";
 import { closestIdentifier } from "../utils/closestIdentifier";
 import { DbVersion } from "../dialects/DbVersion";
+import {
+  ObjectShape,
+  OptionRule,
+  checkObject,
+  implementsMethods,
+  isArrayOf,
+  isBoolean,
+  isBooleanOr,
+  isFunction,
+  isIntegerBetween,
+  isNonEmptyString,
+  isNonNegativeInteger,
+  isNonNegativeNumber,
+  isObjectOf,
+  isOneOf,
+  isPositiveInteger,
+  isPositiveNumber,
+  isRecordOf,
+  isString,
+  showValue,
+} from "../utils/optionRules";
 
 /**
  * Connection pool configuration options.
@@ -477,54 +498,208 @@ export const VALID_DB_TYPES: readonly string[] = [
 ];
 
 /**
- * Every top-level key any DatabaseClientOptions variant accepts. Kept in sync
- * with BaseDatabaseClientOptions + ServerDatabaseClientOptions +
- * SqliteDatabaseClientOptions — add here when adding an option field, or the
- * new option will be flagged as unknown at validation time.
+ * Policy for keys in a write payload that match nothing on the entity.
+ * See `BaseDatabaseClientOptions.unknownWriteKeys`.
  */
-const KNOWN_OPTION_KEYS: readonly string[] = [
-  // BaseDatabaseClientOptions
-  "database",
-  "synchronize",
-  "logging",
-  "entities",
-  "datesStrings",
-  "connectionLimit",
-  "charset",
-  "schema",
-  "queryTimeout",
-  "cache",
-  "unknownWriteKeys",
-  "pool",
-  "retry",
-  "replication",
-  "namingStrategy",
-  "tenantStrategy",
-  "tenantColumnName",
-  "tenantColumnType",
-  "tenantColumnLength",
-  "tenantOnMissingContext",
-  "tenantDatabaseResolver",
-  "tenantDatabaseMap",
-  "eagerProvisionTenants",
-  "publicTenantBehavior",
-  "tenantConnectionTtlMs",
-  "plugins",
-  "versionOverride",
-  // ServerDatabaseClientOptions / SqliteDatabaseClientOptions
-  "type",
-  "host",
-  "port",
-  "username",
-  "password",
-  "ssl",
+export type UnknownWriteKeyPolicy = "warn" | "throw" | "ignore";
+
+/** Accepted `unknownWriteKeys` values, in the order the error lists them. */
+export const UNKNOWN_WRITE_KEY_POLICIES: readonly UnknownWriteKeyPolicy[] = [
+  "warn",
+  "throw",
+  "ignore",
 ];
+
+/** Modes a `synchronize` value or its `mode` field can name (besides `false`). */
+const SYNCHRONIZE_MODES: readonly unknown[] = [true, "safe", "dry-run"];
+
+const synchronizeRule: OptionRule = (value, path, problems) => {
+  if (value === false || SYNCHRONIZE_MODES.includes(value)) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    const suggestion =
+      typeof value === "string" ? closestIdentifier(value, ["safe", "dry-run"]) : null;
+    problems.push(
+      `'${path}' must be true, false, "safe", "dry-run" or an options object with a mode, got ${showValue(value)}.` +
+        (suggestion ? ` Did you mean "${suggestion}"?` : ""),
+    );
+    return;
+  }
+  isObjectOf(
+    {
+      mode: isOneOf(SYNCHRONIZE_MODES),
+      continueOnError: isBoolean,
+      failOnDestructiveChange: isBoolean,
+      logDDL: isBoolean,
+    },
+    { required: ["mode"] },
+  )(value, path, problems);
+};
+
+/** SSL options pass through to the driver, which accepts more keys than SslOptions lists. */
+const sslRule: OptionRule = isBooleanOr((value, path, problems) =>
+  checkObject(value as Record<string, unknown>, path, { rejectUnauthorized: isBoolean }, problems, {
+    unknownKeys: "skip",
+  }),
+);
+
+const replicationNodeRule: OptionRule = isObjectOf(
+  {
+    host: isNonEmptyString,
+    port: isIntegerBetween(1, 65535),
+    username: isString,
+    password: isString,
+    database: isNonEmptyString,
+    ssl: sslRule,
+  },
+  { required: ["host", "port", "username", "password", "database"] },
+);
+
+const entityEntryRule: OptionRule = (value, path, problems) => {
+  if (typeof value === "function" || (typeof value === "string" && value.length > 0)) return;
+  problems.push(`'${path}' must be an entity class or a glob pattern, got ${showValue(value)}.`);
+};
+
+const pluginRule: OptionRule = (value, path, problems) => {
+  implementsMethods("StingerloomPlugin", ["install"], "A plugin is an object with a name and an install(context) method.")(
+    value,
+    path,
+    problems,
+  );
+  const name = (value as { name?: unknown } | null)?.name;
+  if (typeof value === "object" && value !== null && (typeof name !== "string" || name.length === 0)) {
+    problems.push(`'${path}.name' must be a non-empty string, got ${showValue(name)}.`);
+  }
+};
+
+const versionOverrideRule: OptionRule = (value, path, problems) => {
+  // A value that does not read as a version used to stand for an unknown
+  // server, under which every version gate is open.
+  if (typeof value !== "string" || DbVersion.parse(value) === DbVersion.UNKNOWN) {
+    problems.push(
+      `'${path}' must be a version such as "8.0.36", "16.2" or "3.45.0", got ${showValue(value)}.`,
+    );
+  }
+};
+
+/**
+ * What each top-level option accepts. The keys are every option any
+ * DatabaseClientOptions variant declares: a key missing here is warned
+ * about as unknown, so add a rule when adding an option field. Nested
+ * objects reject keys they do not declare, since nothing else reads them.
+ */
+const DATABASE_OPTION_RULES: ObjectShape = {
+  // BaseDatabaseClientOptions
+  database: isString,
+  synchronize: synchronizeRule,
+  logging: isBooleanOr(
+    isObjectOf({
+      queries: isBoolean,
+      slowQueryMs: isNonNegativeNumber,
+      nPlusOne: isBoolean,
+      enableQueryTracking: isBoolean,
+      maxLogEntries: isPositiveInteger,
+      ttlMs: isPositiveNumber,
+    }),
+  ),
+  entities: isArrayOf(entityEntryRule),
+  datesStrings: isBoolean,
+  connectionLimit: isPositiveInteger,
+  charset: isNonEmptyString,
+  schema: isNonEmptyString,
+  queryTimeout: isNonNegativeNumber,
+  cache: isBooleanOr(
+    isObjectOf({
+      ttl: isPositiveNumber,
+      maxEntries: isPositiveInteger,
+      store: implementsMethods(
+        "QueryCacheStore",
+        ["get", "set", "invalidateTags", "clear"],
+        "A store implements get(), set(), invalidateTags() and clear().",
+      ),
+    }),
+  ),
+  unknownWriteKeys: isOneOf(UNKNOWN_WRITE_KEY_POLICIES),
+  pool: isObjectOf({
+    max: isPositiveInteger,
+    min: isNonNegativeInteger,
+    acquireTimeoutMs: isNonNegativeNumber,
+    idleTimeoutMs: isNonNegativeNumber,
+    leakDetectionThresholdMs: isNonNegativeNumber,
+    validateOnBorrow: isBoolean,
+  }),
+  retry: isObjectOf({
+    maxAttempts: isPositiveInteger,
+    backoffMs: isNonNegativeNumber,
+  }),
+  replication: isObjectOf(
+    {
+      master: replicationNodeRule,
+      slaves: isArrayOf(replicationNodeRule, { nonEmpty: true }),
+      healthCheck: isObjectOf(
+        {
+          enabled: isBoolean,
+          intervalMs: isPositiveNumber,
+          query: isNonEmptyString,
+          failureThreshold: isPositiveInteger,
+          recoveryThreshold: isPositiveInteger,
+        },
+        { required: ["enabled"] },
+      ),
+      strategy: isOneOf(["round-robin", "random"]),
+    },
+    { required: ["master", "slaves"] },
+  ),
+  namingStrategy: implementsMethods(
+    "NamingStrategy",
+    [
+      "tableName",
+      "columnName",
+      "joinColumnName",
+      "foreignKeyName",
+      "uniqueIndexName",
+      "indexName",
+      "compositeIndexName",
+      "jsonIndexName",
+    ],
+    "Pass an instance such as new SnakeNamingStrategy(), or extend DefaultNamingStrategy and override the names to change.",
+  ),
+  tenantStrategy: isOneOf(["search_path", "schema_qualified", "tenant_column", "database"]),
+  tenantColumnName: isNonEmptyString,
+  tenantColumnType: isOneOf(["varchar", "uuid", "int", "bigint"]),
+  tenantColumnLength: isPositiveInteger,
+  tenantOnMissingContext: isOneOf(["throw", "warn", "allow"]),
+  tenantDatabaseResolver: isFunction,
+  tenantDatabaseMap: isRecordOf(isNonEmptyString),
+  eagerProvisionTenants: isArrayOf(isNonEmptyString),
+  publicTenantBehavior: isOneOf(["default", "throw"]),
+  tenantConnectionTtlMs: isNonNegativeNumber,
+  plugins: isArrayOf(pluginRule),
+  versionOverride: versionOverrideRule,
+  // ServerDatabaseClientOptions / SqliteDatabaseClientOptions
+  type: isOneOf(VALID_DB_TYPES),
+  host: isString,
+  port: isIntegerBetween(1, 65535),
+  username: isString,
+  password: isString,
+  ssl: sslRule,
+};
+
+/** Keys SQLite ignores, so their values are only checked for server types. */
+const SERVER_ONLY_KEYS: readonly string[] = ["host", "port", "username", "password", "ssl"];
+
+const KNOWN_OPTION_KEYS: readonly string[] = Object.keys(DATABASE_OPTION_RULES);
 
 const validationLogger = new Logger("DatabaseClientOptions");
 
 /**
  * Validates DatabaseClientOptions at runtime.
  * Throws OrmError with INVALID_CONFIG code if validation fails.
+ *
+ * Every option that is set must hold a value it accepts — a mode, an enum
+ * member, a number in range, an object with the right methods — and a
+ * nested options object (`pool`, `retry`, `cache`, `logging`,
+ * `synchronize`, `replication`) must not carry a key it does not declare.
+ * Each problem is listed, with the closest name for a typo.
  *
  * Unknown top-level keys (e.g. a `synchronise` typo, invisible to TypeScript
  * when the options come from a ConfigService) are warned about — with a
@@ -539,6 +714,7 @@ export function validateDatabaseClientOptions(
 ): void {
   const errors: string[] = [];
   const connSuffix = connectionName ? ` (connection "${connectionName}")` : "";
+  const values = options as unknown as Record<string, unknown>;
 
   // Unknown top-level keys: a typo here means the intended option silently
   // never applies, so surface it. Warn rather than throw — an extra key may
@@ -552,171 +728,46 @@ export function validateDatabaseClientOptions(
     );
   }
 
-  // type
-  if (!options.type) {
-    errors.push("'type' is required.");
-  } else if (!VALID_DB_TYPES.includes(options.type)) {
-    errors.push(
-      `'type' must be one of ${VALID_DB_TYPES.join(", ")}, got '${options.type}'.`,
-    );
-  }
-
-  // database
-  if (!options.database && options.database !== "") {
-    errors.push("'database' is required.");
-  } else if (typeof options.database !== "string") {
-    errors.push(
-      `'database' must be a string, got ${typeof options.database}.`,
-    );
-  }
-
-  // Server-specific fields
-  if (
+  const isServer =
     options.type === "mysql" ||
     options.type === "mariadb" ||
-    options.type === "postgres"
-  ) {
-    // An empty database name is never valid for a server database. The generic
-    // `database` check above intentionally accepts "" (SQLite treats it as an
-    // anonymous temporary database), so reject it explicitly here.
-    if (options.database === "") {
-      errors.push(`'database' must not be empty for ${options.type}.`);
-    }
+    options.type === "postgres";
 
-    if (!options.host) {
-      errors.push(`'host' is required for ${options.type}.`);
-    } else if (typeof options.host !== "string") {
-      errors.push(
-        `'host' must be a string, got ${typeof options.host}.`,
-      );
-    }
-
-    if (options.port === undefined || options.port === null) {
-      errors.push(`'port' is required for ${options.type}.`);
-    } else if (typeof options.port !== "number" || !Number.isInteger(options.port) || options.port <= 0 || options.port > 65535) {
-      errors.push(
-        `'port' must be an integer between 1 and 65535, got ${JSON.stringify(options.port)}.`,
-      );
-    }
-
-    if (options.username === undefined || options.username === null) {
-      errors.push(`'username' is required for ${options.type}.`);
-    } else if (typeof options.username !== "string") {
-      errors.push(
-        `'username' must be a string, got ${typeof options.username}.`,
-      );
-    }
-
-    if (options.password === undefined || options.password === null) {
-      errors.push(`'password' is required for ${options.type}.`);
-    } else if (typeof options.password !== "string") {
-      errors.push(
-        `'password' must be a string, got ${typeof options.password}.`,
-      );
-    }
+  // Required options
+  if (!options.type) errors.push("'type' is required.");
+  if (!options.database && options.database !== "") {
+    errors.push("'database' is required.");
+  } else if (isServer && options.database === "") {
+    // An empty database name is never valid for a server database. SQLite
+    // accepts "" as an anonymous temporary database.
+    errors.push(`'database' must not be empty for ${options.type}.`);
   }
-
-  // entities
-  if (!options.entities) {
-    errors.push("'entities' is required.");
-  } else if (!Array.isArray(options.entities)) {
-    errors.push("'entities' must be an array.");
-  }
-
-  // queryTimeout
-  if (
-    options.queryTimeout !== undefined &&
-    (typeof options.queryTimeout !== "number" || options.queryTimeout < 0)
-  ) {
-    errors.push(
-      `'queryTimeout' must be a non-negative number, got ${JSON.stringify(options.queryTimeout)}.`,
-    );
-  }
-
-  // cache
-  if (options.cache !== undefined && typeof options.cache !== "boolean") {
-    if (typeof options.cache !== "object" || options.cache === null) {
-      errors.push(
-        `'cache' must be a boolean or an options object, got ${JSON.stringify(options.cache)}.`,
-      );
-    } else {
-      if (
-        options.cache.ttl !== undefined &&
-        (typeof options.cache.ttl !== "number" || options.cache.ttl <= 0)
-      ) {
-        errors.push(
-          `'cache.ttl' must be a positive number, got ${JSON.stringify(options.cache.ttl)}.`,
-        );
-      }
-      if (
-        options.cache.maxEntries !== undefined &&
-        (typeof options.cache.maxEntries !== "number" ||
-          !Number.isInteger(options.cache.maxEntries) ||
-          options.cache.maxEntries < 1)
-      ) {
-        errors.push(
-          `'cache.maxEntries' must be a positive integer, got ${JSON.stringify(options.cache.maxEntries)}.`,
-        );
-      }
-      if (
-        options.cache.store !== undefined &&
-        (typeof options.cache.store !== "object" ||
-          options.cache.store === null ||
-          typeof options.cache.store.get !== "function" ||
-          typeof options.cache.store.set !== "function" ||
-          typeof options.cache.store.invalidateTags !== "function" ||
-          typeof options.cache.store.clear !== "function")
-      ) {
-        errors.push(
-          "'cache.store' must implement QueryCacheStore (get/set/invalidateTags/clear).",
-        );
+  if (!options.entities) errors.push("'entities' is required.");
+  if (isServer) {
+    if (!options.host) errors.push(`'host' is required for ${options.type}.`);
+    for (const key of ["port", "username", "password"] as const) {
+      if (values[key] === undefined || values[key] === null) {
+        errors.push(`'${key}' is required for ${options.type}.`);
       }
     }
   }
 
-  // unknownWriteKeys
+  // Values of the options that are set
+  for (const [key, rule] of Object.entries(DATABASE_OPTION_RULES)) {
+    const value = values[key];
+    if (value === undefined || value === null) continue;
+    if (key === "database" && value === "") continue;
+    if (!isServer && SERVER_ONLY_KEYS.includes(key)) continue;
+    rule(value, key, errors);
+  }
+
+  const pool = options.pool;
   if (
-    options.unknownWriteKeys !== undefined &&
-    !UNKNOWN_WRITE_KEY_POLICIES.includes(options.unknownWriteKeys)
+    typeof pool?.max === "number" &&
+    typeof pool?.min === "number" &&
+    pool.min > pool.max
   ) {
-    errors.push(
-      `'unknownWriteKeys' must be one of ${UNKNOWN_WRITE_KEY_POLICIES.map((p) => `"${p}"`).join(", ")}, got ${JSON.stringify(options.unknownWriteKeys)}.`,
-    );
-  }
-
-  // versionOverride — a value that does not read as a version used to
-  // stand for an unknown server, under which every version gate is open.
-  if (
-    options.versionOverride !== undefined &&
-    (typeof options.versionOverride !== "string" ||
-      DbVersion.parse(options.versionOverride) === DbVersion.UNKNOWN)
-  ) {
-    errors.push(
-      `'versionOverride' must be a version such as "8.0.36", "16.2" or "3.45.0", got ${JSON.stringify(options.versionOverride)}.`,
-    );
-  }
-
-  // pool
-  if (options.pool) {
-    if (options.pool.max !== undefined && (typeof options.pool.max !== "number" || options.pool.max < 1)) {
-      errors.push(`'pool.max' must be a positive number, got ${JSON.stringify(options.pool.max)}.`);
-    }
-    if (options.pool.min !== undefined && (typeof options.pool.min !== "number" || options.pool.min < 0)) {
-      errors.push(`'pool.min' must be a non-negative number, got ${JSON.stringify(options.pool.min)}.`);
-    }
-    if (options.pool.max !== undefined && options.pool.min !== undefined && options.pool.min > options.pool.max) {
-      errors.push(`'pool.min' (${options.pool.min}) cannot exceed 'pool.max' (${options.pool.max}).`);
-    }
-  }
-
-  // retry
-  if (options.retry) {
-    if (typeof options.retry.maxAttempts !== "number" || options.retry.maxAttempts < 1) {
-      errors.push(`'retry.maxAttempts' must be a positive number, got ${JSON.stringify(options.retry.maxAttempts)}.`);
-    }
-    if (typeof options.retry.backoffMs !== "number" || options.retry.backoffMs < 0) {
-      errors.push(`'retry.backoffMs' must be a non-negative number, got ${JSON.stringify(options.retry.backoffMs)}.`);
-    }
+    errors.push(`'pool.min' (${pool.min}) cannot exceed 'pool.max' (${pool.max}).`);
   }
 
   if (errors.length > 0) {
@@ -727,22 +778,6 @@ export function validateDatabaseClientOptions(
     );
   }
 }
-
-/**
- * Bare-form synchronize values (legacy shape).
- */
-/**
- * Policy for keys in a write payload that match nothing on the entity.
- * See `BaseDatabaseClientOptions.unknownWriteKeys`.
- */
-export type UnknownWriteKeyPolicy = "warn" | "throw" | "ignore";
-
-/** Accepted `unknownWriteKeys` values, in the order the error lists them. */
-export const UNKNOWN_WRITE_KEY_POLICIES: readonly UnknownWriteKeyPolicy[] = [
-  "warn",
-  "throw",
-  "ignore",
-];
 
 export type SynchronizeMode = boolean | "safe" | "dry-run";
 
@@ -816,6 +851,9 @@ export interface SynchronizePolicy {
  *
  * When an options object is passed, omitted flags fall back to the same
  * historical defaults so callers only opt into the new behavior they want.
+ *
+ * @throws OrmError `INVALID_CONFIG` for a value that is not a mode or an
+ * options object with one.
  */
 export function normalizeSynchronizePolicy(
   value: SynchronizeOption | undefined,
@@ -838,7 +876,17 @@ export function normalizeSynchronizePolicy(
     };
   }
 
-  // Options-object form
+  // Options-object form. Anything else used to read as an object without a
+  // mode: tables were created but no column was ever added or changed.
+  const problems: string[] = [];
+  synchronizeRule(value, "synchronize", problems);
+  if (problems.length > 0) {
+    throw new OrmError(
+      OrmErrorCode.INVALID_CONFIG,
+      problems.join(" "),
+      'Use true, "safe", "dry-run", false, or { mode, continueOnError, failOnDestructiveChange, logDDL }.',
+    );
+  }
   return {
     mode: value.mode,
     continueOnError: value.continueOnError ?? true,
@@ -852,15 +900,21 @@ export function normalizeSynchronizePolicy(
  */
 export interface RetryOptions {
   /**
-   * Maximum number of retry attempts.
+   * Maximum number of connection attempts, the first one included.
    * @default 3
    */
-  maxAttempts: number;
+  maxAttempts?: number;
 
   /**
    * Base delay in milliseconds between retries.
    * Actual delay = backoffMs * 2^(attempt-1)
    * @default 1000
    */
-  backoffMs: number;
+  backoffMs?: number;
 }
+
+/** Defaults for the `retry` fields a caller leaves out. */
+export const DEFAULT_RETRY_OPTIONS: Readonly<Required<RetryOptions>> = {
+  maxAttempts: 3,
+  backoffMs: 1000,
+};

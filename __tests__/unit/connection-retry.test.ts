@@ -294,6 +294,37 @@ describe("DatabaseClient.connect() - Connection Retry", () => {
 
     expect(mockConnect).toHaveBeenCalledTimes(1);
   });
+
+  it("applies the documented defaults to the retry fields left out", async () => {
+    const DatabaseClient = resetDatabaseClient();
+    const { MySqlConnector } = require("../../src/dialects/mysql/MySqlConnector");
+
+    const mockConnect = jest.fn().mockRejectedValue(new Error("refused"));
+    MySqlConnector.mockImplementation(() => ({ connect: mockConnect, close: jest.fn() }));
+
+    const connectPromise = DatabaseClient.getInstance().connect({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "test",
+      password: "test",
+      database: "testdb",
+      entities: [],
+      retry: {},
+    });
+    const outcome = connectPromise.catch((e: Error) => e);
+
+    // backoffMs defaults to 1000: the second attempt waits 1000ms, the third 2000ms.
+    await jest.advanceTimersByTimeAsync(999);
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1);
+    expect(mockConnect).toHaveBeenCalledTimes(2);
+    await jest.advanceTimersByTimeAsync(2000);
+
+    // maxAttempts defaults to 3.
+    expect(((await outcome) as Error).message).toBe("refused");
+    expect(mockConnect).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("Exponential backoff calculation", () => {
