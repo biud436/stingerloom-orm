@@ -465,6 +465,8 @@ CREATE TABLE "owner" (
 
 > **Hint** `mappedBy` supports **IntelliSense auto-completion** for the target entity's property names. When you type `mappedBy: ""` in your IDE, Cat entity's property list will be displayed. The same applies to `@ManyToMany`'s `mappedBy` and `@OneToOne`'s `inverseSide`.
 
+`register()` checks the name before any table is created: a `mappedBy` that matches no `@ManyToOne` on the target (`"ownr"`) fails with `Did you mean "owner"?` instead of a `no such column` error on the first load. The same check covers a `@OneToOne` `inverseSide`, a `@ManyToMany` with no join table on either side, and a relation target missing from `entities` — see [Invalid relation mapping](./troubleshooting.md#invalid-relation-mapping-at-register).
+
 ### The Generated SELECT
 
 Now you can fetch an owner's cats.
@@ -945,6 +947,8 @@ cats!: Cat[];
 ```
 
 With this setting, when saving an Owner, new Cats in the cats array are automatically INSERTed.
+
+Without a cascade that saves (`"insert"` or `"update"`), a new Cat in `cats` (one with no primary key value) is not written, and the save reports it under the [`unknownWriteKeys`](./entity-manager-writes.md#the-unknownwritekeys-policy) policy. Cats that carry their key, such as a relation loaded with the owner and saved back, are left alone.
 
 **Generated SQL (PostgreSQL):**
 

@@ -96,7 +96,8 @@ class WrfCategory {
 }
 
 // A OneToOne with no owning column on either side: nothing correlates the
-// two rows, so a filter on it is refused instead of binding the filter
+// two rows. register() refuses the pair; an attach()ed EntityManager skips
+// that check, and a filter on it is refused instead of binding the filter
 // object as a column value.
 @Entity({ name: "wrf_lockers" })
 class WrfLocker {
@@ -115,7 +116,7 @@ describe("[Integration] SQLite: relation filters in where", () => {
 
   beforeAll(async () => {
     em = await createTestEntityManager({
-      entities: [WrfUser, WrfProfile, WrfTag, WrfPost, WrfComment, WrfCategory, WrfLocker, WrfKey],
+      entities: [WrfUser, WrfProfile, WrfTag, WrfPost, WrfComment, WrfCategory],
     });
     const alice = await em.save(WrfUser, { name: "alice" });
     const bob = await em.save(WrfUser, { name: "bob" });
@@ -294,7 +295,13 @@ describe("[Integration] SQLite: relation filters in where", () => {
   describe("validation", () => {
     it("rejects a filter on the inverse side of a OneToOne whose owner has no join column", async () => {
       await expect(
-        em.find(WrfLocker, { where: { key: { is: { id: 1 } } } }),
+        createTestEntityManager({ entities: [WrfLocker, WrfKey], connectionName: "wrf_locker" }),
+      ).rejects.toThrow(/WrfLocker\.key: @OneToOne inverseSide "locker" names WrfKey\.locker, which holds no join column either/);
+
+      const attached = new EntityManager();
+      await attached.attach("test", { entities: [WrfLocker, WrfKey] });
+      await expect(
+        attached.find(WrfLocker, { where: { key: { is: { id: 1 } } } }),
       ).rejects.toThrow(/cannot be filtered: it is the inverse side of a OneToOne and "locker" on "WrfKey" holds no join column/);
     });
 

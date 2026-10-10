@@ -18,6 +18,7 @@ import type { NamingStrategy } from "../generators/NamingStrategy";
 import type { StingerloomPlugin } from "../plugin/StingerloomPlugin";
 import type { EntityManagerInternals } from "../EntityManagerInternals";
 import { applyNamingStrategyToEntities } from "./applyNamingStrategy";
+import { validateRelationGraph } from "../RelationGraphValidator";
 import { resolveDriverPair } from "./DriverResolver";
 
 /**
@@ -94,6 +95,10 @@ export class ConnectionLifecycle {
       this.ctx.getEntities(),
       databaseClientOptions.namingStrategy,
     );
+    // Before any DDL, so a broken relation graph creates no tables. Not on
+    // attach(): an attached scope may be a subset of what another
+    // registration owns.
+    validateRelationGraph(this.ctx.getEntities(), this.ctx.getResolver(), connectionName);
     await this.host.registerEntities();
 
     // Install plugins (in array order)

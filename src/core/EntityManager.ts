@@ -46,6 +46,7 @@ import { closestIdentifier } from "../utils/closestIdentifier";
 import { OptimisticLockError } from "../errors/OptimisticLockError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { isScopeExempt } from "./entity-manager/scope-exemption";
+import { isInEntityScope } from "./entity-manager/entity-scope";
 import {
   assertEntityClassArgument,
   listKnownEntityNames,
@@ -311,30 +312,11 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
-   * An entity is in scope when it is listed in `_entities` or shares an
-   * inheritance chain (STI/TPT/TPC) with a listed class — querying a child of
-   * a scoped parent (or the parent of scoped children) is a polymorphic query
-   * against tables this connection owns.
+   * Whether `entity` is in this EntityManager's `entities` scope — see
+   * {@link isInEntityScope}.
    */
   private isInEntityScope(entity: ClazzType<any>): boolean {
-    if (this._entities.includes(entity)) return true;
-    for (
-      let parent = Object.getPrototypeOf(entity);
-      typeof parent === "function" && parent.prototype;
-      parent = Object.getPrototypeOf(parent)
-    ) {
-      if (this._entities.includes(parent)) return true;
-    }
-    for (const scoped of this._entities) {
-      for (
-        let parent = Object.getPrototypeOf(scoped);
-        typeof parent === "function" && parent.prototype;
-        parent = Object.getPrototypeOf(parent)
-      ) {
-        if (parent === entity) return true;
-      }
-    }
-    return false;
+    return isInEntityScope(entity, this._entities);
   }
 
   /** @internal Adapter that exposes EntityManager internals to the extracted handler classes. */
@@ -2172,6 +2154,9 @@ export class EntityManager implements BaseEntityManager {
    * (clause `"data"`) for the first unknown key; `"warn"` logs each distinct
    * key once per entity for the lifetime of this EntityManager, naming the
    * calling method and the closest accepted key.
+   *
+   * The same policy covers a relation key holding a new related row the
+   * write will not persist — see {@link CascadeHandler.unwrittenRelationPayloads}.
    */
   private validateWriteInputKeys<T>(
     entity: ClazzType<T>,
@@ -2202,6 +2187,28 @@ export class EntityManager implements BaseEntityManager {
             ` Set unknownWriteKeys: "throw" to reject such writes, or "ignore" to silence this warning.`,
         );
       }
+    }
+
+    // A relation key is known, but the row it holds is only written by the
+    // save cascade: without one, a new related row was dropped silently.
+    const cascades = method === "save" || method === "saveMany";
+    for (const { property, kind } of this.cascadeHandler.unwrittenRelationPayloads(entity, items, cascades)) {
+      const problem =
+        `Relation "${property}" in the data passed to ${method}() for entity "${entity.name}" holds a new row (no primary key value), ` +
+        (cascades
+          ? `but the @${kind} has no cascade ["insert"], so the row is not written.`
+          : `but ${method}() does not cascade, so the row is not written.`);
+      const fix = cascades
+        ? `Add cascade: ["insert"] to the relation, or save the row on its own first.`
+        : `Save the related row on its own first, or use save() with cascade: ["insert"] on the relation.`;
+      if (policy === "throw") throw new InvalidQueryError(problem, fix);
+
+      const dedupKey = `${entity.name}.${property}:${cascades ? "cascade" : method}`;
+      if (this.writeKeyWarned.has(dedupKey)) continue;
+      this.writeKeyWarned.add(dedupKey);
+      this.logger.warn(
+        `[WriteInput] ${problem} ${fix} Set unknownWriteKeys: "throw" to reject such writes, or "ignore" to silence this warning.`,
+      );
     }
   }
 
