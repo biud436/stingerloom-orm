@@ -465,6 +465,8 @@ CREATE TABLE "owner" (
 
 > **힌트** `mappedBy`는 대상 엔티티의 프로퍼티 이름에 대해 **IntelliSense 자동 완성**을 지원해요. IDE에서 `mappedBy: ""`를 입력하면 Cat 엔티티의 프로퍼티 목록이 표시돼요. `@ManyToMany`의 `mappedBy`와 `@OneToOne`의 `inverseSide`도 마찬가지예요.
 
+`register()`는 테이블을 만들기 전에 이 이름을 검사합니다. 대상의 어떤 `@ManyToOne`과도 맞지 않는 `mappedBy`(`"ownr"`)는 처음 로드할 때 `no such column`으로 터지는 대신 `Did you mean "owner"?`와 함께 실패합니다. `@OneToOne`의 `inverseSide`, 양쪽 모두 조인 테이블이 없는 `@ManyToMany`, `entities`에 빠진 관계 대상도 같은 검사로 잡힙니다. [Invalid relation mapping](./troubleshooting.md#register-시점의-invalid-relation-mapping)을 참고하세요.
+
 ### 생성되는 SELECT
 
 이제 주인의 고양이들을 조회할 수 있어요.
@@ -945,6 +947,8 @@ cats!: Cat[];
 ```
 
 이 설정을 쓰면, Owner를 저장할 때 cats 배열의 새로운 Cat들이 자동으로 INSERT돼요.
+
+저장하는 캐스케이드(`"insert"` 또는 `"update"`)가 없으면 `cats`의 새 Cat(기본 키 값이 없는 객체)은 쓰이지 않고, save가 이를 [`unknownWriteKeys`](./entity-manager-writes.md#unknownwritekeys-정책) 정책에 따라 보고합니다. Owner와 함께 읽어 와서 다시 저장하는 경우처럼 키를 가진 Cat은 건드리지 않습니다.
 
 **생성되는 SQL (PostgreSQL):**
 

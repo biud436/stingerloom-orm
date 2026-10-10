@@ -232,6 +232,14 @@ A DB column name is reported too, because the INSERT never reads it: `save(Team,
 
 Values that are never written are never reported: an `undefined` field (see the section above) and a function-valued member (a method on an entity instance). The check runs before hooks, cascades and tenant-column injection, so it sees exactly the payload you passed.
 
+The policy also covers a relation key holding a row the write will not persist: a related object with no primary key value under a relation whose cascade does not save, or passed to `insertMany()`, `upsert()`, `insertIgnore()` or `batchUpsert()`, which never cascade:
+
+```
+[WriteInput] Relation "posts" in the data passed to save() for entity "User" holds a new row (no primary key value), but the @OneToMany has no cascade ["insert"], so the row is not written. Add cascade: ["insert"] to the relation, or save the row on its own first. ...
+```
+
+A related object that carries its key refers to an existing row and is not reported, so saving back an entity loaded with its relations stays quiet.
+
 `update()` / `updateMany()` keep their existing contract and throw on an unknown key in `data` or `where` regardless of the policy. `create()`, `merge()` and `preload()` never persist, so they keep every key on the instance -- the write that follows reports it.
 
 ---

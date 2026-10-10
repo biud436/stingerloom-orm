@@ -232,6 +232,14 @@ DB 컬럼명도 보고 대상입니다. INSERT는 그 키를 읽지 않기 때�
 
 애초에 쓰이지 않는 값은 보고하지 않습니다. `undefined` 필드(위 절 참고)와 함수 값 멤버(엔티티 인스턴스의 메서드)가 그렇습니다. 검사는 훅·캐스케이드·테넌트 컬럼 주입보다 먼저 실행되므로, 넘긴 페이로드를 그대로 봅니다.
 
+이 정책은 쓰기가 영속화하지 않는 행을 담은 관계 키에도 적용됩니다. 저장하는 캐스케이드가 없는 관계에 기본 키 값이 없는 객체를 넣었거나, 캐스케이드를 실행하지 않는 `insertMany()`, `upsert()`, `insertIgnore()`, `batchUpsert()`에 넘긴 경우입니다.
+
+```
+[WriteInput] Relation "posts" in the data passed to save() for entity "User" holds a new row (no primary key value), but the @OneToMany has no cascade ["insert"], so the row is not written. Add cascade: ["insert"] to the relation, or save the row on its own first. ...
+```
+
+키를 가진 관계 객체는 기존 행을 가리키므로 보고하지 않습니다. 그래서 관계와 함께 읽어 온 엔티티를 다시 저장해도 조용합니다.
+
 `update()` / `updateMany()`는 기존 계약을 유지해 정책과 무관하게 `data`나 `where`의 미지 키에서 예외를 던집니다. `create()`, `merge()`, `preload()`는 영속화하지 않으므로 키를 인스턴스에 그대로 두고, 뒤따르는 쓰기가 보고합니다.
 
 ---

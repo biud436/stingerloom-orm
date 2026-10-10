@@ -414,6 +414,39 @@ Available relations: [posts (OneToMany), profile (OneToOne)]. Did you mean "prof
 임포트가 원인이니, 대상은 데코레이터의 `() => Entity` thunk 안에 두고 단일 값
 관계 프로퍼티는 `Relation<Target>`으로 선언하세요.
 
+### register() 시점의 "Invalid relation mapping"
+
+```
+OrmError: Invalid relation mapping (connection "default"):
+  - User.posts: @OneToMany mappedBy "autor" names no @ManyToOne on Post. Did you mean "author"?
+  - Post.tags: @ManyToMany declares neither joinTable nor mappedBy, so the relation has no join table. Tag.posts declares one: add mappedBy: "posts".
+```
+
+`register()`는 테이블을 만들기 전에 등록하는 엔티티의 관계를 모두 검사하고, 해석되지 않는 관계를 한 번에 나열합니다. 각 줄은 그 관계를 선언한 엔티티 속성으로 시작합니다.
+
+| 줄 | 원인 | 해결 |
+|---|---|---|
+| `mappedBy "x" names no @ManyToOne on Target` | `@OneToMany`의 `mappedBy`(또는 `t.oneToMany`의 두 번째 인자)와 일치하는 `@ManyToOne` 속성이 대상에 없습니다. | 대상의 `@ManyToOne` 속성 이름을 적습니다. FK 컬럼명도 받습니다. |
+| `inverseSide "x" names no owning @OneToOne on Target` | 역방향 `@OneToOne`이 조인 컬럼을 가진 `@OneToOne`을 가리키지 않습니다. | 대상의 소유 측 `@OneToOne` 속성 이름을 적습니다. |
+| `... which holds no join column either` | `@OneToOne` 양쪽이 모두 역방향입니다. | 한쪽에 `@RelationColumn`으로 조인 컬럼을 주고, 다른 쪽은 `inverseSide`로 그쪽을 가리킵니다. |
+| `declares neither joinTable nor mappedBy` | `@ManyToMany`의 조인 테이블을 알 수 없습니다. | 소유 측에 `joinTable`, 반대쪽에 `mappedBy`를 선언합니다. 대상 쪽에 이미 조인 테이블이 있으면 메시지가 그 속성을 알려 줍니다. |
+| `mappedBy "x" names Target.x, which declares no joinTable either` | `@ManyToMany` 양쪽이 서로를 `mappedBy`로 가리킵니다. | 한쪽의 `mappedBy`를 `joinTable`로 바꿉니다. |
+| `targets X, which is not in this connection's entities` | 관계 대상이 `entities`에 없어서 테이블이 만들어지지 않습니다. | 대상을 `entities`에 추가합니다. 목록에 있는 클래스의 자식이나 부모는 목록에 있는 것으로 칩니다. |
+| `targets X, which is not an entity` | 대상 클래스에 `@Entity()`가 없습니다. | 데코레이터를 붙입니다. |
+| `targets undefined: the target class was not defined yet` | 클래스가 정의되기 전에 대상 썽크가 실행됐습니다. 대개 순환 import 때문입니다. | 대상을 `() => Target` 뒤에 두고, 단일 값 속성의 타입은 `Relation<Target>`으로 적습니다. |
+
+`attach()`는 이 검사를 건너뜁니다. attach한 EntityManager는 다른 등록이 소유한 테이블 중 일부만 범위로 잡을 수 있기 때문입니다.
+
+### 저장할 때 "Relation ... holds a new row"
+
+```
+[WriteInput] Relation "posts" in the data passed to save() for entity "User" holds a new row (no primary key value), but the @OneToMany has no cascade ["insert"], so the row is not written.
+```
+
+기본 키 값이 없는 관계 객체는 새 행이고, 새 행은 save 캐스케이드만 씁니다. 관계에 `cascade: ["insert"]`(또는 `"update"`)가 없으면 `save()`는 사용자만 쓰고 게시글은 빠집니다. `insertMany()`, `upsert()`, `insertIgnore()`, `batchUpsert()`는 캐스케이드를 실행하지 않으므로 cascade 설정과 무관하게 새 관계 행을 보고합니다. 캐스케이드를 추가하거나, 관계 행을 먼저 따로 저장하세요.
+
+키를 가진 관계 객체는 보고하지 않습니다. 관계와 함께 읽어 온 엔티티를 다시 저장하는 경우가 그렇습니다. 보고는 `unknownWriteKeys` 정책을 따릅니다. 기본값에서는 엔티티와 관계마다 한 번 로그를 남기고, `"throw"`면 `InvalidQueryError`로 거절하며, `"ignore"`면 조용히 넘어갑니다.
+
 ### 순환 관계 오류
 
 두 엔티티가 서로를 참조할 때는 지연 함수 참조를 사용하세요:

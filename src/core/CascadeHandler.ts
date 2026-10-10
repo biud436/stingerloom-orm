@@ -31,6 +31,12 @@ interface DependentRelation {
   fkColumn: string;
 }
 
+/** A relation property of a write payload holding a row the write does not persist. */
+export interface UnwrittenRelationPayload {
+  property: string;
+  kind: "ManyToOne" | "OneToMany" | "OneToOne";
+}
+
 /**
  * The objects whose save started the cascade the current call runs in,
  * outermost first. An object graph can point back at an ancestor —
@@ -115,6 +121,77 @@ export class CascadeHandler {
         this.cascadeSaveOneToManyInner(entity, item, savedParentId, session),
       ),
     );
+  }
+
+  /**
+   * The relation properties of write payloads that hold a row the write
+   * will not persist: a related object missing its primary key value — a
+   * new row, which only the save cascade inserts — under a relation whose
+   * cascade does not save (no "insert" / "update"), or under any relation
+   * when the calling method does not cascade (`cascades: false`). An object
+   * that carries its key refers to an existing row (a loaded relation, the
+   * row a ManyToOne points at) and is not reported, nor is an object being
+   * saved further up the cascade.
+   */
+  unwrittenRelationPayloads<T>(
+    entity: ClazzType<T>,
+    items: readonly unknown[],
+    cascades: boolean,
+  ): UnwrittenRelationPayload[] {
+    const saves = (cascade: Parameters<typeof hasCascade>[0]) =>
+      cascades && (hasCascade(cascade, "insert") || hasCascade(cascade, "update"));
+
+    const relations: Array<UnwrittenRelationPayload & { readTarget: () => unknown; many: boolean }> = [];
+    for (const rel of this.resolver.resolveOneToManyMetadata(entity)) {
+      if (saves(rel.cascade)) continue;
+      relations.push({ property: rel.propertyKey, kind: "OneToMany", readTarget: () => rel.getRelatedEntity(), many: true });
+    }
+    for (const rel of this.resolver.resolveManyToOneMetadata(entity)) {
+      if (saves(rel.option?.cascade)) continue;
+      relations.push({ property: rel.columnName, kind: "ManyToOne", readTarget: () => rel.getMappingEntity(), many: false });
+    }
+    for (const rel of this.resolver.resolveOneToOneMetadata(entity)) {
+      // Neither side named: no cascade ever writes through it.
+      if (!rel.joinColumn && !rel.inverseSide) continue;
+      if (saves(rel.option?.cascade)) continue;
+      relations.push({ property: rel.propertyKey, kind: "OneToOne", readTarget: () => rel.getRelatedEntity(), many: false });
+    }
+    if (relations.length === 0) return [];
+
+    const found: UnwrittenRelationPayload[] = [];
+    for (const { property, kind, readTarget, many } of relations) {
+      for (const item of items) {
+        if (!item || typeof item !== "object") continue;
+        const value = (item as Record<string, unknown>)[property];
+        const rows = many ? (Array.isArray(value) ? value : []) : [value];
+        if (rows.some((row) => this.isNewRow(row, readTarget))) {
+          found.push({ property, kind });
+          break;
+        }
+      }
+    }
+    return found;
+  }
+
+  /** A plain related object with a primary key value missing. */
+  private isNewRow(row: unknown, readTarget: () => unknown): boolean {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+    if (CascadeHandler.isAncestor(row)) return false;
+    let target: unknown;
+    try {
+      target = readTarget();
+    } catch {
+      return false;
+    }
+    if (typeof target !== "function") return false;
+    const keys = (this.resolver.resolveEntityMetadata(target as ClazzType<any>)?.columns ?? [])
+      .filter((col) => col.options?.primary)
+      .map((col) => col.propertyKey ?? col.name);
+    if (keys.length === 0) return false;
+    return keys.some((key) => {
+      const value = (row as Record<string, unknown>)[key];
+      return value === undefined || value === null;
+    });
   }
 
   /** Runs `run` with `item` added to the cascade chain — see {@link cascadeChain}. */

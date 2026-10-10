@@ -416,6 +416,39 @@ A relation whose target thunk yields nothing is reported too
 circular import between entity modules. Keep the target behind the decorator's
 `() => Entity` thunk and type single-valued properties as `Relation<Target>`.
 
+### "Invalid relation mapping" at register()
+
+```
+OrmError: Invalid relation mapping (connection "default"):
+  - User.posts: @OneToMany mappedBy "autor" names no @ManyToOne on Post. Did you mean "author"?
+  - Post.tags: @ManyToMany declares neither joinTable nor mappedBy, so the relation has no join table. Tag.posts declares one: add mappedBy: "posts".
+```
+
+`register()` checks every relation of the entities it registers before any table is created, and lists each one that cannot resolve. Each line starts with the entity property that declares the relation.
+
+| Line | Cause | Fix |
+|---|---|---|
+| `mappedBy "x" names no @ManyToOne on Target` | The `@OneToMany` `mappedBy` (or the second argument of `t.oneToMany`) matches no `@ManyToOne` property on the target. | Name the target's `@ManyToOne` property. The FK column name is accepted too. |
+| `inverseSide "x" names no owning @OneToOne on Target` | The inverse `@OneToOne` names no `@OneToOne` that holds the join column. | Name the target's owning `@OneToOne` property. |
+| `... which holds no join column either` | Both sides of a `@OneToOne` are inverse. | Give one side the join column with `@RelationColumn` and point the other at it with `inverseSide`. |
+| `declares neither joinTable nor mappedBy` | No join table is known for the `@ManyToMany`. | Declare `joinTable` on the owning side and `mappedBy` on the other. When the target's side already declares one, the line names it. |
+| `mappedBy "x" names Target.x, which declares no joinTable either` | Both sides of a `@ManyToMany` name each other with `mappedBy`. | Replace one side's `mappedBy` with `joinTable`. |
+| `targets X, which is not in this connection's entities` | The relation's target is missing from `entities`, so its table is never created. | Add the target to `entities`. A subclass or parent of a listed class counts as listed. |
+| `targets X, which is not an entity` | The target class has no `@Entity()`. | Decorate it. |
+| `targets undefined: the target class was not defined yet` | The target thunk ran before the class was defined, usually because of a circular import. | Keep the target behind `() => Target` and type single-valued properties as `Relation<Target>`. |
+
+`attach()` skips this check: an attached EntityManager may be scoped to a subset of the tables another registration owns.
+
+### "Relation ... holds a new row" when saving
+
+```
+[WriteInput] Relation "posts" in the data passed to save() for entity "User" holds a new row (no primary key value), but the @OneToMany has no cascade ["insert"], so the row is not written.
+```
+
+A related object without its primary key value is a new row, and only the save cascade writes it. Without `cascade: ["insert"]` (or `"update"`) on the relation, `save()` writes the user and leaves the post out. `insertMany()`, `upsert()`, `insertIgnore()` and `batchUpsert()` never cascade, so they report a new related row whatever the cascade says. Add the cascade, or save the related row on its own first.
+
+A related object that carries its key, such as a relation you loaded and save back, is not reported. The report follows the `unknownWriteKeys` policy: logged once per entity and relation by default, rejected with `InvalidQueryError` under `"throw"`, silent under `"ignore"`.
+
 ### Circular relation errors
 
 When two entities reference each other, use lazy function references:
