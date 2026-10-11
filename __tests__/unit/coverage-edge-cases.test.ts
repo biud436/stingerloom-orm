@@ -202,12 +202,12 @@ describe("CursorPagination edge cases", () => {
       expect(normalizePageSize(1)).toBe(1);
     });
 
-    it("should pass through NaN (function trusts positive integer input)", () => {
-      // NaN <= 0 evaluates to false, so normalizePageSize returns NaN.
-      // This documents the actual behavior: the function trusts callers
-      // to provide valid positive integers, undefined, or null.
-      const result = normalizePageSize(NaN);
-      expect(Number.isNaN(result)).toBe(true);
+    it("should reject NaN, a fraction and a numeric string", () => {
+      expect(() => normalizePageSize(NaN)).toThrow("'take' must be an integer, got NaN.");
+      expect(() => normalizePageSize(2.5)).toThrow("'take' must be an integer, got 2.5.");
+      expect(() => normalizePageSize("10" as any, "pageSize")).toThrow(
+        `'pageSize' must be an integer, got "10".`,
+      );
     });
 
     it("should accept very large page size", () => {

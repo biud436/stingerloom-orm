@@ -111,8 +111,10 @@ result.hasNextPage;     // true
 result.hasPreviousPage; // true
 ```
 
-`page`/`pageSize`는 `findWithPage()`와 동일하게 정규화되고(0 이하 → 1, 소수 → 내림;
-기본값 `page` 1 / `pageSize` 20), `paginate()`는 빌더를 복제하므로 원본 인스턴스에는
+`page`/`pageSize`는 `findWithPage()`와 동일하게 정규화됩니다. `page`가 1보다 작으면
+1페이지를 읽고 소수는 내림하며, `pageSize`가 1보다 작으면 기본값 20을 씁니다. 둘 다
+숫자여야 하고 `pageSize`는 정수여야 하니, 쿼리 스트링 값은 먼저 `Number(...)`로
+바꿔 주세요. `paginate()`는 빌더를 복제하므로 원본 인스턴스에는
 LIMIT/OFFSET이 남지 않아 다시 페이징할 수 있어요. 특정 컬럼만 뽑는 목록 화면
 (`select(["id", "title"])`)에서는 엔티티 인스턴스 대신 plain `Pick<T, K>` 객체를
 돌려주는 `paginatePartial()`을 쓰세요.

@@ -571,7 +571,7 @@ await em.delete(Payment, { amount: 0 });                    // 콘크리트 테�
 | `count` / `exists` / `sum` / `avg` / `min` / `max` | 같은 `UNION ALL`에 대해 집계 |
 | `findAndCount` / `findWithPage` | 행과 총 개수 모두 계층 전체 기준 |
 | `findWithCursor` | 계층 전체를 페이지네이션. 키셋이 `(정렬 컬럼, id, discriminator)`라서 같은 `id`를 가진 두 서브타입이 건너뛰어지거나 중복되지 않습니다 |
-| `createQueryBuilder(Root)` | `UNION ALL` FROM 소스, `getCount()` 포함 |
+| `createQueryBuilder(Root, alias)` | `UNION ALL` FROM 소스, `getCount()` 포함 |
 | `updateMany` / `update` / `increment` / `decrement` | 같은 `SET ... WHERE`를 콘크리트 테이블마다 실행, `affected`는 합산 |
 | `softDelete` / `restore` | 모든 콘크리트 테이블의 `@DeletedAt`을 기록하거나 해제 |
 | `delete` / `deleteMany` | 콘크리트 테이블마다 `DELETE` 한 번, `affected`는 합산 |

@@ -5,6 +5,13 @@ import type { InheritanceResolver } from "./InheritanceResolver";
 import { InvalidQueryError } from "../errors";
 import { closestIdentifier } from "../utils/closestIdentifier";
 import { isRelationFilter } from "./WhereResolver";
+import {
+  assertCombinatorShape,
+  assertFilterObject,
+  assertWhereObject,
+  isPlainObject,
+  type WhereShapeSite,
+} from "./QueryOptionShape";
 
 /**
  * Clause a rejected identifier came from, used verbatim in the message.
@@ -29,6 +36,13 @@ export interface ColumnNameScope {
   entityName: string;
   valid: Set<string>;
   /**
+   * Identifiers of the columns whose values may themselves be plain
+   * objects — `json` / `jsonb` / `array` / custom-type columns, columns with
+   * a transformer and computed columns. A plain object on one of them is a
+   * value to compare with, not an operator object.
+   */
+  literalValues?: Set<string>;
+  /**
    * The scope of the entity a relation property leads to, when the
    * statement accepts relation filters (reads); undefined for a property
    * that is no relation. Absent where relation filters are not supported.
@@ -41,6 +55,34 @@ export interface ColumnNameScope {
  * column references.
  */
 const LOGICAL_KEYS = new Set(["AND", "OR", "NOT"]);
+
+/** Column types whose values are never plain objects. */
+const SCALAR_COLUMN_TYPES: ReadonlySet<string> = new Set([
+  "int",
+  "number",
+  "float",
+  "double",
+  "bigint",
+  "timestamp",
+  "timestamptz",
+  "date",
+  "datetime",
+  "blob",
+  "text",
+  "longtext",
+  "varchar",
+  "char",
+  "boolean",
+  "enum",
+  "uuid",
+]);
+
+function holdsLiteralObjects(col: ColumnMetadata): boolean {
+  const type = col.options?.type;
+  return Boolean(col.transformer ?? col.options?.transformer) ||
+    typeof type !== "string" ||
+    !SCALAR_COLUMN_TYPES.has(type);
+}
 
 /**
  * Builds the accepted identifier set for a read query.
@@ -68,11 +110,16 @@ export function buildColumnNameScope(params: {
   discriminatorColumn?: string | null;
 }): ColumnNameScope {
   const valid = new Set<string>();
+  const literalValues = new Set<string>();
 
   const addColumn = (col: ColumnMetadata | undefined) => {
     if (!col) return;
     if (col.propertyKey) valid.add(col.propertyKey);
     if (col.name) valid.add(col.name);
+    if (holdsLiteralObjects(col)) {
+      if (col.propertyKey) literalValues.add(col.propertyKey);
+      if (col.name) literalValues.add(col.name);
+    }
   };
 
   for (const col of params.columns) addColumn(col);
@@ -81,10 +128,13 @@ export function buildColumnNameScope(params: {
     valid.add(prop);
     if (col) valid.add(col);
   }
-  for (const name of params.computedColumns ?? []) valid.add(name);
+  for (const name of params.computedColumns ?? []) {
+    valid.add(name);
+    literalValues.add(name);
+  }
   if (params.discriminatorColumn) valid.add(params.discriminatorColumn);
 
-  return { entityName: params.entityName, valid };
+  return { entityName: params.entityName, valid, literalValues };
 }
 
 export function assertKnownColumn(
@@ -105,7 +155,9 @@ export function assertKnownColumn(
 /**
  * Walks a `where` clause the same way `resolveWhereClause` does — array form
  * is OR-ed, `AND` / `OR` take clause arrays, `NOT` takes a single clause — and
- * checks every column key it would emit.
+ * checks every column key it would emit, and the shape around it: the where
+ * and each branch is an object, every operator exists and takes the operand
+ * given.
  *
  * `undefined` values are skipped because the resolver skips them too, and a
  * function value is a hook method rather than a filter. Shared by the read
@@ -119,18 +171,41 @@ export function validateWhereIdentifiers(
   clause: IdentifierClause = "where",
 ): void {
   if (where === undefined || where === null) return;
+  const site: WhereShapeSite = { clause, entityName: scope.entityName };
 
   if (Array.isArray(where)) {
-    for (const entry of where) validateWhereIdentifiers(entry, scope, clause);
+    where.forEach((entry, i) => {
+      const path = `${clause}[${i}]`;
+      assertWhereObject(entry, path, site);
+      walkWhere(entry as Record<string, unknown>, scope, clause, path, site);
+    });
     return;
   }
-  if (typeof where !== "object") return;
+  assertWhereObject(where, clause, site);
+  walkWhere(where as Record<string, unknown>, scope, clause, clause, site);
+}
 
-  for (const key of Object.keys(where as Record<string, unknown>)) {
-    const value = (where as Record<string, unknown>)[key];
+function walkWhere(
+  where: Record<string, unknown>,
+  scope: ColumnNameScope,
+  clause: IdentifierClause,
+  path: string,
+  site: WhereShapeSite,
+): void {
+  for (const key of Object.keys(where)) {
+    const value = where[key];
 
     if (LOGICAL_KEYS.has(key)) {
-      validateWhereIdentifiers(value, scope, clause);
+      if (value === undefined) continue;
+      const keyPath = `${path}.${key}`;
+      assertCombinatorShape(key as "OR" | "AND" | "NOT", value, keyPath, site);
+      if (key === "NOT") {
+        walkWhere(value as Record<string, unknown>, scope, clause, keyPath, site);
+      } else {
+        (value as Record<string, unknown>[]).forEach((entry, i) =>
+          walkWhere(entry, scope, clause, `${keyPath}[${i}]`, site),
+        );
+      }
       continue;
     }
     if (value === undefined || typeof value === "function") continue;
@@ -155,7 +230,28 @@ export function validateWhereIdentifiers(
       }
     }
 
+    const operatorObject = isPlainObject(value);
+    if (operatorObject && !scope.valid.has(key) && scope.relationScope?.(key)) {
+      const fk = closestIdentifier(key, scope.valid);
+      throw new InvalidQueryError(
+        `Invalid ${clause} for entity "${scope.entityName}": "${key}" (${path}.${key}) is a relation, ` +
+          `and a relation is filtered with is / isNot or some / none / every.`,
+        `Write ${key}: { is: { id: 1 } } to filter by the related row` +
+          (fk ? `, or match the foreign key with ${fk}: 1.` : "."),
+      );
+    }
+
     assertKnownColumn(key, clause, scope);
+
+    if (operatorObject) {
+      assertFilterObject(
+        key,
+        value,
+        scope.literalValues?.has(key) ?? false,
+        `${path}.${key}`,
+        site,
+      );
+    }
   }
 }
 

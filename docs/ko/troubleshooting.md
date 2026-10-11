@@ -236,7 +236,8 @@ await em.find(User, { where: { userName: "Alice" } });  // 둘 다 아님 — �
 ```
 
 관계 프로퍼티는 컬럼이 아닙니다. FK로 거르거나(`where: { authorId: 1 }`),
-연관 행에 조건을 걸어야 하면 `SelectQueryBuilder.whereHas()`를 쓰세요.
+연관 행에 조건을 걸려면 관계 필터를 쓰세요(`where: { author: { is: { name: "Ada" } } }`).
+`author: { id: 1 }`처럼 평범한 객체를 주면 `"author" (where.author) is a relation`으로 거부됩니다.
 
 ### "... column but received an array / an object"
 
@@ -324,6 +325,42 @@ await em.find(Post, {
 ```
 
 두 번째 메시지는 `OR` 분기나 배열 형태의 원소가 아무 조건도 만들지 못했다는 뜻입니다. 빈 객체이거나 값이 전부 undefined인 분기죠. 빈 분기는 TRUE라서 OR로 묶으면 전체 행이 돌아옵니다. 그 분기를 없애거나, 정의된 값을 최소 하나는 넣어 주세요.
+
+### "Invalid options passed to find()" / "Invalid where for entity ..."
+
+```
+InvalidQueryError: Invalid options passed to find() for entity "Post":
+  - 'take' must be a non-negative integer, got "10".
+  - Unknown option 'wher'. Did you mean 'where'?
+InvalidQueryError: Invalid where for entity "Post": unknown operator "lik" on
+"title" (where.title). Did you mean "like"?
+```
+
+객체 리터럴로 쓰면 TypeScript가 이런 모양을 먼저 막기 때문에, 이 에러는 보통 런타임에 만든 옵션에서 나옵니다. 쿼리 스트링, JSON 본문, 스프레드한 DTO 같은 경우죠. 읽기 옵션은 `find`, `findOne`, `findAndCount`, `findWithPage`, `findWithCursor`, `stream` / `streamBatch`, `explain`을 호출하는 시점에 검사하고, 문제를 한 에러에 모두 나열합니다. where는 쓰이는 곳마다 검사합니다. 읽기, `count` / `exists` / 집계, 관계 필터, 그리고 `delete` / `softDelete` / `restore` / `updateMany`의 criteria가 여기에 해당합니다. 값을 대신 변환해 주지는 않아요. `"10"`은 `10`으로 읽히지 않습니다.
+
+| 메시지 | 이렇게 썼을 때 | 이렇게 고치세요 |
+|--------|----------------|-----------------|
+| `'take' must be a non-negative integer, got "10"` | `take: req.query.take` | `take: Number(req.query.take)`. `skip`, `limit`, `page`, `pageSize`도 같습니다 |
+| `'limit' must be a count or an [offset, count] pair` | `limit: [0]` | `limit: 10` 또는 `limit: [0, 10]` |
+| `'orderBy' must be an object keyed by property` | `orderBy: "title"` | `orderBy: { title: "ASC" }` |
+| `Unknown option 'wher'` | 옵션 이름 오타 | 메시지가 알려 주는 옵션 이름 |
+| `unknown operator "lik" on "title"` | `title: { lik: "%a%" }` | `title: { like: "%a%" }` |
+| `"title" (where.title) is an empty object` | `title: {}` | 연산자를 넣거나 필드를 빼세요 |
+| `operator "in" on "title" ... needs an array` | `title: { in: "a" }` | `title: { in: ["a"] }` 또는 `title: { eq: "a" }` |
+| `operator "between" ... needs [min, max]` | `views: { between: [1] }` | `views: { between: [1, 9] }`, 또는 `gte` / `lte` |
+| `operator "contains" ... needs a string` | `title: { contains: 5 }` | `title: { contains: "5" }`. `like`, `startsWith`, `endsWith`, `search`도 같습니다 |
+| `operator "isNull" ... needs true or false` | `title: { isNull: "no" }` | `title: { isNull: false }` |
+| `operator "eq" ... needs a single value` | `views: { eq: [1, 2] }` | `views: { in: [1, 2] }` |
+| `where.OR takes an array of where objects` | `OR: { a: 1 }` | `OR: [{ a: 1 }, { b: 2 }]` (`AND`도 같음) |
+| `where.NOT takes one where object` | `NOT: [{ a: 1 }, { b: 2 }]` | `NOT: { OR: [{ a: 1 }, { b: 2 }] }` |
+| `"author" (where.author) is a relation` | `author: { id: 1 }` | `author: { is: { id: 1 } }` 또는 `authorId: 1` |
+| `expected an object or an array of objects` | `delete(Post, 1)`, `count(Post, "1")` | `delete(Post, { id: 1 })` |
+| `criteria[0] must be an object` | `delete(Post, [1, 2])` | `deleteMany(Post, [1, 2])` 또는 `delete(Post, { id: { in: [1, 2] } })` |
+| `findOneBy() ... takes a where object` | `findOneBy(Post, 1)` | `findOneBy(Post, { id: 1 })` 또는 `findByPK(Post, 1)` |
+| `'orderBy' names one property to sort by` | `findWithCursor(Post, { orderBy: { createdAt: "DESC" } })` | `{ orderBy: "createdAt", direction: "DESC" }` |
+| `createQueryBuilder(Post) needs an alias` | `createQueryBuilder(Post)` | `createQueryBuilder(Post, "p")` |
+
+`undefined`나 `null`인 옵션은 설정하지 않은 것으로 봅니다. 그래서 `take: null`은 모든 행을 읽어요. `json` / `jsonb` / `array` 컬럼, 커스텀 타입이나 `transformer`가 붙은 컬럼, `@ComputedColumn`에서는 연산자가 아닌 키가 하나라도 있는 객체를 비교할 값으로 취급합니다(`where: { settings: { theme: "dark" } }`). 이런 컬럼에서는 연산자로만 이루어진 객체만 검사합니다.
 
 ## 관계 오류
 

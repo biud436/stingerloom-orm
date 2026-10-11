@@ -280,13 +280,11 @@ describe("ExplainQueryHandler", () => {
       expect(lastQb().calls.limit).toEqual([[10, 20]]);
     });
 
-    it("should clamp negative offset/count in limit array to 0", async () => {
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity, { limit: [-5, -3] });
-
-      expect(lastQb().calls.limit).toEqual([[0, 0]]);
+    it("should reject a negative offset or count in the limit array, as find() does", async () => {
+      await expect(handler.explain(TestEntity, { limit: [-5, -3] })).rejects.toThrow(
+        "'limit[0]' must be a non-negative integer, got -5.",
+      );
+      expect(ctx.executeReadOnly).not.toHaveBeenCalled();
     });
 
     it("should keep count=0 in limit array as LIMIT 0 (#448)", async () => {

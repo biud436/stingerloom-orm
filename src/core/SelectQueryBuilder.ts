@@ -3905,7 +3905,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     options: { page?: number; pageSize?: number } = {},
   ): Promise<PagePaginationResult<TResult>> {
     const page = normalizePage(options.page);
-    const pageSize = normalizePageSize(options.pageSize);
+    const pageSize = normalizePageSize(options.pageSize, "pageSize");
     const offset = (page - 1) * pageSize;
 
     const paged = this.clone();
@@ -3947,7 +3947,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     options: { page?: number; pageSize?: number } = {},
   ): Promise<PagePaginationResult<TResult>> {
     const page = normalizePage(options.page);
-    const pageSize = normalizePageSize(options.pageSize);
+    const pageSize = normalizePageSize(options.pageSize, "pageSize");
     const offset = (page - 1) * pageSize;
 
     const paged = this.clone();

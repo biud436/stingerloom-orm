@@ -112,9 +112,10 @@ result.hasNextPage;     // true
 result.hasPreviousPage; // true
 ```
 
-`page`/`pageSize` are normalized the same way as `findWithPage()` (non-positive →
-1, fractional → floored; defaults `page` 1 / `pageSize` 20), and `paginate()`
-clones the builder so the source instance keeps no LIMIT/OFFSET and can be paged
+`page`/`pageSize` are normalized the same way as `findWithPage()`: a `page` below
+1 reads page 1 and a fractional one is floored, a `pageSize` below 1 reads the
+default of 20. Both must be numbers, and `pageSize` an integer, so convert a
+query-string value with `Number(...)` first. `paginate()` clones the builder so the source instance keeps no LIMIT/OFFSET and can be paged
 again. For projected list views (`select(["id", "title"])`) use
 `paginatePartial()`, which returns plain `Pick<T, K>` objects instead of entity
 instances.

@@ -4,6 +4,8 @@ import { ISelectOption } from "../dialects/ISelectOption";
 import { IOrderBy } from "../dialects/IOrderBy";
 import { Sql } from "../utils/sqlTag";
 import { normalizePageSize } from "./CursorPagination";
+import { InvalidQueryError } from "../errors/InvalidQueryError";
+import { showValue } from "../utils/optionRules";
 
 /**
  * Options for offset-based page pagination.
@@ -85,13 +87,18 @@ export type PagePaginationResult<T> = {
 
 /**
  * Normalizes the page number.
- * undefined/null/0/negative → 1, decimal → floor.
+ * undefined/null/0/negative → 1, decimal → floor. A value that is not a
+ * finite number (a numeric string from a query string, NaN) is rejected.
  */
 export function normalizePage(page?: number): number {
-  if (page === undefined || page === null || page <= 0) {
-    return 1;
+  if (page === undefined || page === null) return 1;
+  if (typeof page !== "number" || !Number.isFinite(page)) {
+    throw new InvalidQueryError(
+      `'page' must be a number, got ${showValue(page)}.`,
+      "Convert a value read from a query string with Number(...) first.",
+    );
   }
-  return Math.floor(page);
+  return page <= 0 ? 1 : Math.floor(page);
 }
 
 export { normalizePageSize };

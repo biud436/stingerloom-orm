@@ -137,6 +137,8 @@ import { TransactionRunner } from "./entity-manager/TransactionRunner";
 import { RawQueryRunner } from "./entity-manager/RawQueryRunner";
 import { applyNamingStrategyToEntities } from "./entity-manager/applyNamingStrategy";
 import { ConnectionLifecycle } from "./entity-manager/ConnectionLifecycle";
+import { validateReadOptionShape } from "./QueryOptionShape";
+import { showValue } from "../utils/optionRules";
 
 // ── Extracted types & internal utilities (entity-manager/) ──
 import type {
@@ -1112,6 +1114,7 @@ export class EntityManager implements BaseEntityManager {
     batchSize: number = 1000,
   ): AsyncGenerator<T[], void, undefined> {
     this.assertEntityInScope(entity, "streamBatch");
+    validateReadOptionShape(options, "streamBatch", entity.name);
     const { limit, take, skip, ...rest } = options;
 
     // Resolve the caller's window with find()'s precedence: a limit tuple
@@ -1122,9 +1125,9 @@ export class EntityManager implements BaseEntityManager {
     if (Array.isArray(limit)) {
       offset = limit[0];
       remaining = take && take > 0 ? take : limit[1];
-    } else if (skip !== undefined || (take !== undefined && limit === undefined)) {
+    } else if (skip != null || (take != null && limit == null)) {
       offset = skip ?? 0;
-      if (take !== undefined) remaining = take;
+      if (take != null) remaining = take;
     } else if (typeof limit === "number") {
       remaining = limit;
     }
@@ -2784,6 +2787,19 @@ export class EntityManager implements BaseEntityManager {
     } else {
       entity = entityOrRef;
       resolvedAlias = alias;
+      // An entity without an alias used to fall through to the raw builder,
+      // whose API has no getMany(): fail here instead, naming the fix.
+      if (arguments.length > 0) {
+        this.assertEntityInScope(entity as ClazzType<T>, "createQueryBuilder");
+        if (typeof alias !== "string" || alias.length === 0) {
+          const name = (entity as ClazzType<T>).name;
+          throw new InvalidQueryError(
+            `createQueryBuilder(${name}) needs an alias, got ${alias === undefined ? "none" : showValue(alias)}.`,
+            `Write createQueryBuilder(${name}, "${name.charAt(0).toLowerCase()}"); the alias names the table in the query. ` +
+              `createQueryBuilder() with no arguments returns the raw SQL builder.`,
+          );
+        }
+      }
     }
     if (entity && resolvedAlias) {
       this.assertEntityInScope(entity, "createQueryBuilder");

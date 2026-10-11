@@ -822,7 +822,7 @@ Polymorphic query가 필요한가?
 | `em.count/sum/avg/min/max(RootEntity)` | STI/TPT: 공유/루트 테이블에 이미 전 행이 있음. TPC: `UNION ALL`에 대해 집계 |
 | `em.findWithCursor(RootEntity)` | TPT: 루트에 모든 자식 테이블을 `LEFT JOIN`해 페이지네이션하고 각 행을 서브클래스로 반환. TPC: `(정렬 컬럼, id, discriminator)` 키셋으로 `UNION ALL`을 페이지네이션 |
 | `em.updateMany/softDelete/restore/delete/deleteMany(RootEntity)` | TPC: 콘크리트 테이블마다 실행, `affected` 합산. `orderBy`/`limit`가 있는 `updateMany`는 거부 |
-| `em.createQueryBuilder(Entity)` | 완전 지원 (STI discriminator WHERE, TPT 자동 JOIN, TPC UNION ALL, polymorphic 역직렬화) |
+| `em.createQueryBuilder(Entity, alias)` | 완전 지원 (STI discriminator WHERE, TPT 자동 JOIN, TPC UNION ALL, polymorphic 역직렬화) |
 | `buf.find(Entity)` | 완전 지원 (EntityManager에 위임) |
 
 ## 다음 단계
