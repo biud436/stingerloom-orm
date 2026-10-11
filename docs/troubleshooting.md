@@ -236,9 +236,10 @@ await em.find(User, { where: { user_name: "Alice" } }); // DB column name, also 
 await em.find(User, { where: { userName: "Alice" } });  // neither — throws
 ```
 
-A relation property is not a column: filter by its FK instead
-(`where: { authorId: 1 }`), or use `SelectQueryBuilder.whereHas()` for a
-condition on the related row.
+A relation property is not a column: filter by its FK (`where: { authorId: 1 }`),
+or put a condition on the related row with a relation filter
+(`where: { author: { is: { name: "Ada" } } }`). A plain object such as
+`author: { id: 1 }` is reported as `"author" (where.author) is a relation`.
 
 ### "... column but received an array / an object"
 
@@ -326,6 +327,42 @@ await em.find(Post, {
 ```
 
 The second message means an `OR` branch, or an element of the array form, ended up with no condition — an empty object, or a branch whose values are all undefined. An empty branch is TRUE, so OR-ing it would return every row. Drop the branch, or give it at least one defined value.
+
+### "Invalid options passed to find()" / "Invalid where for entity ..."
+
+```
+InvalidQueryError: Invalid options passed to find() for entity "Post":
+  - 'take' must be a non-negative integer, got "10".
+  - Unknown option 'wher'. Did you mean 'where'?
+InvalidQueryError: Invalid where for entity "Post": unknown operator "lik" on
+"title" (where.title). Did you mean "like"?
+```
+
+TypeScript rejects these shapes in an object literal, so they come from options built at runtime — a query string, a JSON body, a spread DTO. The read options are checked when `find`, `findOne`, `findAndCount`, `findWithPage`, `findWithCursor`, `stream` / `streamBatch` or `explain` is called, and every problem is listed in one error. A where is checked wherever it is used: reads, `count` / `exists` / the aggregates, relation filters and the criteria of `delete` / `softDelete` / `restore` / `updateMany`. Values are never converted for you: `"10"` is not read as `10`.
+
+| Message | Written as | Write instead |
+|---------|------------|---------------|
+| `'take' must be a non-negative integer, got "10"` | `take: req.query.take` | `take: Number(req.query.take)`; the same for `skip`, `limit`, `page`, `pageSize` |
+| `'limit' must be a count or an [offset, count] pair` | `limit: [0]` | `limit: 10` or `limit: [0, 10]` |
+| `'orderBy' must be an object keyed by property` | `orderBy: "title"` | `orderBy: { title: "ASC" }` |
+| `Unknown option 'wher'` | a misspelled option | the option the message names |
+| `unknown operator "lik" on "title"` | `title: { lik: "%a%" }` | `title: { like: "%a%" }` |
+| `"title" (where.title) is an empty object` | `title: {}` | an operator, or leave the field out |
+| `operator "in" on "title" ... needs an array` | `title: { in: "a" }` | `title: { in: ["a"] }` or `title: { eq: "a" }` |
+| `operator "between" ... needs [min, max]` | `views: { between: [1] }` | `views: { between: [1, 9] }`, or `gte` / `lte` |
+| `operator "contains" ... needs a string` | `title: { contains: 5 }` | `title: { contains: "5" }`; the same for `like`, `startsWith`, `endsWith`, `search` |
+| `operator "isNull" ... needs true or false` | `title: { isNull: "no" }` | `title: { isNull: false }` |
+| `operator "eq" ... needs a single value` | `views: { eq: [1, 2] }` | `views: { in: [1, 2] }` |
+| `where.OR takes an array of where objects` | `OR: { a: 1 }` | `OR: [{ a: 1 }, { b: 2 }]` (`AND` alike) |
+| `where.NOT takes one where object` | `NOT: [{ a: 1 }, { b: 2 }]` | `NOT: { OR: [{ a: 1 }, { b: 2 }] }` |
+| `"author" (where.author) is a relation` | `author: { id: 1 }` | `author: { is: { id: 1 } }` or `authorId: 1` |
+| `expected an object or an array of objects` | `delete(Post, 1)`, `count(Post, "1")` | `delete(Post, { id: 1 })` |
+| `criteria[0] must be an object` | `delete(Post, [1, 2])` | `deleteMany(Post, [1, 2])` or `delete(Post, { id: { in: [1, 2] } })` |
+| `findOneBy() ... takes a where object` | `findOneBy(Post, 1)` | `findOneBy(Post, { id: 1 })` or `findByPK(Post, 1)` |
+| `'orderBy' names one property to sort by` | `findWithCursor(Post, { orderBy: { createdAt: "DESC" } })` | `{ orderBy: "createdAt", direction: "DESC" }` |
+| `createQueryBuilder(Post) needs an alias` | `createQueryBuilder(Post)` | `createQueryBuilder(Post, "p")` |
+
+An option set to `undefined` or `null` counts as not set, so `take: null` reads every row. On a `json` / `jsonb` / `array` column, a column with a custom type or a `transformer`, and a `@ComputedColumn`, an object with a key that is no operator is a value to compare with (`where: { settings: { theme: "dark" } }`); only an object made of operators is checked.
 
 ## Relation Errors
 

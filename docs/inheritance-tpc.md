@@ -529,7 +529,7 @@ await em.delete(Payment, { amount: 0 });                    // one DELETE per co
 | `count` / `exists` / `sum` / `avg` / `min` / `max` | Aggregate over the same `UNION ALL` |
 | `findAndCount` / `findWithPage` | Rows and total both come from the hierarchy |
 | `findWithCursor` | Pages the hierarchy. The keyset is `(order column, id, discriminator)`, so two subtypes sharing an `id` are never skipped or repeated |
-| `createQueryBuilder(Root)` | `UNION ALL` FROM source, `getCount()` included |
+| `createQueryBuilder(Root, alias)` | `UNION ALL` FROM source, `getCount()` included |
 | `updateMany` / `update` / `increment` / `decrement` | Same `SET ... WHERE` runs once per concrete table; `affected` is the sum |
 | `softDelete` / `restore` | Stamps or clears `@DeletedAt` in every concrete table |
 | `delete` / `deleteMany` | One `DELETE` per concrete table; `affected` is the sum |

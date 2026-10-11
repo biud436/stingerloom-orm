@@ -13,6 +13,7 @@ import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { resolveRelationTree } from "./RelationTree";
 import { resolveRelationCounts } from "./RelationCount";
 import { validateReadIdentifiers } from "./ColumnNameValidator";
+import { validateReadOptionShape } from "./QueryOptionShape";
 import {
   RelationWhereFilterBuilder,
   relationAwareScope,
@@ -35,6 +36,7 @@ export class ExplainQueryHandler {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<ExplainResult> {
+    validateReadOptionShape(findOption, "explain", entity.name);
     const driver = this.ctx.getDriver();
     if (!driver || !driver.supportsExplain()) {
       throw new InvalidQueryError(
@@ -170,23 +172,20 @@ export class ExplainQueryHandler {
     else if (this.ctx.isSqlite?.()) qb.setDatabaseType("sqlite");
     else qb.setDatabaseType("postgresql");
 
+    // Negative and non-integer values were rejected on entry, as find() does.
     if (Array.isArray(limit)) {
-      let [offset, count] = limit;
-      if (offset < 0) offset = 0;
-      if (count < 0) count = 0;
+      const [offset, count] = limit;
       // An explicit count of 0 means LIMIT 0; only a positive `take` overrides it.
-      if (take && take > 0) count = take;
-      qb.limit([offset, count]);
-    } else if (skip !== undefined || (take !== undefined && limit === undefined)) {
-      const offset = Math.max(skip ?? 0, 0);
-      // An explicit `take: 0` means LIMIT 0 — only `undefined` drops the cap.
-      const count = take !== undefined ? Math.max(take, 0) : undefined;
-      if (count !== undefined) {
-        qb.limit([offset, count]);
+      qb.limit([offset, take && take > 0 ? take : count]);
+    } else if (skip != null || (take != null && limit == null)) {
+      const offset = skip ?? 0;
+      // An explicit `take: 0` means LIMIT 0 — only an unset take drops the cap.
+      if (take != null) {
+        qb.limit([offset, take]);
       } else if (offset > 0) {
         qb.limit([offset, 2147483647]);
       }
-    } else if (limit !== undefined) {
+    } else if (limit != null) {
       qb.limit(limit as number);
     }
 

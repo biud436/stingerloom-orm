@@ -74,7 +74,7 @@ describe("Pagination validation (#123)", () => {
     it("should include value in error message", async () => {
       await expect(
         em.find(UserClass, { skip: -5 }),
-      ).rejects.toThrow(/received -5/);
+      ).rejects.toThrow("'skip' must be a non-negative integer, got -5.");
     });
   });
 

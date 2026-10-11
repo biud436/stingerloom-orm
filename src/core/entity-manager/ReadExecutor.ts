@@ -55,6 +55,7 @@ import {
   buildEntityColumnScope,
   validateReadIdentifiers,
 } from "../ColumnNameValidator";
+import { assertWhereArgument, validateReadOptionShape } from "../QueryOptionShape";
 import { RelationLoader } from "../RelationLoader";
 import {
   RelationWhereFilterBuilder,
@@ -459,6 +460,7 @@ export class ReadExecutor {
     findOption: FindOption<T>,
   ): Promise<T | null> {
     // Public entry only: save()'s readbacks call findOneInternal directly.
+    validateReadOptionShape(findOption, "findOne", entity.name, "find", true);
     assertWhereNotVacuous(findOption?.where, "findOne", entity.name);
     return this.ctx.findOneInternal(entity, findOption);
   }
@@ -467,6 +469,7 @@ export class ReadExecutor {
     entity: ClazzType<T>,
     where: WhereClause<T> | WhereClause<T>[],
   ): Promise<T | null> {
+    assertWhereArgument(where, "findOneBy", entity.name);
     assertWhereNotVacuous(where, "findOneBy", entity.name);
     return this.ctx.findOne(entity, { where });
   }
@@ -546,6 +549,7 @@ export class ReadExecutor {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<T[]> {
+    validateReadOptionShape(findOption, "find", entity.name);
     const result = await this.ctx.findInternal(entity, findOption);
     if (result === undefined || result === null) return [];
     if (Array.isArray(result)) return result as T[];
@@ -556,6 +560,7 @@ export class ReadExecutor {
     entity: ClazzType<T>,
     where: WhereClause<T> | WhereClause<T>[],
   ): Promise<T[]> {
+    assertWhereArgument(where, "findBy", entity.name);
     return this.ctx.find(entity, { where });
   }
 
@@ -564,58 +569,13 @@ export class ReadExecutor {
     column: K,
     where?: WhereClause<T> | WhereClause<T>[],
   ): Promise<T[K][]> {
+    assertWhereArgument(where, "pluck", entity.name);
     const findOption: FindOption<T> = { select: [column] };
     if (where !== undefined) {
       findOption.where = where;
     }
     const rows = await this.ctx.find(entity, findOption);
     return rows.map((row) => row[column]);
-  }
-
-  /**
-   * Rejects negative pagination inputs before any metadata or SQL work.
-   *
-   * `take`/`skip`/`limit` reach the builder as raw numbers, so a negative
-   * value would otherwise become a dialect-specific syntax error naming the
-   * generated SQL rather than the option the caller passed.
-   */
-  private validatePaginationOptions<T>(findOption: FindOption<T>): void {
-    const { take, skip, limit } = findOption;
-
-    if (skip !== undefined && skip < 0) {
-      throw new InvalidQueryError(
-        `"skip" must be a non-negative integer, but received ${skip}`,
-        "Ensure skip is >= 0",
-      );
-    }
-    if (take !== undefined && take < 0) {
-      throw new InvalidQueryError(
-        `"take" must be a non-negative integer, but received ${take}`,
-        "Ensure take is >= 0",
-      );
-    }
-    if (limit !== undefined) {
-      if (Array.isArray(limit)) {
-        const [off, cnt] = limit;
-        if (off < 0) {
-          throw new InvalidQueryError(
-            `"limit" offset must be non-negative, but received ${off}`,
-            "Ensure the first element of the limit tuple is >= 0",
-          );
-        }
-        if (cnt < 0) {
-          throw new InvalidQueryError(
-            `"limit" count must be non-negative, but received ${cnt}`,
-            "Ensure the second element of the limit tuple is >= 0",
-          );
-        }
-      } else if (typeof limit === "number" && limit < 0) {
-        throw new InvalidQueryError(
-          `"limit" must be non-negative, but received ${limit}`,
-          "Ensure limit is >= 0",
-        );
-      }
-    }
   }
 
   /**
@@ -1416,13 +1376,13 @@ export class ReadExecutor {
       // permits it. Only a positive `take` overrides the tuple's count.
       const effectiveCount = (take && take > 0) ? take : count;
       qb.limit([offset, effectiveCount]);
-    } else if (skip !== undefined || (take !== undefined && limit === undefined)) {
+    } else if (skip != null || (take != null && limit == null)) {
       // skip/take pagination → convert to limit tuple. An explicit
       // `take: 0` means LIMIT 0 (the validator allows it), so only
-      // `undefined` may drop the cap — a falsy check would silently
-      // return the whole table.
+      // `undefined` / `null` may drop the cap — a falsy check would
+      // silently return the whole table.
       const offset = skip ?? 0;
-      if (take !== undefined) {
+      if (take != null) {
         qb.limit([offset, take]);
       } else if (offset > 0) {
         // skip without take: no real cap — use a very large count so the
@@ -1430,7 +1390,7 @@ export class ReadExecutor {
         qb.limit([offset, 2147483647]);
       }
     } else {
-      if (limit !== undefined) {
+      if (limit != null) {
         qb.limit(limit as number);
       }
     }
@@ -1710,8 +1670,6 @@ export class ReadExecutor {
     findOption: FindOption<T> = {},
     existingSession?: TransactionSessionManager,
   ): Promise<EntityResult<T>> {
-    this.validatePaginationOptions(findOption);
-
     // Normalize `relations` — names, dotted paths, the object form — into one
     // tree, rejecting a name no loader can resolve at any level. Every loader
     // filters with `relations.includes(...)`, so without the check an
@@ -1802,6 +1760,7 @@ export class ReadExecutor {
     entity: ClazzType<T>,
     option: CursorPaginationOption<T> = {},
   ): Promise<CursorPaginationResult<T>> {
+    validateReadOptionShape(option, "findWithCursor", entity.name, "cursor");
     const metadata = this.resolver.resolveEntityMetadata(entity);
 
     if (!metadata) {
@@ -2267,6 +2226,7 @@ export class ReadExecutor {
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
   ): Promise<[T[], number]> {
+    validateReadOptionShape(findOption, "findAndCount", entity.name);
     const readNode = this.ctx.getReadNode(findOption.useMaster);
     // Both the data query and the count query run on this session, so
     // wrapping it caches the pair under one policy. findInternal receives
@@ -2316,8 +2276,9 @@ export class ReadExecutor {
     entity: ClazzType<T>,
     option: PagePaginationOption<T> = {},
   ): Promise<PagePaginationResult<T>> {
+    validateReadOptionShape(option, "findWithPage", entity.name, "page");
     const page = normalizePage(option.page);
-    const pageSize = normalizePageSize(option.pageSize);
+    const pageSize = normalizePageSize(option.pageSize, "pageSize");
     const offset = (page - 1) * pageSize;
 
     const [rawData, total] = await this.ctx.findAndCount<T>(entity, {

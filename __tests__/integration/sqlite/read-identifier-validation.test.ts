@@ -158,7 +158,10 @@ describe("[Integration] SQLite: read-path column identifier validation", () => {
       const error = await captureError(() =>
         em.find(RivMember, { where: { team: { id: 1 } } as never }),
       );
-      expect(error.message).toContain('Unknown column "team" in "where"');
+      expect(error.message).toContain(
+        `Invalid where for entity "RivMember": "team" (where.team) is a relation, and a relation is filtered with is / isNot or some / none / every.`,
+      );
+      expect(error.suggestion).toContain("Write team: { is: { id: 1 } } to filter by the related row");
     });
 
     it("guards cursor pagination's where and sort column", async () => {

@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { WhereClause, RelationsOption, WithCountOption } from "../dialects/FindOption";
+import { InvalidQueryError } from "../errors/InvalidQueryError";
+import { showValue } from "../utils/optionRules";
 
 /**
  * Cursor-based pagination option.
@@ -210,11 +212,20 @@ export function decodeCursorKey(cursor: string): DecodedCursorKey | null {
 }
 
 /**
- * Normalize the `take` value of CursorPaginationOption.
+ * Normalize the `take` value of CursorPaginationOption: unset or below 1
+ * reads the default page size. A value that is not an integer — a numeric
+ * string from a query string, a fraction — is rejected: it reached the
+ * driver as the LIMIT and failed there, or not at all.
+ *
+ * @param option The option name the message uses (`take`, `pageSize`).
  */
-export function normalizePageSize(take?: number): number {
-  if (take === undefined || take === null || take <= 0) {
-    return DEFAULT_PAGE_SIZE;
+export function normalizePageSize(take?: number, option = "take"): number {
+  if (take === undefined || take === null) return DEFAULT_PAGE_SIZE;
+  if (typeof take !== "number" || !Number.isInteger(take)) {
+    throw new InvalidQueryError(
+      `'${option}' must be an integer, got ${showValue(take)}.`,
+      "Convert a value read from a query string with Number(...) first.",
+    );
   }
-  return take;
+  return take <= 0 ? DEFAULT_PAGE_SIZE : take;
 }
