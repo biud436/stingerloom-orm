@@ -83,7 +83,13 @@ The cache never changes the semantics of a query that must be current:
 - **Locking reads bypass the cache** — `lock: PESSIMISTIC_WRITE` (and the query builder's locking clauses) always reach the database; a lock that does not lock anything would be a correctness bug.
 - **Uncached reads never read or populate the cache.**
 
-One caveat to know about: a write inside a transaction invalidates immediately (not at commit). Between the invalidation and the commit, a concurrent cached read can re-populate the entry from the pre-commit state; the TTL bounds how long that entry can live.
+Invalidation follows the same line — a write's invalidation never runs before the write is final:
+
+- **A write invalidates when its transaction ends.** Inside `em.transaction()`, `@Transactional`, or the transaction a cascading `save()` / `delete()` opens, the invalidation is held and runs after COMMIT — and after ROLLBACK too. While the transaction is open, a cached read outside it can fill an entry from the rows the transaction is replacing (PostgreSQL, MySQL) or from its uncommitted rows (SQLite, whose sessions share one connection); neither entry outlives the transaction. A write outside a transaction invalidates as soon as it returns, whether it succeeded or failed.
+- **A read still running when its tables are invalidated is not stored**, so rows fetched just before a COMMIT never land in the cache after it.
+- **`invalidate()` and `clear()` inside a transaction run immediately and again when the transaction ends.**
+
+`em.transaction()` returns once the held invalidation has run, so a read after it never sees an entry the transaction made stale.
 
 ## Configuration
 
@@ -128,6 +134,7 @@ Notes for store authors:
 - `value` is an opaque snapshot; return exactly what `set` received.
 - Tag-indexed invalidation must drop every entry stored under any of the given tags.
 - Throw on failure. The ORM logs one warning and falls through to the database — a broken cache degrades to no cache, never to an error.
+- The `invalidateTags` call held for a transaction runs after its COMMIT or ROLLBACK and is awaited before `em.transaction()` returns: a slow store delays the return, never the commit.
 
 When a store is configured at `register` time, it is created eagerly, so a process that only writes still pushes its invalidations into the shared backend.
 

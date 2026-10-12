@@ -23,7 +23,10 @@ export class TransactionSessionManager extends IQueryEngine {
   private connection?: IConnector;
   private dataSource?: IDataSource;
   private readonly logger: Logger = new Logger(TransactionSessionManager.name);
-  private transactionEndCallbacks: Array<(committed: boolean) => void> = [];
+  private transactionEndCallbacks: Array<
+    (committed: boolean) => void | Promise<void>
+  > = [];
+  private transactionActive = false;
 
   /**
    * Constructs a new instance of the `TransactionHolder` class.
@@ -155,32 +158,48 @@ export class TransactionSessionManager extends IQueryEngine {
       throw new DatabaseNotConnectedError();
     }
 
-    return this.dataSource?.startTransaction(level);
+    const result = await this.dataSource?.startTransaction(level);
+    this.transactionActive = true;
+    return result;
+  }
+
+  /**
+   * Whether a transaction begun by `startTransaction()` is still open on
+   * this session — COMMIT or ROLLBACK not yet issued. Register an
+   * `onTransactionEnd()` callback only while this is true: once the
+   * transaction is over, the callback would wait for one that may never come.
+   */
+  public get isTransactionActive(): boolean {
+    return this.transactionActive;
   }
 
   /**
    * Register a one-shot callback fired when this session's transaction ends:
-   * `true` after a successful COMMIT, `false` after a successful ROLLBACK.
+   * `true` after a successful COMMIT, `false` after ROLLBACK (also when the
+   * ROLLBACK statement itself fails).
    * Savepoint partial rollbacks (`rollbackTo`) do not fire it. Callbacks run
    * in reverse registration order (later registrants undo their state first,
    * so earlier snapshots win — LIFO, like nested restores) and are cleared
-   * after firing. A callback error is logged, never propagated: the
+   * after firing. An async callback is awaited before `commit()` /
+   * `rollback()` resolves. A callback error is logged, never propagated: the
    * transaction outcome is already decided when callbacks run.
    *
    * Used by participants that join an ambient transaction (e.g. WriteBuffer
-   * flush) and must reconcile in-memory state with the transaction outcome.
+   * flush, query cache invalidation) and must reconcile in-memory state with
+   * the transaction outcome.
    */
-  public onTransactionEnd(callback: (committed: boolean) => void): void {
+  public onTransactionEnd(
+    callback: (committed: boolean) => void | Promise<void>,
+  ): void {
     this.transactionEndCallbacks.push(callback);
   }
 
-  private fireTransactionEnd(committed: boolean): void {
-    if (this.transactionEndCallbacks.length === 0) return;
+  private async fireTransactionEnd(committed: boolean): Promise<void> {
     const callbacks = this.transactionEndCallbacks;
     this.transactionEndCallbacks = [];
     for (let i = callbacks.length - 1; i >= 0; i--) {
       try {
-        callbacks[i](committed);
+        await callbacks[i](committed);
       } catch (error) {
         this.logger.warn(
           `transaction-end callback failed (outcome already ${committed ? "committed" : "rolled back"}): ${error}`,
@@ -190,14 +209,21 @@ export class TransactionSessionManager extends IQueryEngine {
   }
 
   /**
-   * Rolls back the current transaction.
+   * Rolls back the current transaction. The transaction-end callbacks fire
+   * even when the ROLLBACK statement itself fails — the transaction is over
+   * either way, and nothing it wrote was committed.
    *
    * @returns A promise that resolves when the transaction is rolled back.
    */
   public async rollback() {
-    const result = await this.dataSource?.rollback();
-    this.fireTransactionEnd(false);
-    return result;
+    try {
+      return await this.dataSource?.rollback();
+    } finally {
+      this.transactionActive = false;
+      if (this.transactionEndCallbacks.length > 0) {
+        await this.fireTransactionEnd(false);
+      }
+    }
   }
 
   /**
@@ -207,7 +233,10 @@ export class TransactionSessionManager extends IQueryEngine {
    */
   public async commit() {
     const result = await this.dataSource?.commit();
-    this.fireTransactionEnd(true);
+    this.transactionActive = false;
+    if (this.transactionEndCallbacks.length > 0) {
+      await this.fireTransactionEnd(true);
+    }
     return result;
   }
 

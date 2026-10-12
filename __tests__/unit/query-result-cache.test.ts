@@ -396,3 +396,137 @@ describe("QueryResultCache", () => {
     expect(inner.close).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("QueryResultCache invalidation timing", () => {
+  /** A session stand-in that records transaction-end callbacks for the test to fire. */
+  function fakeTransaction(active = true) {
+    const callbacks: Array<(committed: boolean) => void | Promise<void>> = [];
+    const session = {
+      isTransactionActive: active,
+      onTransactionEnd: (cb: (committed: boolean) => void | Promise<void>) => {
+        callbacks.push(cb);
+      },
+    } as any;
+    const end = async (committed: boolean) => {
+      for (const cb of callbacks.splice(0).reverse()) await cb(committed);
+    };
+    return { session, callbacks, end };
+  }
+
+  function spiedStore() {
+    const store = new InMemoryQueryCacheStore(10);
+    return {
+      store,
+      invalidateTags: jest.spyOn(store, "invalidateTags"),
+      clear: jest.spyOn(store, "clear"),
+    };
+  }
+
+  it.each([
+    ["commit", true],
+    ["rollback", false],
+  ])("holds a write inside a transaction until it ends, and drops it on %s", async (_label, committed) => {
+    const { ctx } = makeCtx();
+    const { store, invalidateTags } = spiedStore();
+    const cache = new QueryResultCache(ctx, { store });
+    const tx = fakeTransaction();
+
+    await cache.invalidateEntity(FakeUser as any, tx.session);
+    expect(invalidateTags).not.toHaveBeenCalled();
+
+    await tx.end(committed);
+    expect(invalidateTags).toHaveBeenCalledWith(["t:users"]);
+  });
+
+  it("drops every write of one transaction in a single store call", async () => {
+    const { ctx } = makeCtx();
+    const { store, invalidateTags } = spiedStore();
+    const cache = new QueryResultCache(ctx, { store });
+    const tx = fakeTransaction();
+
+    await cache.invalidateEntity(FakeUser as any, tx.session);
+    await cache.invalidateEntity(FakePost as any, tx.session);
+    await cache.invalidateEntity(FakeUser as any, tx.session);
+    expect(tx.callbacks).toHaveLength(1);
+
+    await tx.end(true);
+    expect(invalidateTags).toHaveBeenCalledTimes(1);
+    expect([...invalidateTags.mock.calls[0][0]].sort()).toEqual(["t:posts", "t:users"]);
+  });
+
+  it("drops at once outside a transaction and for a session whose transaction is over", async () => {
+    const { ctx } = makeCtx();
+    const { store, invalidateTags } = spiedStore();
+    const cache = new QueryResultCache(ctx, { store });
+
+    await cache.invalidateEntity(FakeUser as any);
+    expect(invalidateTags).toHaveBeenCalledTimes(1);
+
+    const ended = fakeTransaction(false);
+    await cache.invalidateEntity(FakeUser as any, ended.session);
+    expect(invalidateTags).toHaveBeenCalledTimes(2);
+    expect(ended.callbacks).toHaveLength(0);
+  });
+
+  it("runs manual invalidate() now and again when the ambient transaction ends", async () => {
+    const { ctx } = makeCtx();
+    const { store, invalidateTags } = spiedStore();
+    const cache = new QueryResultCache(ctx, { store });
+    const tx = fakeTransaction();
+
+    await transactionStorage.run(tx.session, () => cache.invalidate("dashboard"));
+    expect(invalidateTags).toHaveBeenCalledTimes(1);
+
+    await tx.end(true);
+    expect(invalidateTags).toHaveBeenCalledTimes(2);
+    expect([...invalidateTags.mock.calls[1][0]].sort()).toEqual(["t:dashboard", "u:dashboard"]);
+  });
+
+  it("runs clear() now and again when the ambient transaction ends", async () => {
+    const { ctx } = makeCtx();
+    const { store, clear, invalidateTags } = spiedStore();
+    const cache = new QueryResultCache(ctx, { store });
+    const tx = fakeTransaction();
+
+    await transactionStorage.run(tx.session, async () => {
+      await cache.invalidateEntity(FakeUser as any, tx.session);
+      await cache.clear();
+    });
+    expect(clear).toHaveBeenCalledTimes(1);
+
+    await tx.end(false);
+    expect(clear).toHaveBeenCalledTimes(2);
+    expect(invalidateTags).not.toHaveBeenCalled();
+  });
+
+  it("does not store a row set whose tables were invalidated while it was read", async () => {
+    const { ctx } = makeCtx();
+    const cache = new QueryResultCache(ctx);
+    const policy = cache.policyForFind(FakeUser as any, { cache: 60_000 })!;
+
+    const rows = await cache.runQuery(policy, SELECT_SQL, async () => {
+      await cache.invalidateEntity(FakeUser as any);
+      return { results: [{ id: 1 }] };
+    });
+    expect(rows.results).toEqual([{ id: 1 }]);
+    expect(cache.stats.entries).toBe(0);
+
+    await cache.runQuery(policy, SELECT_SQL, async () => {
+      await cache.invalidateEntity(FakeTag as any);
+      return { results: [{ id: 1 }] };
+    });
+    expect(cache.stats.entries).toBe(1);
+  });
+
+  it("does not store a row set read while the whole cache was cleared", async () => {
+    const { ctx } = makeCtx();
+    const cache = new QueryResultCache(ctx);
+    const policy = cache.policyForFind(FakeUser as any, { cache: 60_000 })!;
+
+    await cache.runQuery(policy, SELECT_SQL, async () => {
+      await cache.clear();
+      return { results: [{ id: 1 }] };
+    });
+    expect(cache.stats.entries).toBe(0);
+  });
+});

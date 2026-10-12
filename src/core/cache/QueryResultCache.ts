@@ -81,6 +81,20 @@ interface InMemoryEntry {
   tags: readonly string[];
 }
 
+/** A cache miss being fetched from the database, not yet stored. */
+interface InFlightRead {
+  readonly tags: readonly string[];
+  /** Set when an invalidation of any of `tags` runs before the read is stored. */
+  stale: boolean;
+}
+
+/** Invalidation held back until the transaction it ran in ends. */
+interface HeldInvalidation {
+  readonly tags: Set<string>;
+  /** A `clear()` ran in the transaction: drop everything at its end. */
+  all: boolean;
+}
+
 /**
  * Default `QueryCacheStore`: a per-EntityManager in-memory LRU with lazy TTL
  * expiry and tag-indexed invalidation. Entry count is bounded by
@@ -209,7 +223,8 @@ export class QueryCachePolicy {
  * Every stored row set is indexed under the tables the operation could read
  * (root entity, inheritance family, eager/requested relations, M2M join
  * tables). Writes issued through the same EntityManager invalidate those
- * tags; writes from other processes are only bounded by the TTL.
+ * tags — a write inside a transaction when that transaction ends; writes
+ * from other processes are only bounded by the TTL.
  *
  * Reads inside an active transaction always bypass the cache — a
  * transaction must observe its own uncommitted writes.
@@ -223,6 +238,10 @@ export class QueryResultCache {
   /** Per-entity memo of read/write tag closures, keyed by tenant + relations. */
   private readonly readTagsMemo = new WeakMap<object, Map<string, string[]>>();
   private readonly writeTagsMemo = new WeakMap<object, Map<string, string[]>>();
+  /** Misses between their database read and their store. */
+  private readonly inFlight = new Set<InFlightRead>();
+  /** Invalidations waiting for the transaction they ran in to end. */
+  private readonly held = new WeakMap<TransactionSessionManager, HeldInvalidation>();
 
   constructor(
     private readonly ctx: EntityManagerInternals,
@@ -325,7 +344,17 @@ export class QueryResultCache {
     }
 
     this.missCount++;
-    const result = await exec();
+    const read: InFlightRead = { tags: policy.tags, stale: false };
+    this.inFlight.add(read);
+    let result: any;
+    try {
+      result = await exec();
+    } finally {
+      this.inFlight.delete(read);
+    }
+    // An invalidation of these tables ran while the rows were being read:
+    // they may predate it, and storing them now would outlive it.
+    if (read.stale) return result;
     const snapshot = this.snapshotRows(result);
     if (snapshot !== undefined) {
       try {
@@ -341,20 +370,39 @@ export class QueryResultCache {
    * Drops every cached row set that could contain rows from tables the
    * given entity's writes can reach (its own tables, inheritance family,
    * child tables via one-to-many/one-to-one, and M2M join tables). Called
-   * by every EntityManager write path after it completes.
+   * by every EntityManager write path once it settles, succeeded or failed.
+   *
+   * `session` is the transaction the write ran in. While it is open the
+   * tags are held and dropped when it ends — after COMMIT and after
+   * ROLLBACK alike. Until then a read outside the transaction can fill an
+   * entry from the rows the transaction is replacing (PostgreSQL, MySQL:
+   * stale once it commits) or from its uncommitted rows (SQLite's shared
+   * connection: never true once it rolls back); dropping at the write
+   * itself would leave that entry alive until its TTL.
    */
-  async invalidateEntity(entity: ClazzType<any>): Promise<void> {
+  async invalidateEntity(
+    entity: ClazzType<any>,
+    session?: TransactionSessionManager,
+  ): Promise<void> {
+    let tags: string[];
     try {
-      await this.store.invalidateTags(this.collectWriteTags(entity));
+      tags = this.collectWriteTags(entity);
     } catch (e) {
       this.warnStoreError(e);
+      return;
     }
+    if (session?.isTransactionActive) {
+      this.holdUntilTransactionEnd(session, tags);
+      return;
+    }
+    await this.dropTags(tags);
   }
 
   /**
    * Manual invalidation. Accepts entity classes (invalidates their write
    * closure) and strings (invalidates both the table tag and the user tag
-   * of that name).
+   * of that name). Inside a transaction it runs now and again when the
+   * transaction ends.
    */
   async invalidate(
     ...targets: Array<ClazzType<any> | string>
@@ -368,6 +416,26 @@ export class QueryResultCache {
       }
     }
     if (tags.length === 0) return;
+    await this.dropTags(tags);
+    const session = transactionStorage.getStore();
+    if (session?.isTransactionActive) this.holdUntilTransactionEnd(session, tags);
+  }
+
+  /**
+   * Drops every cached row set. Inside a transaction it runs now and again
+   * when the transaction ends.
+   */
+  async clear(): Promise<void> {
+    await this.dropAll();
+    const session = transactionStorage.getStore();
+    if (session?.isTransactionActive) this.holdUntilTransactionEnd(session, "all");
+  }
+
+  // ── Internals ────────────────────────────────────────────────
+
+  private async dropTags(tags: readonly string[]): Promise<void> {
+    if (tags.length === 0) return;
+    this.markInFlightStale(tags);
     try {
       await this.store.invalidateTags(tags);
     } catch (e) {
@@ -375,8 +443,8 @@ export class QueryResultCache {
     }
   }
 
-  /** Drops every cached row set. */
-  async clear(): Promise<void> {
+  private async dropAll(): Promise<void> {
+    this.markInFlightStale(undefined);
     try {
       await this.store.clear();
     } catch (e) {
@@ -384,7 +452,41 @@ export class QueryResultCache {
     }
   }
 
-  // ── Internals ────────────────────────────────────────────────
+  /** Keeps reads of the dropped tables (all reads for `undefined`) out of the store. */
+  private markInFlightStale(tags: readonly string[] | undefined): void {
+    if (this.inFlight.size === 0) return;
+    const dropped = tags ? new Set(tags) : undefined;
+    for (const read of this.inFlight) {
+      if (!dropped || read.tags.some((tag) => dropped.has(tag))) read.stale = true;
+    }
+  }
+
+  /**
+   * Collects `tags` (or a full clear) for `session` and drops them once,
+   * from a single transaction-end callback, however many writes the
+   * transaction made. `commit()` / `rollback()` await the drop, so an
+   * awaited `em.transaction()` returns with the cache already consistent.
+   */
+  private holdUntilTransactionEnd(
+    session: TransactionSessionManager,
+    tags: readonly string[] | "all",
+  ): void {
+    let held = this.held.get(session);
+    if (!held) {
+      const entry: HeldInvalidation = { tags: new Set(), all: false };
+      this.held.set(session, entry);
+      session.onTransactionEnd(() => {
+        this.held.delete(session);
+        return entry.all ? this.dropAll() : this.dropTags([...entry.tags]);
+      });
+      held = entry;
+    }
+    if (tags === "all") {
+      held.all = true;
+    } else {
+      for (const tag of tags) held.tags.add(tag);
+    }
+  }
 
   private normalizeOption(
     option: QueryCacheOption | undefined,

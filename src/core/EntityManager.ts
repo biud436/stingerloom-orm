@@ -398,7 +398,7 @@ export class EntityManager implements BaseEntityManager {
     findInternal: (e, o, s) => this.findInternal(e, o, s),
     findOneInternal: (e, o, s) => this.findOneInternal(e, o, s),
     save: (e, i) => this.save(e, i),
-    saveWithSession: (e, i, s) => this.finishWrite(e, this.writeExecutor.saveInternal(e, i, s)),
+    saveWithSession: (e, i, s) => this.finishWrite(e, this.writeExecutor.saveInternal(e, i, s), s),
     find: (e, o) => this.find(e, o),
     findOne: (e, o) => this.findOne(e, o),
     findAndCount: (e, o) => this.findAndCount(e, o),
@@ -642,19 +642,28 @@ export class EntityManager implements BaseEntityManager {
   }
 
   /**
-   * Completes a write API call: after the write succeeds, drops every cached
-   * row set whose tables the write could have touched. Uses the peeked cache
-   * (never creates one), so workloads that never cache pay nothing. Runs on
-   * cascade re-entry too — each cascaded entity invalidates its own closure.
+   * Completes a write API call: once the write settles — failed ones too,
+   * since a read beside the transaction may have cached rows it then rolled
+   * back — drops every cached row set whose tables the write could have
+   * touched. A write that ran inside a still-open transaction (the explicit
+   * `session`, else the ambient one) is dropped when that transaction ends.
+   * Uses the peeked cache (never creates one), so workloads that never cache
+   * pay nothing. Runs on cascade re-entry too — each cascaded entity
+   * invalidates its own closure.
    */
   private async finishWrite<R>(
     entity: ClazzType<any>,
     work: Promise<R>,
+    session?: TransactionSessionManager,
   ): Promise<R> {
-    const result = await work;
-    const cache = this._queryCache;
-    if (cache) await cache.invalidateEntity(entity);
-    return result;
+    try {
+      return await work;
+    } finally {
+      const cache = this._queryCache;
+      if (cache) {
+        await cache.invalidateEntity(entity, session ?? transactionStorage.getStore());
+      }
+    }
   }
 
   /**
