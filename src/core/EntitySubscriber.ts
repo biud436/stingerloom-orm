@@ -42,6 +42,11 @@ export interface DeleteEvent<T> {
   entityClass: new (...args: any[]) => T;
   criteria: WhereClause<T>;
   manager: EntityManager;
+  /**
+   * Rows the statement changed. Set on `afterDelete`, `afterSoftDelete` and
+   * `afterRestore`, which do not fire when no row matched.
+   */
+  affected?: number;
 }
 
 /**

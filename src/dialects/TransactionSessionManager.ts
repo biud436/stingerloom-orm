@@ -27,6 +27,10 @@ export class TransactionSessionManager extends IQueryEngine {
     (committed: boolean) => void | Promise<void>
   > = [];
   private transactionActive = false;
+  /** See {@link onRollback}. */
+  private rollbackUndos: Array<() => void> = [];
+  /** Open savepoints, oldest first, with the undo count when each was taken. */
+  private savepointMarks: Array<{ name: string; undoCount: number }> = [];
 
   /**
    * Constructs a new instance of the `TransactionHolder` class.
@@ -194,6 +198,32 @@ export class TransactionSessionManager extends IQueryEngine {
     this.transactionEndCallbacks.push(callback);
   }
 
+  /**
+   * Register an action that puts back in-memory state a write in this
+   * transaction changed. It runs if that write is rolled back: on ROLLBACK
+   * (also when the statement itself fails), or on `rollbackTo()` a savepoint
+   * taken before it was registered. COMMIT discards it.
+   *
+   * Undo actions run newest first, before the `onTransactionEnd()`
+   * callbacks. An undo action that throws is logged and skipped. Outside an
+   * open transaction there is nothing to roll back and the action is
+   * dropped.
+   */
+  public onRollback(undo: () => void): void {
+    if (!this.transactionActive) return;
+    this.rollbackUndos.push(undo);
+  }
+
+  private runRollbackUndos(undos: Array<() => void>): void {
+    for (let i = undos.length - 1; i >= 0; i--) {
+      try {
+        undos[i]();
+      } catch (error) {
+        this.logger.warn(`rollback undo action failed: ${error}`);
+      }
+    }
+  }
+
   private async fireTransactionEnd(committed: boolean): Promise<void> {
     const callbacks = this.transactionEndCallbacks;
     this.transactionEndCallbacks = [];
@@ -220,6 +250,10 @@ export class TransactionSessionManager extends IQueryEngine {
       return await this.dataSource?.rollback();
     } finally {
       this.transactionActive = false;
+      const undos = this.rollbackUndos;
+      this.rollbackUndos = [];
+      this.savepointMarks = [];
+      this.runRollbackUndos(undos);
       if (this.transactionEndCallbacks.length > 0) {
         await this.fireTransactionEnd(false);
       }
@@ -234,6 +268,8 @@ export class TransactionSessionManager extends IQueryEngine {
   public async commit() {
     const result = await this.dataSource?.commit();
     this.transactionActive = false;
+    this.rollbackUndos = [];
+    this.savepointMarks = [];
     if (this.transactionEndCallbacks.length > 0) {
       await this.fireTransactionEnd(true);
     }
@@ -248,18 +284,30 @@ export class TransactionSessionManager extends IQueryEngine {
    */
   public async savepoint(name: string) {
     validateSavepointName(name);
-    return this.dataSource?.savepoint(name);
+    const result = await this.dataSource?.savepoint(name);
+    this.savepointMarks.push({ name, undoCount: this.rollbackUndos.length });
+    return result;
   }
 
   /**
-   * Rolls back the current transaction to the specified savepoint.
+   * Rolls back the current transaction to the specified savepoint, and runs
+   * the {@link onRollback} actions registered since it was taken.
    *
    * @param name - The name of the savepoint to roll back to.
    * @returns A promise that resolves when the transaction is rolled back to the savepoint.
    */
   public async rollbackTo(name: string) {
     validateSavepointName(name);
-    return this.dataSource?.rollbackTo(name);
+    const result = await this.dataSource?.rollbackTo(name);
+    let index = this.savepointMarks.length - 1;
+    while (index >= 0 && this.savepointMarks[index].name !== name) index--;
+    if (index >= 0) {
+      // The savepoint survives ROLLBACK TO; the ones taken after it do not.
+      const { undoCount } = this.savepointMarks[index];
+      this.savepointMarks.length = index + 1;
+      this.runRollbackUndos(this.rollbackUndos.splice(undoCount));
+    }
+    return result;
   }
 
   /**

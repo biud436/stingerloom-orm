@@ -333,7 +333,7 @@ const order = await em.transaction(async (txEm) => {
 3. 전체 콜백을 처음부터 다시 실행해요
 4. `maxRetries` 횟수까지 실패하면 마지막 에러를 throw해요
 
-콜백은 **멱등성**(idempotent)을 가져야 해요 -- 몇 번을 실행하든 같은 결과를 내야 해요. 콜백 외부에서 캡처한 값에 의존하지 말고, 매 시도 시작할 때 새로 데이터를 읽어야 해요.
+콜백은 **멱등성**(idempotent)을 가져야 해요 -- 몇 번을 실행하든 같은 결과를 내야 해요. 콜백 외부에서 캡처한 값에 의존하지 말고, 매 시도 시작할 때 새로 데이터를 읽어야 해요. `save()`에 넘긴 객체는 다시 넘겨도 됩니다. 롤백된 시도가 써 넣은 키와 기본값은 객체에서 다시 걷어 내기 때문입니다([롤백 뒤의 객체](#롤백-뒤의-객체) 참고).
 
 ### 데이터베이스별 데드락 감지
 
@@ -493,6 +493,32 @@ try {
   await session.close();
 }
 ```
+
+---
+
+## 롤백 뒤의 객체
+
+`save()`는 데이터베이스가 만든 값을 넘겨받은 객체에 다시 써 넣습니다. 기본 키, 그리고 cascade가 관련 객체에 설정하는 외래 키가 여기에 해당해요. `saveMany()`, `insertMany()`, `insertManyAndReturn()`은 각 항목에 `@CreateTimestamp` / `@UpdateTimestamp` 값과 `@Version` 초깃값도 써 넣습니다. 트랜잭션이 롤백되면 그 행은 사라지므로, ORM은 객체에 써 넣었던 값도 함께 걷어 냅니다.
+
+```typescript
+const draft = { title: "Hello" };
+
+await em
+  .transaction(async (txEm) => {
+    await txEm.save(Post, draft); // 여기서 draft.id가 설정됨
+    throw new Error("payment failed");
+  })
+  .catch(() => {});
+
+draft;                      // { title: "Hello" } -- id 없음
+await em.save(Post, draft); // 다시 INSERT
+```
+
+이 처리가 없으면 롤백 뒤에도 `draft.id`에 키가 남고, `draft`를 다시 저장하면 존재하지 않는 행을 대상으로 UPDATE가 실행됩니다(`EntityNotFoundError`).
+
+- **어떤 롤백인가.** 쓰기가 실행된 트랜잭션의 롤백입니다. 직접 연 `em.transaction()`이나 `@Transactional()`이 해당하고, 트랜잭션 밖에서 `save()`를 부르면 `save()`가 스스로 연 트랜잭션이 해당합니다. cascade 쓰기나 hook이 예외를 던지면 그 트랜잭션이 롤백돼요. `NESTED` savepoint가 롤백되면 그 savepoint 이후에 쓴 객체만 되돌립니다.
+- **무엇을 되돌리나.** 쓰기가 그 객체에서 바꾼 속성입니다. `beforeInsert` hook이 설정한 값도 포함돼요. 호출 뒤에 직접 바꾼 속성은 바꾼 값을 그대로 유지합니다. cascade로 저장된 관련 객체도 같은 방식으로 되돌립니다.
+- **건드리지 않는 것.** `save()`가 반환하는 엔티티는 별개의 객체입니다. 커밋되면 모든 객체가 쓰기가 남긴 값을 그대로 유지해요. `createInsertBuilder()`는 문장 단위 API라 넘긴 행을 되돌리지 않습니다.
 
 ---
 

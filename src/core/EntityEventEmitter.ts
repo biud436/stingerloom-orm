@@ -22,6 +22,13 @@ export type EntityEventType =
 export interface EntityEventPayload<T = any> {
   entity: new (...args: any[]) => T;
   data: Partial<T> | Record<string, unknown>;
+  /**
+   * Rows the statement changed, as the database reported them. Set on the
+   * after-events of the criteria writes — `delete()`, `deleteMany()`,
+   * `softDelete()`, `restore()`, `update()`, `updateMany()`, `increment()`,
+   * `decrement()` — which do not fire their after-event when it is 0.
+   */
+  affected?: number;
 }
 
 export type EntityEventListener<T = any> = (

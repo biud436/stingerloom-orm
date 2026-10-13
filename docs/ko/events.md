@@ -143,6 +143,20 @@ em.removeAllListeners();
 
 soft-delete·restore 이벤트는 delete 이벤트와 똑같은 criteria 기반 페이로드(`{ entity, data }`, 여기서 `data`는 WHERE criteria)를 넘겨줍니다. `updateMany()`는 이 global 채널로 엔티티 클래스와 SET 페이로드를 담아 `beforeUpdate` / `afterUpdate`를 발화해요.
 
+### 일치하는 행이 없는 쓰기
+
+criteria 기반 쓰기 -- `delete()`, `deleteMany()`, `softDelete()`, `restore()`, `update()` / `updateMany()`, `increment()` / `decrement()` -- 의 after 이벤트는 문장이 한 행 이상을 보고했을 때만 발화하고, 그 행 수를 페이로드의 `affected`로 넘겨줍니다.
+
+```typescript
+em.on("afterDelete", ({ entity, data, affected }) => {
+  console.log(`[AUDIT] ${entity.name}: ${affected}행 삭제`, data);
+});
+
+await em.delete(User, { id: 9999 }); // 없는 행: beforeDelete는 발화하고 afterDelete는 발화하지 않음
+```
+
+before 이벤트는 그대로 발화합니다. 행 수는 문장을 실행해야 알 수 있기 때문이에요. `softDelete()`는 살아 있던 행만, `restore()`는 soft-delete된 행만 세므로 같은 호출을 반복하면 after 이벤트가 나가지 않습니다. `affected`는 데이터베이스가 보고한 값, 즉 WHERE에 일치한 행 수이며 MySQL에서는 값이 바뀌지 않은 행도 포함합니다. `save()`도 같은 규칙을 따릅니다. 일치하는 행이 없는 UPDATE는 `afterUpdate`를 발화하는 대신 `EntityNotFoundError`를 던져요.
+
 ### 언제 Global Listener를 쓸까?
 
 모든 엔티티에 적용되는 **횡단 관심사(cross-cutting concerns)**에 이상적이에요:
@@ -263,7 +277,7 @@ EntitySubscriber는 global listener보다 더 많은 이벤트를 지원해요. 
 | `beforeTransactionRollback()` | ROLLBACK 전 | 로깅 |
 | `afterTransactionRollback()` | ROLLBACK 후 | 정리, 알림 |
 
-모든 메서드는 선택 사항이에요 -- 필요한 것만 구현하면 돼요. `beforeSoftDelete` / `afterSoftDelete` / `beforeRestore` / `afterRestore`는 `beforeDelete` / `afterDelete`와 같은 criteria 기반 `DeleteEvent`(`{ entityClass, criteria, manager }`)를 받아요. 단일 행이 아니라 일괄 `WHERE`를 대상으로 실행되기 때문입니다.
+모든 메서드는 선택 사항이에요 -- 필요한 것만 구현하면 돼요. `beforeSoftDelete` / `afterSoftDelete` / `beforeRestore` / `afterRestore`는 `beforeDelete` / `afterDelete`와 같은 criteria 기반 `DeleteEvent`(`{ entityClass, criteria, manager }`)를 받아요. 단일 행이 아니라 일괄 `WHERE`를 대상으로 실행되기 때문입니다. `afterDelete` / `afterSoftDelete` / `afterRestore`에서는 `affected`도 함께 담기며, 일치하는 행이 없으면 이 세 이벤트는 발화하지 않습니다([일치하는 행이 없는 쓰기](#일치하는-행이-없는-쓰기) 참고).
 
 ### afterLoad 보장
 

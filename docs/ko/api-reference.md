@@ -771,7 +771,12 @@ interface EntitySubscriber<T = any> {
 
 interface InsertEvent<T> { entity: Partial<T>; manager: EntityManager; }
 interface UpdateEvent<T> { entity: Partial<T>; manager: EntityManager; }
-interface DeleteEvent<T> { entityClass: new (...args: any[]) => T; criteria: any; manager: EntityManager; }
+interface DeleteEvent<T> {
+  entityClass: new (...args: any[]) => T;
+  criteria: any;
+  manager: EntityManager;
+  affected?: number; // after 이벤트에만 설정되며, 일치하는 행이 없으면 after 이벤트는 발화하지 않음
+}
 ```
 
 ### EntityEventType
