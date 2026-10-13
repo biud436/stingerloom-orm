@@ -333,7 +333,7 @@ When a deadlock is detected, the ORM:
 3. Re-executes the entire callback from scratch
 4. After `maxRetries` failed attempts, throws the last error normally
 
-Your callback must be **idempotent** -- it should produce the same result regardless of how many times it runs. This means reading fresh data at the start of each attempt, not relying on values captured outside the callback.
+Your callback must be **idempotent** -- it should produce the same result regardless of how many times it runs. This means reading fresh data at the start of each attempt, not relying on values captured outside the callback. An object you pass to `save()` can be passed again: a rolled-back attempt takes the key and stamps it wrote back off it (see [Objects After a Rollback](#objects-after-a-rollback)).
 
 ### Deadlock Detection Across Databases
 
@@ -493,6 +493,32 @@ try {
   await session.close();
 }
 ```
+
+---
+
+## Objects After a Rollback
+
+`save()` writes what the database generated back onto the object you pass in: the primary key, and the foreign key a cascade sets on a related object. `saveMany()`, `insertMany()` and `insertManyAndReturn()` also stamp the `@CreateTimestamp` / `@UpdateTimestamp` values and the `@Version` seed onto each item. When the transaction rolls back, those rows are gone, so the ORM takes the values back off the objects too:
+
+```typescript
+const draft = { title: "Hello" };
+
+await em
+  .transaction(async (txEm) => {
+    await txEm.save(Post, draft); // draft.id is set here
+    throw new Error("payment failed");
+  })
+  .catch(() => {});
+
+draft;                      // { title: "Hello" } -- no id
+await em.save(Post, draft); // INSERTs again
+```
+
+Without this, `draft.id` would still hold the key after the rollback, and saving `draft` again would run an UPDATE against a row that does not exist (`EntityNotFoundError`).
+
+- **Which rollback.** The one of the transaction the write ran in: your `em.transaction()` or `@Transactional()`, or, when you call `save()` outside one, the transaction it opens on its own -- a cascaded write or a hook that throws rolls that one back. When a `NESTED` savepoint rolls back, only the objects written after it was taken are restored.
+- **What is put back.** The properties the write changed on the object, including anything a `beforeInsert` hook set. A property you change yourself after the call keeps your value. A related object a cascade saved is restored the same way.
+- **What is not touched.** The entity `save()` returns is a separate object. On commit every object keeps what the write left. `createInsertBuilder()` is statement-level and leaves its rows as they are.
 
 ---
 

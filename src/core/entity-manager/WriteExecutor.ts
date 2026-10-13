@@ -74,6 +74,7 @@ import {
   type DriverRow,
   type EntityFields,
 } from "./entity-access";
+import { restoreOnRollback } from "./rollback-restore";
 
 /**
  * Primary keys bound per `IN (...)` list when a TPT delete or criteria update
@@ -470,263 +471,280 @@ export class WriteExecutor {
     // Validation
     EntityValidator.validate(entity, item);
 
-    return this.ctx.executeInTransaction(async (session) => {
-      // Cascade: save the parent entity of any ManyToOne relation first.
-      // Same session-escape shape as the delete path (#414): the handler
-      // saves through the public ctx.save, so publish this session via ALS
-      // for it to join — otherwise the parent commits in its own transaction
-      // (and nested-BEGINs SQLite when saveInternal runs under an existing
-      // session, e.g. the saveMany fallback or an O2M cascade child).
-      await transactionStorage.run(session, () =>
-        this.cascadeHandler.cascadeSaveManyToOne(entity, item),
-      );
+    return this.ctx.executeInTransaction(
+      (session) =>
+        restoreOnRollback(session, [item], () =>
+          this.saveInSession(entity, item, metadata, session),
+        ),
+      existingSession,
+    );
+  }
 
-      const pkColumns = metadata.columns.filter(
-        (column: ColumnMetadata) => column.options?.primary,
-      );
-      const pk = pkColumns[0];
+  /**
+   * The body of {@link saveInternal}, on the transaction it runs in: the
+   * ManyToOne cascade, then the INSERT or the UPDATE of `item`.
+   */
+  private async saveInSession<T>(
+    entity: ClazzType<T>,
+    item: Partial<T>,
+    metadata: EntityScannerMetadata,
+    session: TransactionSessionManager,
+  ): Promise<InstanceType<ClazzType<T>>> {
+    // Cascade: save the parent entity of any ManyToOne relation first.
+    // Same session-escape shape as the delete path (#414): the handler
+    // saves through the public ctx.save, so publish this session via ALS
+    // for it to join — otherwise the parent commits in its own transaction
+    // (and nested-BEGINs SQLite when saveInternal runs under an existing
+    // session, e.g. the saveMany fallback or an O2M cascade child).
+    await transactionStorage.run(session, () =>
+      this.cascadeHandler.cascadeSaveManyToOne(entity, item),
+    );
 
-      const hasAutoIncrementPk = pkColumns.some(
-        (col: ColumnMetadata) => col.options?.autoIncrement,
-      );
-      const hasGeneratedPk = pkColumns.some(
-        (col: ColumnMetadata) =>
-          col.options?.autoIncrement ||
-          col.options?.generationStrategy === "uuid" ||
-          col.options?.generationStrategy === "uuid-v7",
-      );
-      const itemFields = fieldsOf(item);
-      const primaryKeyValue = pk ? itemFields[this.ctx.propKey(pk)] : undefined;
+    const pkColumns = metadata.columns.filter(
+      (column: ColumnMetadata) => column.options?.primary,
+    );
+    const pk = pkColumns[0];
 
-      const isInsert = hasGeneratedPk
-        ? !primaryKeyValue
-        : true;
+    const hasAutoIncrementPk = pkColumns.some(
+      (col: ColumnMetadata) => col.options?.autoIncrement,
+    );
+    const hasGeneratedPk = pkColumns.some(
+      (col: ColumnMetadata) =>
+        col.options?.autoIncrement ||
+        col.options?.generationStrategy === "uuid" ||
+        col.options?.generationStrategy === "uuid-v7",
+    );
+    const itemFields = fieldsOf(item);
+    const primaryKeyValue = pk ? itemFields[this.ctx.propKey(pk)] : undefined;
 
-      const buildPkWhere = (pkValues?: DriverRow) => {
-        return pkColumns.map((col: ColumnMetadata) => {
-          const value = pkValues
-            ? pkValues[col.name]
-            : itemFields[this.ctx.propKey(col)];
-          return sql`${raw(this.ctx.wrap(col.name))} = ${bindParam(value)}`;
-        });
-      };
+    const isInsert = hasGeneratedPk
+      ? !primaryKeyValue
+      : true;
 
-      const buildPkFindWhere = (pkValues?: DriverRow): WhereClause<T> => {
-        const where: Record<string, unknown> = {};
-        for (const col of pkColumns) {
-          where[this.ctx.propKey(col)] = pkValues
-            ? pkValues[col.name]
-            : itemFields[this.ctx.propKey(col)];
-        }
-        return whereByProps<T>(where);
-      };
+    const buildPkWhere = (pkValues?: DriverRow) => {
+      return pkColumns.map((col: ColumnMetadata) => {
+        const value = pkValues
+          ? pkValues[col.name]
+          : itemFields[this.ctx.propKey(col)];
+        return sql`${raw(this.ctx.wrap(col.name))} = ${bindParam(value)}`;
+      });
+    };
 
-      const op: SaveOperation<T> = {
-        entity,
-        item,
-        metadata,
-        session,
-        itemFields,
-        pkColumns,
-        pk,
-        hasAutoIncrementPk,
-        primaryKeyValue,
-        buildPkWhere,
-        buildPkFindWhere,
-      };
-
-      if (isInsert) {
-        await this.cascadeHandler.runHooks(entity, item, "beforeInsert");
-        await this.eventEmitter.emit("beforeInsert", { entity, data: item });
-        await this.ctx.notifySubscribers(entity, "beforeInsert", {
-          entity: item,
-          manager: this.ctx.getManager(),
-        } as InsertEvent<T>);
-
-        this.ctx.applyTenantColumnOnInsert(entity, item);
-
-        const plan = this.buildInsertValuePlan(op);
-        const { insertableColumns, columns, values } = plan;
-
-        const saveInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
-        this.applyInsertDiscriminator(op, plan, saveInheritanceStrategy);
-        this.applyInsertFkColumns(op, plan);
-
-        // PostgreSQL (all versions), MariaDB 10.5+: INSERT ... RETURNING *
-        const useReturning = this.supportsInsertReturning();
-
-        // TPT child: INSERT into parent first → INSERT into child (sharing the same PK)
-        if (saveInheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
-          const tpt = await this.insertTptChild(op, plan, useReturning);
-          if (tpt) return tpt.result;
-        }
-
-        const returningSql = useReturning
-          ? raw(` RETURNING *`)
-          : raw("");
-
-        // With every column omitted (all values undefined), `() VALUES ()` is
-        // only valid on the MySQL family — PostgreSQL/SQLite need DEFAULT VALUES.
-        const insertSql =
-          columns.length > 0
-            ? sql`
-                        INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))}
-                        (${join(columns, ", ")})
-                        VALUES (${join(values, ", ")})${returningSql}
-                    `
-            : sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} ${raw(
-                this.ctx.isMySqlFamily() ? "() VALUES ()" : "DEFAULT VALUES",
-              )}${returningSql}`;
-        const saveQueryStart = Date.now();
-        this.ctx.beginTrackQuery();
-        const queryResult = (await session.query<T>(
-          insertSql,
-        )) as DriverExecResult;
-        this.ctx.trackQuery(
-          entity.name,
-          insertSql.text ?? String(insertSql),
-          Date.now() - saveQueryStart,
-        );
-
-        return this.resolveInsertResult(op, queryResult, useReturning);
+    const buildPkFindWhere = (pkValues?: DriverRow): WhereClause<T> => {
+      const where: Record<string, unknown> = {};
+      for (const col of pkColumns) {
+        where[this.ctx.propKey(col)] = pkValues
+          ? pkValues[col.name]
+          : itemFields[this.ctx.propKey(col)];
       }
+      return whereByProps<T>(where);
+    };
 
-      // UPDATE path
-      //
-      // Under the "tenant_column" strategy the UPDATE has to carry the tenant
-      // predicate the read paths carry, or a PK from another tenant is enough
-      // to rewrite that tenant's row. Resolved before anything fires so
-      // `tenantOnMissingContext: "throw"` rejects a context-less save the way
-      // it rejects a context-less updateMany.
-      // A JOINED child's UPDATE applies the predicate to the root table,
-      // which holds the column, so it is named directly.
-      const tenantWhere = this.ctx.buildTenantWhereClause(
-        entity,
-        undefined,
-        "root",
-      );
-      const tenantColumnName = tenantWhere
-        ? this.ctx.resolveTenantColumnName(entity)
-        : null;
-      // A SINGLE_TABLE child shares its table — and key space — with its
-      // siblings: the primary key alone would rewrite a sibling's row.
-      const updateInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
-      const subtypeWhere = this.stiDiscriminatorClause(
-        entity,
-        updateInheritanceStrategy,
-      );
+    const op: SaveOperation<T> = {
+      entity,
+      item,
+      metadata,
+      session,
+      itemFields,
+      pkColumns,
+      pk,
+      hasAutoIncrementPk,
+      primaryKeyValue,
+      buildPkWhere,
+      buildPkFindWhere,
+    };
 
-      // Pre-read the database state when any subscriber wants it (for diff
-      // audits, change-detection cache invalidation, etc.). Skipping the
-      // SELECT when no subscriber listens keeps the cost of save() unchanged
-      // for entities that don't opt in.
-      const wantsDatabaseEntity =
-        this.ctx.hasSubscriberFor(entity, "beforeUpdate") ||
-        this.ctx.hasSubscriberFor(entity, "afterUpdate");
-      const databaseEntity: T | null = wantsDatabaseEntity
-        ? ((await this.ctx.findOneInternal(
-            entity,
-            { where: buildPkFindWhere() },
-            session,
-          )) as T | null)
-        : null;
-
-      await this.cascadeHandler.runHooks(entity, item, "beforeUpdate");
-      await this.eventEmitter.emit("beforeUpdate", { entity, data: item });
-      await this.ctx.notifySubscribers(entity, "beforeUpdate", {
+    if (isInsert) {
+      await this.cascadeHandler.runHooks(entity, item, "beforeInsert");
+      await this.eventEmitter.emit("beforeInsert", { entity, data: item });
+      await this.ctx.notifySubscribers(entity, "beforeInsert", {
         entity: item,
-        databaseEntity,
         manager: this.ctx.getManager(),
-      } as UpdateEvent<T>);
+      } as InsertEvent<T>);
 
-      this.ctx.assertTenantColumnOnUpdate(entity, item);
+      this.ctx.applyTenantColumnOnInsert(entity, item);
 
-      const updatePlan = this.buildUpdateSetPlan(op, tenantColumnName);
-      const { updateMap, versionColName } = updatePlan;
+      const plan = this.buildInsertValuePlan(op);
+      const { insertableColumns, columns, values } = plan;
 
-      const pkWhereClauses = buildPkWhere();
-      if (tenantWhere) {
-        pkWhereClauses.push(tenantWhere);
-      }
-      if (subtypeWhere) {
-        pkWhereClauses.push(subtypeWhere);
-      }
+      const saveInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
+      this.applyInsertDiscriminator(op, plan, saveInheritanceStrategy);
+      this.applyInsertFkColumns(op, plan);
 
-      // @Version: Optimistic Locking
-      // `versionColName` is the DB column name (applyNamingStrategyToEntities
-      // rewrites the @Version token to the resolved column name), so read the
-      // current value through the matching column's property key — not the
-      // column name — otherwise the stale-version WHERE guard is silently
-      // dropped whenever the property and column names differ.
-      const versionColumn = versionColName
-        ? metadata.columns.find(
-            (c: ColumnMetadata) => c.name === versionColName,
-          )
-        : undefined;
-      const currentVersion = versionColumn
-        ? itemFields[this.ctx.propKey(versionColumn)]
-        : undefined;
-      if (versionColName) {
-        updateMap.push(
-          sql`${raw(this.ctx.wrap(versionColName))} = ${raw(this.ctx.wrap(versionColName))} + 1`,
-        );
-        updatePlan.appended.push(versionColName);
-        if (currentVersion !== undefined && currentVersion !== null) {
-          pkWhereClauses.push(
-            sql`${raw(this.ctx.wrap(versionColName))} = ${bindParam(currentVersion)}`,
-          );
-        }
-      }
+      // PostgreSQL (all versions), MariaDB 10.5+: INSERT ... RETURNING *
+      const useReturning = this.supportsInsertReturning();
 
-      const useReturningForUpdate = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
-      let updateReturnedRow: DriverRow | null = null;
-
-      // TPT child: UPDATE the parent and child tables separately
-      if (
-        updateInheritanceStrategy === "JOINED" &&
-        this.inheritanceResolver.isChildEntity(entity) &&
-        updateMap.length > 0
-      ) {
-        const tpt = await this.updateTptChild(
-          op,
-          updatePlan,
-          pkWhereClauses,
-          currentVersion,
-          databaseEntity,
-          tenantWhere,
-        );
+      // TPT child: INSERT into parent first → INSERT into child (sharing the same PK)
+      if (saveInheritanceStrategy === "JOINED" && this.inheritanceResolver.isChildEntity(entity)) {
+        const tpt = await this.insertTptChild(op, plan, useReturning);
         if (tpt) return tpt.result;
       }
 
-      if (updateMap.length > 0) {
-        updateReturnedRow = await this.executeSingleTableUpdate(
-          op,
-          updateMap,
-          pkWhereClauses,
-          versionColName,
-          currentVersion,
-          useReturningForUpdate,
-          tenantWhere,
-          subtypeWhere,
+      const returningSql = useReturning
+        ? raw(` RETURNING *`)
+        : raw("");
+
+      // With every column omitted (all values undefined), `() VALUES ()` is
+      // only valid on the MySQL family — PostgreSQL/SQLite need DEFAULT VALUES.
+      const insertSql =
+        columns.length > 0
+          ? sql`
+                      INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))}
+                      (${join(columns, ", ")})
+                      VALUES (${join(values, ", ")})${returningSql}
+                  `
+          : sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} ${raw(
+              this.ctx.isMySqlFamily() ? "() VALUES ()" : "DEFAULT VALUES",
+            )}${returningSql}`;
+      const saveQueryStart = Date.now();
+      this.ctx.beginTrackQuery();
+      const queryResult = (await session.query<T>(
+        insertSql,
+      )) as DriverExecResult;
+      this.ctx.trackQuery(
+        entity.name,
+        insertSql.text ?? String(insertSql),
+        Date.now() - saveQueryStart,
+      );
+
+      return this.resolveInsertResult(op, queryResult, useReturning);
+    }
+
+    // UPDATE path
+    //
+    // Under the "tenant_column" strategy the UPDATE has to carry the tenant
+    // predicate the read paths carry, or a PK from another tenant is enough
+    // to rewrite that tenant's row. Resolved before anything fires so
+    // `tenantOnMissingContext: "throw"` rejects a context-less save the way
+    // it rejects a context-less updateMany.
+    // A JOINED child's UPDATE applies the predicate to the root table,
+    // which holds the column, so it is named directly.
+    const tenantWhere = this.ctx.buildTenantWhereClause(
+      entity,
+      undefined,
+      "root",
+    );
+    const tenantColumnName = tenantWhere
+      ? this.ctx.resolveTenantColumnName(entity)
+      : null;
+    // A SINGLE_TABLE child shares its table — and key space — with its
+    // siblings: the primary key alone would rewrite a sibling's row.
+    const updateInheritanceStrategy = this.inheritanceResolver.getStrategy(entity);
+    const subtypeWhere = this.stiDiscriminatorClause(
+      entity,
+      updateInheritanceStrategy,
+    );
+
+    // Pre-read the database state when any subscriber wants it (for diff
+    // audits, change-detection cache invalidation, etc.). Skipping the
+    // SELECT when no subscriber listens keeps the cost of save() unchanged
+    // for entities that don't opt in.
+    const wantsDatabaseEntity =
+      this.ctx.hasSubscriberFor(entity, "beforeUpdate") ||
+      this.ctx.hasSubscriberFor(entity, "afterUpdate");
+    const databaseEntity: T | null = wantsDatabaseEntity
+      ? ((await this.ctx.findOneInternal(
+          entity,
+          { where: buildPkFindWhere() },
+          session,
+        )) as T | null)
+      : null;
+
+    await this.cascadeHandler.runHooks(entity, item, "beforeUpdate");
+    await this.eventEmitter.emit("beforeUpdate", { entity, data: item });
+    await this.ctx.notifySubscribers(entity, "beforeUpdate", {
+      entity: item,
+      databaseEntity,
+      manager: this.ctx.getManager(),
+    } as UpdateEvent<T>);
+
+    this.ctx.assertTenantColumnOnUpdate(entity, item);
+
+    const updatePlan = this.buildUpdateSetPlan(op, tenantColumnName);
+    const { updateMap, versionColName } = updatePlan;
+
+    const pkWhereClauses = buildPkWhere();
+    if (tenantWhere) {
+      pkWhereClauses.push(tenantWhere);
+    }
+    if (subtypeWhere) {
+      pkWhereClauses.push(subtypeWhere);
+    }
+
+    // @Version: Optimistic Locking
+    // `versionColName` is the DB column name (applyNamingStrategyToEntities
+    // rewrites the @Version token to the resolved column name), so read the
+    // current value through the matching column's property key — not the
+    // column name — otherwise the stale-version WHERE guard is silently
+    // dropped whenever the property and column names differ.
+    const versionColumn = versionColName
+      ? metadata.columns.find(
+          (c: ColumnMetadata) => c.name === versionColName,
+        )
+      : undefined;
+    const currentVersion = versionColumn
+      ? itemFields[this.ctx.propKey(versionColumn)]
+      : undefined;
+    if (versionColName) {
+      updateMap.push(
+        sql`${raw(this.ctx.wrap(versionColName))} = ${raw(this.ctx.wrap(versionColName))} + 1`,
+      );
+      updatePlan.appended.push(versionColName);
+      if (currentVersion !== undefined && currentVersion !== null) {
+        pkWhereClauses.push(
+          sql`${raw(this.ctx.wrap(versionColName))} = ${bindParam(currentVersion)}`,
         );
       }
+    }
 
-      await this.completeUpdate(op, databaseEntity);
+    const useReturningForUpdate = typeof this.driver?.supportsReturning === "function" && this.driver.supportsReturning();
+    let updateReturnedRow: DriverRow | null = null;
 
-      if (updateReturnedRow && !this.ctx.hasEagerRelations(entity)) {
-        // #369: same column→property mapping as the INSERT RETURNING path.
-        return ResultTransformerFactory.create().toEntity(entity, {
-          results: this.returnedRows(entity, [updateReturnedRow]),
-          fields: [],
-        }) as T;
-      }
+    // TPT child: UPDATE the parent and child tables separately
+    if (
+      updateInheritanceStrategy === "JOINED" &&
+      this.inheritanceResolver.isChildEntity(entity) &&
+      updateMap.length > 0
+    ) {
+      const tpt = await this.updateTptChild(
+        op,
+        updatePlan,
+        pkWhereClauses,
+        currentVersion,
+        databaseEntity,
+        tenantWhere,
+      );
+      if (tpt) return tpt.result;
+    }
 
-      const result = await this.ctx.findOneInternal(entity, {
-        where: buildPkFindWhere(),
-      }, session);
+    if (updateMap.length > 0) {
+      updateReturnedRow = await this.executeSingleTableUpdate(
+        op,
+        updateMap,
+        pkWhereClauses,
+        versionColName,
+        currentVersion,
+        useReturningForUpdate,
+        tenantWhere,
+        subtypeWhere,
+      );
+    }
 
-      return result as T;
-    }, existingSession);
+    await this.completeUpdate(op, databaseEntity);
+
+    if (updateReturnedRow && !this.ctx.hasEagerRelations(entity)) {
+      // #369: same column→property mapping as the INSERT RETURNING path.
+      return ResultTransformerFactory.create().toEntity(entity, {
+        results: this.returnedRows(entity, [updateReturnedRow]),
+        fields: [],
+      }) as T;
+    }
+
+    const result = await this.ctx.findOneInternal(entity, {
+      where: buildPkFindWhere(),
+    }, session);
+
+    return result as T;
   }
 
   /**
@@ -1577,16 +1595,18 @@ export class WriteExecutor {
           EntityValidator.validate(entity, item);
         }
 
-        return this.ctx.executeInTransaction(async (session) => {
-          // ManyToOne cascade joins this transaction via ALS (#414) so the
-          // cascade-saved parents roll back together with the batch INSERT.
-          await transactionStorage.run(session, async () => {
-            for (const item of items) {
-              await this.cascadeHandler.cascadeSaveManyToOne(entity, item);
-            }
-          });
-          return this.saveManyBatchInsert(entity, pk, items, session);
-        });
+        return this.ctx.executeInTransaction((session) =>
+          restoreOnRollback(session, items, async () => {
+            // ManyToOne cascade joins this transaction via ALS (#414) so the
+            // cascade-saved parents roll back together with the batch INSERT.
+            await transactionStorage.run(session, async () => {
+              for (const item of items) {
+                await this.cascadeHandler.cascadeSaveManyToOne(entity, item);
+              }
+            });
+            return this.saveManyBatchInsert(entity, pk, items, session);
+          }),
+        );
       }
     }
 
@@ -2588,27 +2608,29 @@ export class WriteExecutor {
     this.assertNotJoinedChild(entity, "insertMany");
     this.ctx.validateWriteInputKeys(entity, metadata, items, "insertMany");
 
-    return this.ctx.executeInTransaction(async (session) => {
-      this.applyBulkInsertDefaults(entity, metadata, items);
+    return this.ctx.executeInTransaction((session) =>
+      restoreOnRollback(session, items, async () => {
+        this.applyBulkInsertDefaults(entity, metadata, items);
 
-      const insertableColumns = this.selectBulkInsertColumns(
-        entity,
-        metadata,
-        items,
-      );
-      const { columns, valueRows } = this.buildBulkInsertRows(
-        entity,
-        insertableColumns,
-        items,
-        "insertMany()",
-      );
+        const insertableColumns = this.selectBulkInsertColumns(
+          entity,
+          metadata,
+          items,
+        );
+        const { columns, valueRows } = this.buildBulkInsertRows(
+          entity,
+          insertableColumns,
+          items,
+          "insertMany()",
+        );
 
-      const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
+        const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
 
-      const queryResult = (await session.query(queryStr)) as DriverExecResult;
+        const queryResult = (await session.query(queryStr)) as DriverExecResult;
 
-      return { affected: this.affectedCount(queryResult, items.length) };
-    });
+        return { affected: this.affectedCount(queryResult, items.length) };
+      }),
+    );
   }
 
   async insertManyAndReturn<T>(
@@ -2645,39 +2667,41 @@ export class WriteExecutor {
     this.assertNotJoinedChild(entity, "insertManyAndReturn");
     this.ctx.validateWriteInputKeys(entity, metadata, items, "insertManyAndReturn");
 
-    return this.ctx.executeInTransaction(async (session) => {
-      this.applyBulkInsertDefaults(entity, metadata, items);
+    return this.ctx.executeInTransaction((session) =>
+      restoreOnRollback(session, items, async () => {
+        this.applyBulkInsertDefaults(entity, metadata, items);
 
-      const insertableColumns = this.selectBulkInsertColumns(
-        entity,
-        metadata,
-        items,
-      );
-      const { columns, valueRows } = this.buildBulkInsertRows(
-        entity,
-        insertableColumns,
-        items,
-        "insertManyAndReturn()",
-      );
+        const insertableColumns = this.selectBulkInsertColumns(
+          entity,
+          metadata,
+          items,
+        );
+        const { columns, valueRows } = this.buildBulkInsertRows(
+          entity,
+          insertableColumns,
+          items,
+          "insertManyAndReturn()",
+        );
 
-      // Same multi-row INSERT as insertMany(), with RETURNING * appended so the
-      // generated PKs and DB defaults come back without a re-read. RETURNING *
-      // is the portable form across PostgreSQL and SQLite; no driver exposes a
-      // column-list returning helper, so it is emitted directly here.
-      const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")} RETURNING *`;
+        // Same multi-row INSERT as insertMany(), with RETURNING * appended so the
+        // generated PKs and DB defaults come back without a re-read. RETURNING *
+        // is the portable form across PostgreSQL and SQLite; no driver exposes a
+        // column-list returning helper, so it is emitted directly here.
+        const queryStr = sql`INSERT INTO ${raw(this.ctx.wrapTable(metadata.name))} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")} RETURNING *`;
 
-      const queryResult = (await session.query(queryStr)) as DriverExecResult;
+        const queryResult = (await session.query(queryStr)) as DriverExecResult;
 
-      // PostgreSQL / SQLite (better-sqlite3 .all() on a RETURNING statement)
-      // both surface the rows under `results`, in insertion (input) order.
-      // #369: route them through ResultTransformer so DB column names map back
-      // to property keys (explicit @Column({ name }) + NamingStrategy) and
-      // column transformers apply on read — the same path find() uses.
-      return ResultTransformerFactory.create().toEntities(entity, {
-        results: this.returnedRows(entity, resultRows(queryResult)),
-        fields: [],
-      }) as InstanceType<ClazzType<T>>[];
-    });
+        // PostgreSQL / SQLite (better-sqlite3 .all() on a RETURNING statement)
+        // both surface the rows under `results`, in insertion (input) order.
+        // #369: route them through ResultTransformer so DB column names map back
+        // to property keys (explicit @Column({ name }) + NamingStrategy) and
+        // column transformers apply on read — the same path find() uses.
+        return ResultTransformerFactory.create().toEntities(entity, {
+          results: this.returnedRows(entity, resultRows(queryResult)),
+          fields: [],
+        }) as InstanceType<ClazzType<T>>[];
+      }),
+    );
   }
   /** beforeDelete hooks, events and subscribers for a criteria-based delete. */
   private async emitBeforeDelete<T>(
@@ -2693,17 +2717,24 @@ export class WriteExecutor {
     } as DeleteEvent<T>);
   }
 
-  /** afterDelete hooks, events and subscribers for a criteria-based delete. */
+  /**
+   * afterDelete hooks, events and subscribers for a criteria-based delete.
+   * A delete that matched no row deleted nothing, so nothing fires — the
+   * same rule save() follows for an UPDATE that matched no row.
+   */
   private async emitAfterDelete<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
+    affected: number,
   ): Promise<void> {
+    if (affected === 0) return;
     await this.cascadeHandler.runHooks(entity, criteria, "afterDelete");
-    await this.eventEmitter.emit("afterDelete", { entity, data: criteria });
+    await this.eventEmitter.emit("afterDelete", { entity, data: criteria, affected });
     await this.ctx.notifySubscribers(entity, "afterDelete", {
       entityClass: entity,
       criteria,
       manager: this.ctx.getManager(),
+      affected,
     } as DeleteEvent<T>);
   }
 
@@ -3069,7 +3100,7 @@ export class WriteExecutor {
         await transactionStorage.run(session, afterParentDelete);
       }
 
-      await this.emitAfterDelete(entity, criteria);
+      await this.emitAfterDelete(entity, criteria, affected);
 
       return { affected };
     });
@@ -3122,7 +3153,7 @@ export class WriteExecutor {
         : null;
       if (joinedAffected !== null) {
         if (afterParentDelete) await transactionStorage.run(session, afterParentDelete);
-        await this.emitAfterDelete(entity, criteria);
+        await this.emitAfterDelete(entity, criteria, joinedAffected);
         return { affected: joinedAffected };
       }
 
@@ -3149,7 +3180,7 @@ export class WriteExecutor {
       );
 
       if (afterParentDelete) await transactionStorage.run(session, afterParentDelete);
-      await this.emitAfterDelete(entity, criteria);
+      await this.emitAfterDelete(entity, criteria, affected);
 
       return { affected };
     });
@@ -3528,10 +3559,13 @@ export class WriteExecutor {
             session,
           );
 
-      await this.eventEmitter.emit("afterUpdate", {
-        entity,
-        data: data as Record<string, unknown>,
-      });
+      if (affected > 0) {
+        await this.eventEmitter.emit("afterUpdate", {
+          entity,
+          data: data as Record<string, unknown>,
+          affected,
+        });
+      }
 
       return { affected };
     });
@@ -3810,12 +3844,16 @@ export class WriteExecutor {
             session,
           );
 
-      await this.eventEmitter.emit("afterSoftDelete", { entity, data: criteria });
-      await this.ctx.notifySubscribers(entity, "afterSoftDelete", {
-        entityClass: entity,
-        criteria,
-        manager: this.ctx.getManager(),
-      } as DeleteEvent<T>);
+      // Nothing was trashed when no live row matched: no after-event.
+      if (affected > 0) {
+        await this.eventEmitter.emit("afterSoftDelete", { entity, data: criteria, affected });
+        await this.ctx.notifySubscribers(entity, "afterSoftDelete", {
+          entityClass: entity,
+          criteria,
+          manager: this.ctx.getManager(),
+          affected,
+        } as DeleteEvent<T>);
+      }
 
       return { affected };
     });
@@ -3904,12 +3942,15 @@ export class WriteExecutor {
             session,
           );
 
-      await this.eventEmitter.emit("afterRestore", { entity, data: criteria });
-      await this.ctx.notifySubscribers(entity, "afterRestore", {
-        entityClass: entity,
-        criteria,
-        manager: this.ctx.getManager(),
-      } as DeleteEvent<T>);
+      if (affected > 0) {
+        await this.eventEmitter.emit("afterRestore", { entity, data: criteria, affected });
+        await this.ctx.notifySubscribers(entity, "afterRestore", {
+          entityClass: entity,
+          criteria,
+          manager: this.ctx.getManager(),
+          affected,
+        } as DeleteEvent<T>);
+      }
 
       return { affected };
     });

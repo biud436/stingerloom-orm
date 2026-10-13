@@ -9,6 +9,8 @@ import { EntityManagerInternals } from "./EntityManagerInternals";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 import { runScopeExempt } from "./entity-manager/scope-exemption";
+import { restoreOnRollback } from "./entity-manager/rollback-restore";
+import { transactionStorage } from "../decorators/Transactional";
 import {
   assignFkValue,
   fkWriteKeysFromManyToOne,
@@ -204,6 +206,13 @@ export class CascadeHandler {
     return cascadeChain.run(next, run);
   }
 
+  /** The transaction a cascade write runs in: the one passed, else the ambient one. */
+  private sessionOf(
+    session?: TransactionSessionManager,
+  ): TransactionSessionManager | undefined {
+    return session ?? transactionStorage.getStore();
+  }
+
   /** Whether `value` is being saved by a caller up the cascade. */
   private static isAncestor(value: unknown): boolean {
     return !!value && typeof value === "object" && cascadeChain.getStore()?.has(value) === true;
@@ -248,13 +257,17 @@ export class CascadeHandler {
 
       for (const child of children) {
         if (CascadeHandler.isAncestor(child)) continue;
-        // Set the FK to the parent's PK.
-        assignFkValue(child, fkKeys, savedParentId);
-        if (session) {
-          await this.ctx.saveWithSession(RelatedEntity, child, session);
-        } else {
-          await this.ctx.save(RelatedEntity, child);
-        }
+        // The FK goes onto the caller's object before the child's own save
+        // takes its snapshot, so it is restored on rollback from here.
+        await restoreOnRollback(this.sessionOf(session), [child], async () => {
+          // Set the FK to the parent's PK.
+          assignFkValue(child, fkKeys, savedParentId);
+          if (session) {
+            await this.ctx.saveWithSession(RelatedEntity, child, session);
+          } else {
+            await this.ctx.save(RelatedEntity, child);
+          }
+        });
       }
     }
 
@@ -274,20 +287,19 @@ export class CascadeHandler {
       const owner = this.owningOneToOneFor(RelatedEntity, rel.inverseSide);
       if (!owner?.joinColumn) continue;
 
-      assignFkValue(
-        counterpart,
-        {
-          fkColumn: owner.joinColumn,
-          shadowKey: `${owner.propertyKey}Id`,
-          fkPropertyKey: owner.option?.fkProperty,
-        },
-        savedParentId,
-      );
-      if (session) {
-        await this.ctx.saveWithSession(RelatedEntity, counterpart, session);
-      } else {
-        await this.ctx.save(RelatedEntity, counterpart);
-      }
+      const fkKeys = {
+        fkColumn: owner.joinColumn,
+        shadowKey: `${owner.propertyKey}Id`,
+        fkPropertyKey: owner.option?.fkProperty,
+      };
+      await restoreOnRollback(this.sessionOf(session), [counterpart], async () => {
+        assignFkValue(counterpart, fkKeys, savedParentId);
+        if (session) {
+          await this.ctx.saveWithSession(RelatedEntity, counterpart, session);
+        } else {
+          await this.ctx.save(RelatedEntity, counterpart);
+        }
+      });
     }
   }
 
@@ -362,16 +374,18 @@ export class CascadeHandler {
       if (CascadeHandler.isAncestor(target)) continue;
 
       const RelatedEntity = rel.getRelatedEntity() as ClazzType<any>;
-      const saved = await this.ctx.save(RelatedEntity, target);
-      const relatedPk = this.resolver
-        .resolveEntityMetadata(RelatedEntity)
-        ?.columns.find((col: any) => col.options?.primary);
-      if (relatedPk) {
-        const key = relatedPk.propertyKey ?? relatedPk.name;
-        if (target[key] === undefined || target[key] === null) {
-          target[key] = (saved as any)[key];
+      await restoreOnRollback(this.sessionOf(), [target], async () => {
+        const saved = await this.ctx.save(RelatedEntity, target);
+        const relatedPk = this.resolver
+          .resolveEntityMetadata(RelatedEntity)
+          ?.columns.find((col: any) => col.options?.primary);
+        if (relatedPk) {
+          const key = relatedPk.propertyKey ?? relatedPk.name;
+          if (target[key] === undefined || target[key] === null) {
+            target[key] = (saved as any)[key];
+          }
         }
-      }
+      });
     }
   }
 

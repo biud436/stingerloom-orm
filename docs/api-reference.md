@@ -771,7 +771,12 @@ interface EntitySubscriber<T = any> {
 
 interface InsertEvent<T> { entity: Partial<T>; manager: EntityManager; }
 interface UpdateEvent<T> { entity: Partial<T>; manager: EntityManager; }
-interface DeleteEvent<T> { entityClass: new (...args: any[]) => T; criteria: any; manager: EntityManager; }
+interface DeleteEvent<T> {
+  entityClass: new (...args: any[]) => T;
+  criteria: any;
+  manager: EntityManager;
+  affected?: number; // after-events only; they do not fire when no row matched
+}
 ```
 
 ### EntityEventType

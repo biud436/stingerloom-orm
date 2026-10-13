@@ -145,6 +145,20 @@ em.removeAllListeners();
 
 The soft-delete and restore events carry the same criteria-based payload as the delete events (`{ entity, data }`, where `data` is the WHERE criteria). `updateMany()` fires `beforeUpdate` / `afterUpdate` on this global channel with the entity class and the SET payload.
 
+### When a Write Matches No Row
+
+The after-events of the criteria writes -- `delete()`, `deleteMany()`, `softDelete()`, `restore()`, `update()` / `updateMany()` and `increment()` / `decrement()` -- fire only when the statement reported at least one row, and their payload carries that count as `affected`:
+
+```typescript
+em.on("afterDelete", ({ entity, data, affected }) => {
+  console.log(`[AUDIT] ${entity.name}: ${affected} row(s) deleted`, data);
+});
+
+await em.delete(User, { id: 9999 }); // no such row: beforeDelete fires, afterDelete does not
+```
+
+The before-events still fire, because the count is only known once the statement has run. `softDelete()` counts only rows that were live and `restore()` only rows that were soft-deleted, so repeating either one fires no after-event. `affected` is the count the database reports: the rows the WHERE matched, which on MySQL includes a row whose values did not change. `save()` follows the same rule -- an UPDATE that matches no row throws `EntityNotFoundError` instead of firing `afterUpdate`.
+
 ### When to Use Global Listeners
 
 Global listeners are ideal for **cross-cutting concerns** that apply to every entity:
@@ -265,7 +279,7 @@ EntitySubscriber supports a wider set of events than global listeners, including
 | `beforeTransactionRollback()` | Before ROLLBACK | Logging |
 | `afterTransactionRollback()` | After ROLLBACK | Cleanup, alerting |
 
-All methods are optional -- implement only the ones you need. `beforeSoftDelete` / `afterSoftDelete` / `beforeRestore` / `afterRestore` receive a `DeleteEvent` (`{ entityClass, criteria, manager }`), the same criteria-based shape as `beforeDelete` / `afterDelete`, because they run against a bulk `WHERE` rather than a single hydrated row.
+All methods are optional -- implement only the ones you need. `beforeSoftDelete` / `afterSoftDelete` / `beforeRestore` / `afterRestore` receive a `DeleteEvent` (`{ entityClass, criteria, manager }`), the same criteria-based shape as `beforeDelete` / `afterDelete`, because they run against a bulk `WHERE` rather than a single hydrated row. On `afterDelete` / `afterSoftDelete` / `afterRestore` it also carries `affected`, and those three do not fire when no row matched (see [When a Write Matches No Row](#when-a-write-matches-no-row)).
 
 ### The afterLoad Guarantee
 
