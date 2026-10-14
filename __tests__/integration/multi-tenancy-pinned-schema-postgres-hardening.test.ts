@@ -148,6 +148,12 @@ async function foreignKeyTargets(
   }));
 }
 
+/**
+ * Provisions `tenant`. Suites provisioning from `public` pass
+ * `tables: { includeSuffix }` to clone only their own tables: the other
+ * integration suites create and drop tables in `public` while this one runs,
+ * and cloning every table there raced with those drops.
+ */
 async function provision(
   em: EntityManager,
   tenant: string,
@@ -236,7 +242,7 @@ for (const strategy of STRATEGIES) {
         await rawQuery(
           `INSERT INTO "public"."${joinTable}" ("plan_id", "feature_id") VALUES (${plan.id}, ${feature.id})`,
         );
-        await provision(first.em, tenant);
+        await provision(first.em, tenant, { tables: { includeSuffix: [`_${id}`] } });
         await first.cleanup();
 
         // Boot 2: no DDL at all — the way a migrations-managed deployment boots.
@@ -547,7 +553,7 @@ integrationDescribe(
         },
       );
       em = conn.em;
-      await provision(em, tenant);
+      await provision(em, tenant, { tables: { includeSuffix: [`_${id}`] } });
     }, 30000);
 
     afterAll(async () => {
