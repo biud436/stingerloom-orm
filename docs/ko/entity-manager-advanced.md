@@ -826,6 +826,10 @@ for (const rel of relations) {
 | `PESSIMISTIC_WRITE_SKIP_LOCKED` | `FOR UPDATE SKIP LOCKED` | 다른 트랜잭션이 잠근 행을 건너뜀 |
 | `PESSIMISTIC_READ_SKIP_LOCKED` | `FOR SHARE SKIP LOCKED` | Shared lock, 잠긴 행을 건너뜀 |
 
+NOWAIT과 SKIP LOCKED는 MySQL 8.0 이상, MariaDB 10.6 이상, PostgreSQL 9.5 이상이 필요합니다. SQLite는 비관적 잠금을 지원하지 않아요.
+
+공유 잠금은 서버마다 표기가 다릅니다. `PESSIMISTIC_READ`는 MySQL과 MariaDB에서 `LOCK IN SHARE MODE`이고, NOWAIT / SKIP LOCKED 변형은 MySQL 8에서 `FOR SHARE ...`, `FOR SHARE`가 없는 MariaDB에서는 `LOCK IN SHARE MODE ...`가 됩니다. MariaDB 여부는 `type: "mariadb"` 또는 서버 버전으로 판별합니다.
+
 ---
 
 ## 다음 단계

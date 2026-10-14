@@ -493,13 +493,14 @@ describe("SelectQueryBuilder", () => {
       expect(text).toContain("FOR SHARE NOWAIT");
     });
 
-    it("should add LOCK IN SHARE MODE NOWAIT for MySQL", () => {
+    it("adds FOR SHARE NOWAIT for MySQL, whose LOCK IN SHARE MODE takes no NOWAIT", () => {
       const em = createMockEm("mysql");
       const qb = new SelectQueryBuilder(User, "u", em);
       qb.where("id", 1).forShareNowait();
       const { text } = qb.getSql();
 
-      expect(text).toContain("LOCK IN SHARE MODE NOWAIT");
+      expect(text).toContain("FOR SHARE NOWAIT");
+      expect(text).not.toContain("LOCK IN SHARE MODE");
     });
 
     it("should add FOR SHARE SKIP LOCKED for PostgreSQL", () => {
@@ -511,13 +512,25 @@ describe("SelectQueryBuilder", () => {
       expect(text).toContain("FOR SHARE SKIP LOCKED");
     });
 
-    it("should add LOCK IN SHARE MODE SKIP LOCKED for MySQL", () => {
+    it("adds FOR SHARE SKIP LOCKED for MySQL, whose LOCK IN SHARE MODE takes no SKIP LOCKED", () => {
       const em = createMockEm("mysql");
       const qb = new SelectQueryBuilder(User, "u", em);
       qb.where("id", 1).forShareSkipLocked();
       const { text } = qb.getSql();
 
-      expect(text).toContain("LOCK IN SHARE MODE SKIP LOCKED");
+      expect(text).toContain("FOR SHARE SKIP LOCKED");
+      expect(text).not.toContain("LOCK IN SHARE MODE");
+    });
+
+    it("adds LOCK IN SHARE MODE NOWAIT / SKIP LOCKED on MariaDB, which has no FOR SHARE", () => {
+      const em = createMockEm("mysql");
+      (em as any)._ctx.getDriver = () => ({ isMariaDb: () => true });
+
+      const nowait = new SelectQueryBuilder(User, "u", em).forShareNowait().getSql().text;
+      const skip = new SelectQueryBuilder(User, "u", em).forShareSkipLocked().getSql().text;
+
+      expect(nowait).toContain("LOCK IN SHARE MODE NOWAIT");
+      expect(skip).toContain("LOCK IN SHARE MODE SKIP LOCKED");
     });
   });
 

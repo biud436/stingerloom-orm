@@ -8,6 +8,7 @@ import {
   aggregateFromStored,
 } from "./WhereValueTransform";
 import type { WhereClause } from "../dialects/FindOption";
+import { LockMode } from "../dialects/FindOption";
 import { requestedRelationNames } from "./RelationTree";
 import { singleTableRowShape, type RowShape } from "./SingleTableRows";
 import { EntityManager } from "./EntityManager";
@@ -152,6 +153,7 @@ import {
   type QEntityDynamicAccess,
 } from "./query-builder/alias/qAlias";
 import { WhereGroupBuilder } from "./query-builder/where-group/WhereGroupBuilder";
+import { lockClause, lockDialectOf } from "./LockClause";
 import { resolveUndefinedOperatorValue } from "./query-builder/whereArguments";
 import type {
   RowValidator,
@@ -2582,10 +2584,10 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Add FOR SHARE lock.
    */
   forShare(): this {
-    const internals = this.emInternals._ctx;
-    this.lockClause = internals.isMySqlFamily()
-      ? "LOCK IN SHARE MODE"
-      : "FOR SHARE";
+    this.lockClause = lockClause(
+      LockMode.PESSIMISTIC_READ,
+      lockDialectOf(this.emInternals._ctx),
+    );
     return this;
   }
 
@@ -2611,10 +2613,10 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Add FOR SHARE NOWAIT lock (MySQL 8.0+, PostgreSQL 9.5+).
    */
   forShareNowait(): this {
-    const internals = this.emInternals._ctx;
-    this.lockClause = internals.isMySqlFamily()
-      ? "LOCK IN SHARE MODE NOWAIT"
-      : "FOR SHARE NOWAIT";
+    this.lockClause = lockClause(
+      LockMode.PESSIMISTIC_READ_NOWAIT,
+      lockDialectOf(this.emInternals._ctx),
+    );
     return this;
   }
 
@@ -2622,10 +2624,10 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Add FOR SHARE SKIP LOCKED lock (MySQL 8.0+, PostgreSQL 9.5+).
    */
   forShareSkipLocked(): this {
-    const internals = this.emInternals._ctx;
-    this.lockClause = internals.isMySqlFamily()
-      ? "LOCK IN SHARE MODE SKIP LOCKED"
-      : "FOR SHARE SKIP LOCKED";
+    this.lockClause = lockClause(
+      LockMode.PESSIMISTIC_READ_SKIP_LOCKED,
+      lockDialectOf(this.emInternals._ctx),
+    );
     return this;
   }
 

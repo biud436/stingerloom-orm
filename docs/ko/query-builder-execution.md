@@ -219,7 +219,7 @@ const job = await em
 | `forShareSkipLocked()` | `FOR SHARE SKIP LOCKED` |
 
 ::: warning
-NOWAIT과 SKIP LOCKED는 MySQL 8.0 이상 또는 PostgreSQL 9.5 이상이 필요해요.
+NOWAIT과 SKIP LOCKED는 MySQL 8.0 이상, MariaDB 10.6 이상, PostgreSQL 9.5 이상이 필요해요. `FOR SHARE`가 없는 MariaDB에서는 공유 잠금 변형이 `LOCK IN SHARE MODE NOWAIT` / `LOCK IN SHARE MODE SKIP LOCKED`로 나갑니다. MariaDB 여부는 `type: "mariadb"` 또는 서버 버전으로 판별합니다.
 
 SQLite는 행 단위 잠금이 없습니다 — 동시성 모델이 DB 단위 (`BEGIN EXCLUSIVE`)예요. 쿼리 빌더는 다이얼렉트와 무관하게 SQL에 `FOR UPDATE`를 그대로 붙이므로, SQLite에 대고 잠금 메서드를 호출하면 실행 시점에 구문 오류가 납니다. 다이얼렉트 무관 코드라면 `em.getDriver().isSqlite()` / `isMySqlFamily()`로 분기해 주세요.
 :::

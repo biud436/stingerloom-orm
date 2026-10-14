@@ -55,6 +55,14 @@ export class MySqlDriver implements ISqlDriver {
     return this.version;
   }
 
+  /**
+   * True when the server is MariaDB — declared with `type: "mariadb"`, or
+   * detected from the server version behind `type: "mysql"`.
+   */
+  isMariaDb(): boolean {
+    return this.mariaDb;
+  }
+
   getCapabilities(): MySqlCapabilities {
     return this.capabilities;
   }

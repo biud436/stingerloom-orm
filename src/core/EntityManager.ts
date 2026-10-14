@@ -18,6 +18,7 @@ import { QueryResult } from "../types/QueryResult";
 import { EntityResult } from "../types/EntityResult";
 import { DeleteResult } from "../types/DeleteResult";
 import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
+import { lockClause, lockDialectOf } from "./LockClause";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import {
@@ -2574,29 +2575,15 @@ export class EntityManager implements BaseEntityManager {
 
   /** Dialect-specific row-lock suffix (FOR UPDATE / FOR SHARE / NOWAIT / SKIP LOCKED). */
   private resolveLockSuffix(lock: LockMode): string {
-    const isMySql = this.isMySqlFamily();
-    const isSqlite = this.isSqlite();
-
-    switch (lock) {
-      case LockMode.PESSIMISTIC_WRITE:
-        return "FOR UPDATE";
-      case LockMode.PESSIMISTIC_READ:
-        return isMySql ? "LOCK IN SHARE MODE" : "FOR SHARE";
-      case LockMode.PESSIMISTIC_WRITE_NOWAIT:
-        if (isSqlite) throw new OrmError(OrmErrorCode.UNSUPPORTED_DATABASE, "SQLite does not support NOWAIT");
-        return "FOR UPDATE NOWAIT";
-      case LockMode.PESSIMISTIC_READ_NOWAIT:
-        if (isSqlite) throw new OrmError(OrmErrorCode.UNSUPPORTED_DATABASE, "SQLite does not support NOWAIT");
-        return isMySql ? "LOCK IN SHARE MODE NOWAIT" : "FOR SHARE NOWAIT";
-      case LockMode.PESSIMISTIC_WRITE_SKIP_LOCKED:
-        if (isSqlite) throw new OrmError(OrmErrorCode.UNSUPPORTED_DATABASE, "SQLite does not support SKIP LOCKED");
-        return "FOR UPDATE SKIP LOCKED";
-      case LockMode.PESSIMISTIC_READ_SKIP_LOCKED:
-        if (isSqlite) throw new OrmError(OrmErrorCode.UNSUPPORTED_DATABASE, "SQLite does not support SKIP LOCKED");
-        return isMySql ? "LOCK IN SHARE MODE SKIP LOCKED" : "FOR SHARE SKIP LOCKED";
-      default:
-        return "FOR UPDATE";
+    if (this.isSqlite()) {
+      if (lock === LockMode.PESSIMISTIC_WRITE_NOWAIT || lock === LockMode.PESSIMISTIC_READ_NOWAIT) {
+        throw new OrmError(OrmErrorCode.UNSUPPORTED_DATABASE, "SQLite does not support NOWAIT");
+      }
+      if (lock === LockMode.PESSIMISTIC_WRITE_SKIP_LOCKED || lock === LockMode.PESSIMISTIC_READ_SKIP_LOCKED) {
+        throw new OrmError(OrmErrorCode.UNSUPPORTED_DATABASE, "SQLite does not support SKIP LOCKED");
+      }
     }
+    return lockClause(lock, lockDialectOf(this._ctx));
   }
 
   private hasEagerRelations<T>(entity: ClazzType<T>): boolean {

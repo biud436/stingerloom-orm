@@ -348,11 +348,21 @@ describe("#223: LockMode NOWAIT / SKIP LOCKED", () => {
     expect(result).toBe("FOR SHARE NOWAIT");
   });
 
-  it("resolveLockSuffix READ_NOWAIT should use LOCK IN SHARE MODE NOWAIT for MySQL", () => {
+  it("resolveLockSuffix READ_NOWAIT uses FOR SHARE NOWAIT for MySQL", () => {
     const { EntityManager } = require("../../src/core/EntityManager");
     const { LockMode } = require("../../src/dialects/FindOption");
     const em = new EntityManager();
     (em as any).dbType = "mysql";
+
+    const result = (em as any).resolveLockSuffix(LockMode.PESSIMISTIC_READ_NOWAIT);
+    expect(result).toBe("FOR SHARE NOWAIT");
+  });
+
+  it("resolveLockSuffix READ_NOWAIT uses LOCK IN SHARE MODE NOWAIT for MariaDB", () => {
+    const { EntityManager } = require("../../src/core/EntityManager");
+    const { LockMode } = require("../../src/dialects/FindOption");
+    const em = new EntityManager();
+    (em as any).dbType = "mariadb";
 
     const result = (em as any).resolveLockSuffix(LockMode.PESSIMISTIC_READ_NOWAIT);
     expect(result).toBe("LOCK IN SHARE MODE NOWAIT");
