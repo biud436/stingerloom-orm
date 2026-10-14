@@ -464,6 +464,8 @@ price!: number;
 | `registry.getTransformer(name)` | 커스텀 타입의 트랜스포머 가져오기 |
 | `registry.getRegisteredNames()` | 등록된 모든 커스텀 타입 목록 |
 
+`em.registerColumnType(name, definition)`은 `ColumnTypeRegistry.getInstance().register(name, definition)`의 단축형입니다. 레지스트리는 프로세스 전역이라, 한 EntityManager로 등록한 타입을 같은 프로세스의 모든 EntityManager가 알게 돼요. 커스텀 타입은 `em.register()`가 스키마를 동기화하기 전에 등록하세요.
+
 ### DialectExpression -- 다이얼렉트 인식 SQL
 
 `DialectExpression`은 데이터베이스마다 다른 SQL 표현식을 생성하기 위한 전략 패턴을 제공해요.
