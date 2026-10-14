@@ -282,7 +282,7 @@ export class SqliteConnector extends IConnector {
 
   async startTransaction(
     connection: any,
-    _level: TRANSACTION_ISOLATION_LEVEL = "READ COMMITTED",
+    _level?: TRANSACTION_ISOLATION_LEVEL,
   ): Promise<void> {
     const db = connection as Database.Database;
     if (!db) {

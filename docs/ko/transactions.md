@@ -264,8 +264,8 @@ async transfer(fromId: number, toId: number, amount: number) {
 생성되는 SQL:
 
 ```sql
-SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 BEGIN;
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 
 SELECT * FROM "accounts" WHERE "id" = 1;    -- from
 SELECT * FROM "accounts" WHERE "id" = 2;    -- to
@@ -275,6 +275,10 @@ UPDATE "accounts" SET "balance" = 1500 WHERE "id" = 2;   -- credit
 
 COMMIT;
 ```
+
+MySQL/MariaDB에서는 `SET TRANSACTION`이 다음 트랜잭션에 적용되는 문장이라 `START TRANSACTION`보다 먼저 나갑니다.
+
+격리 수준을 지정하면 서버나 세션의 기본값과 관계없이 항상 그 수준으로 실행됩니다. 지정하지 않으면 MySQL/MariaDB는 READ COMMITTED로 실행되고(InnoDB 기본값이 REPEATABLE READ라서 ORM이 직접 설정합니다), PostgreSQL은 추가 문장 없이 서버의 `default_transaction_isolation`을 따릅니다. 따로 바꾸지 않았다면 이 값도 READ COMMITTED예요.
 
 ---
 
@@ -551,8 +555,8 @@ try {
 생성되는 SQL:
 
 ```sql
-SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 BEGIN;
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 
 INSERT INTO "users" ("name") VALUES ('John Doe');
 UPDATE "profiles" SET "is_complete" = true WHERE "user_id" = 1;
@@ -608,8 +612,8 @@ COMMIT;
 `updateAge()`가 생성하는 SQL:
 
 ```sql
-SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 BEGIN;
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 SELECT * FROM "cats" WHERE "id" = 1;
 UPDATE "cats" SET "age" = 4 WHERE "id" = 1;
 COMMIT;

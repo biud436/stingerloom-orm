@@ -299,11 +299,9 @@ export class PostgresConnector extends IConnector {
   }
 
   // PostgreSQL default isolation level — skip SET TRANSACTION when it matches (#212)
-  private static readonly DEFAULT_ISOLATION: TRANSACTION_ISOLATION_LEVEL = "READ COMMITTED";
-
   async startTransaction(
     connection: any,
-    level: TRANSACTION_ISOLATION_LEVEL = "READ COMMITTED",
+    level?: TRANSACTION_ISOLATION_LEVEL,
   ): Promise<void> {
     const client = connection as PoolClient;
     if (!client) {
@@ -312,8 +310,10 @@ export class PostgresConnector extends IConnector {
 
     await client.query("BEGIN");
 
-    // #212: skip SET TRANSACTION when it matches the default isolation level
-    if (level !== PostgresConnector.DEFAULT_ISOLATION) {
+    // No level: the server's default applies, with no extra round trip
+    // (#212). A requested level is always sent, even READ COMMITTED — the
+    // session's default is whatever the server or a SET SESSION made it.
+    if (level !== undefined) {
       await this.setTransactionIsolationLevel(client, level);
     }
 

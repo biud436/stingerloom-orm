@@ -280,7 +280,7 @@ Hooks fire for **all** registered plugins in installation order. Each plugin's `
 
 ### Transaction Hooks -- beforeTransaction / afterTransaction
 
-In addition to per-query hooks, plugins may observe transaction boundaries. These fire once per `executeInTransaction()` / `@Transactional` scope — **not** per statement inside.
+In addition to per-query hooks, plugins may observe transaction boundaries. These fire once per transaction the EntityManager opens — `em.transaction()`, `ctx.executeInTransaction()`, and the implicit transaction around each write — **not** per statement inside. A transaction a `@Transactional` method opens is not one of them: the decorator has no EntityManager, so its plugins are not notified.
 
 ```typescript
 const txAudit: StingerloomPlugin = {
@@ -297,7 +297,7 @@ const txAudit: StingerloomPlugin = {
 
 | Hook | Signature | When it fires |
 |---|---|---|
-| `beforeTransaction` | `(isolationLevel?: string) => void` | Immediately before `BEGIN`/`START TRANSACTION`. `isolationLevel` is the string passed to the transaction options (`"READ COMMITTED"`, etc.) or `undefined` for the DB default. |
+| `beforeTransaction` | `(isolationLevel?: string) => void` | Immediately before `BEGIN`/`START TRANSACTION`. `isolationLevel` is the level passed in the transaction options (`"READ COMMITTED"`, etc.), or `undefined` when none was. |
 | `afterTransaction` | `(committed: boolean) => void` | After `COMMIT` (truthy) or `ROLLBACK` (falsy) returns. |
 
 ### Hook Error Handling

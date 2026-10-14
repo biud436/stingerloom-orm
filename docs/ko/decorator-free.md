@@ -289,7 +289,7 @@ await em.transaction(async (txEm) => {
 
 | 옵션 | 타입 | 기본값 | 대응 데코레이터 형식 |
 | --- | --- | --- | --- |
-| `isolationLevel` | `"READ UNCOMMITTED" \| "READ COMMITTED" \| "REPEATABLE READ" \| "SERIALIZABLE"` | 드라이버 기본값 | `@Transactional("SERIALIZABLE")` |
+| `isolationLevel` | `"READ UNCOMMITTED" \| "READ COMMITTED" \| "REPEATABLE READ" \| "SERIALIZABLE"` | READ COMMITTED (PostgreSQL은 서버 기본값) | `@Transactional("SERIALIZABLE")` |
 | `propagation` | `TransactionPropagation` | `REQUIRED` | `@Transactional({ propagation })` |
 | `connectionName` | `string` | 기본 연결 | `@Transactional({ connectionName })` |
 | `retryOnDeadlock` | `boolean` | `false` | — (콜백 전용) |

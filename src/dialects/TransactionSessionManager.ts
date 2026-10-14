@@ -151,13 +151,14 @@ export class TransactionSessionManager extends IQueryEngine {
   /**
    * Starts a new transaction with the specified isolation level.
    *
-   * @param level - The isolation level for the transaction. Defaults to "READ COMMITTED".
+   * @param level - The isolation level for the transaction. A given level is
+   * always applied. Omitted, PostgreSQL runs at the server's default
+   * (`default_transaction_isolation`, READ COMMITTED unless configured) and
+   * MySQL/MariaDB at READ COMMITTED.
    * @returns A promise that resolves when the transaction is started.
    * @throws {DatabaseNotConnectedError} If there is no active database connection.
    */
-  public async startTransaction(
-    level: TRANSACTION_ISOLATION_LEVEL = "READ COMMITTED",
-  ) {
+  public async startTransaction(level?: TRANSACTION_ISOLATION_LEVEL) {
     if (!this.connection) {
       throw new DatabaseNotConnectedError();
     }

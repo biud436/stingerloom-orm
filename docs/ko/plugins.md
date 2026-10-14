@@ -274,7 +274,7 @@ interface QueryInfo {
 
 ### 트랜잭션 훅 -- beforeTransaction / afterTransaction
 
-per-query 훅 외에도 플러그인은 트랜잭션 경계를 관찰할 수 있어요. 이 훅들은 `executeInTransaction()` / `@Transactional` 스코프당 한 번씩 발생해요 — 내부 statement마다가 **아니에요**.
+per-query 훅 외에도 플러그인은 트랜잭션 경계를 관찰할 수 있어요. 이 훅들은 EntityManager가 여는 트랜잭션(`em.transaction()`, `ctx.executeInTransaction()`, 쓰기마다 감싸는 암묵적 트랜잭션)당 한 번씩 발생하며, 내부 statement마다 발생하지는 **않습니다**. `@Transactional` 메서드가 여는 트랜잭션은 여기에 들지 않아요. 데코레이터는 EntityManager를 알지 못하므로 플러그인에 알리지 않습니다.
 
 ```typescript
 const txAudit: StingerloomPlugin = {
@@ -291,7 +291,7 @@ const txAudit: StingerloomPlugin = {
 
 | 훅 | 시그니처 | 발생 시점 |
 |---|---|---|
-| `beforeTransaction` | `(isolationLevel?: string) => void` | `BEGIN`/`START TRANSACTION` 직전. `isolationLevel`은 트랜잭션 옵션에 전달된 문자열(`"READ COMMITTED"` 등) 또는 DB 기본값인 경우 `undefined`. |
+| `beforeTransaction` | `(isolationLevel?: string) => void` | `BEGIN`/`START TRANSACTION` 직전. `isolationLevel`은 트랜잭션 옵션에 전달한 격리 수준(`"READ COMMITTED"` 등)이며, 지정하지 않았다면 `undefined`. |
 | `afterTransaction` | `(committed: boolean) => void` | `COMMIT`(true) 또는 `ROLLBACK`(false) 반환 후. |
 
 ### 훅 에러 처리

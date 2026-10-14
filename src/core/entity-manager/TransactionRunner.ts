@@ -72,7 +72,7 @@ export class TransactionRunner {
         );
       }
       await this.ctx.notifyTransactionSubscribers("beforeTransactionStart");
-      this.ctx.notifyPluginBeforeTransaction();
+      this.ctx.notifyPluginBeforeTransaction(txOptions?.isolationLevel);
       await session.startTransaction(txOptions?.isolationLevel);
 
       await this.ctx.notifyTransactionSubscribers("afterTransactionStart");
