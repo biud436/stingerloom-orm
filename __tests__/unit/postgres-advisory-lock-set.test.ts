@@ -53,6 +53,9 @@ describe("PostgresDriver.acquireAdvisoryLock — SET statement_timeout literal",
       expect(q).not.toMatch(/\$\d/);
     }
     expect(sets[0]).toContain("'5000ms'");
+    // The client keeps the session lock until it is released on it.
+    expect(release).not.toHaveBeenCalled();
+    await driver.releaseAdvisoryLock("migration-lock");
     expect(release).toHaveBeenCalledTimes(1);
   });
 

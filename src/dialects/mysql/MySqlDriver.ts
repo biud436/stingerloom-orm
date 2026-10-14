@@ -535,10 +535,41 @@ export class MySqlDriver implements ISqlDriver {
     );
   }
 
+  /**
+   * The connection holding each named lock this driver took, by lock id.
+   * `GET_LOCK` belongs to the session that took it: `RELEASE_LOCK` on any
+   * other session releases nothing, so the unlock runs on the holding
+   * connection, which stays out of the pool until then.
+   */
+  private readonly advisoryLockHolders = new Map<string, any>();
+
   async acquireAdvisoryLock(lockId: string, timeoutMs: number = 0): Promise<boolean> {
+    // A pool of one cannot spare a connection for the lock: take it on the
+    // shared connection, which every statement — the unlock included — uses.
+    if (this.connector.getPoolSize?.() === 1) {
+      return this.acquireAdvisoryLockOn(undefined, lockId, timeoutMs);
+    }
+
+    const conn = await this.connector.getConnection();
+    let held = false;
+    try {
+      held = await this.acquireAdvisoryLockOn(conn, lockId, timeoutMs);
+      return held;
+    } finally {
+      if (held) this.advisoryLockHolders.set(lockId, conn);
+      else conn.release();
+    }
+  }
+
+  private async acquireAdvisoryLockOn(
+    conn: any,
+    lockId: string,
+    timeoutMs: number,
+  ): Promise<boolean> {
     const timeoutSec = Math.max(0, Math.floor(timeoutMs / 1000));
     const result: any = await this.connector.query(
       sql`SELECT GET_LOCK(${lockId}, ${timeoutSec}) AS lock_result`,
+      conn,
     );
     const rows = Array.isArray(result) ? result : result?.results ?? result?.rows ?? [];
     if (rows.length === 0) return false;
@@ -555,9 +586,21 @@ export class MySqlDriver implements ISqlDriver {
   }
 
   async releaseAdvisoryLock(lockId: string): Promise<void> {
-    await this.connector.query(
-      sql`SELECT RELEASE_LOCK(${lockId})`,
-    );
+    const conn = this.advisoryLockHolders.get(lockId);
+    if (!conn) {
+      // Taken on the pool's only connection (or not through this driver).
+      await this.connector.query(sql`SELECT RELEASE_LOCK(${lockId})`);
+      return;
+    }
+    this.advisoryLockHolders.delete(lockId);
+    try {
+      await this.connector.query(sql`SELECT RELEASE_LOCK(${lockId})`, conn);
+    } catch (e) {
+      // Discard the session rather than pool it: the lock ends with it.
+      conn.destroy();
+      throw e;
+    }
+    conn.release();
   }
 
   createSavepointSql(name: string): string {

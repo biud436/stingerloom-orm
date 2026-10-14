@@ -24,6 +24,7 @@ export class MySqlConnector extends IConnector {
   private validateOnBorrow = false;
   private readonly logger = new Logger("MySqlConnector");
   private _dbVersion: DbVersion = DbVersion.UNKNOWN;
+  private poolSize: number | undefined;
 
   async connect(options: DatabaseClientOptions): Promise<void> {
     try {
@@ -56,6 +57,7 @@ export class MySqlConnector extends IConnector {
 
       // Apply in priority order: pool.max > connectionLimit > default (10)
       const maxConnections = poolOptions?.max ?? connectionLimit ?? 10;
+      this.poolSize = maxConnections;
 
       // Convert SSL/TLS options
       const ssl = "ssl" in options ? options.ssl : undefined;
@@ -106,6 +108,10 @@ export class MySqlConnector extends IConnector {
 
   override getVersion(): DbVersion {
     return this._dbVersion;
+  }
+
+  override getPoolSize(): number | undefined {
+    return this.poolSize;
   }
 
   /**

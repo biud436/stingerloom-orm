@@ -383,6 +383,10 @@ export interface ISqlDriver<T = any> {
    * Acquires an advisory lock with the given lock ID.
    * Used to prevent concurrent migration execution across multiple instances.
    *
+   * Server advisory locks belong to the session that took them: the built-in
+   * drivers keep that connection out of the pool until `releaseAdvisoryLock()`
+   * releases the lock on it.
+   *
    * @param lockId - A string identifier for the lock.
    * @param timeoutMs - Optional timeout in milliseconds. 0 = try once without waiting.
    * @returns A promise that resolves to true if the lock was acquired, false otherwise.
