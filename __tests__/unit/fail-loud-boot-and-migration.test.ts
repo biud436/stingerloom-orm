@@ -195,7 +195,8 @@ describe("MySQL advisory lock", () => {
   const driverReturning = (lockResult: unknown) =>
     new MySqlDriver({
       getVersion: () => undefined,
-      query: jest.fn(async () => [{ lock_result: lockResult }]),
+      getConnection: jest.fn().mockResolvedValue({ release: jest.fn() }),
+      query: jest.fn(async () => ({ results: [{ lock_result: lockResult }] })),
     } as unknown as IConnector);
 
   it("treats GET_LOCK's 0 as a timeout and NULL as an error", async () => {

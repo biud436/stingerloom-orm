@@ -911,78 +911,110 @@ export class PostgresDriver implements ISqlDriver {
     );
   }
 
+  /**
+   * The connection holding each advisory lock this driver took, by lock id.
+   *
+   * `pg_advisory_lock` belongs to the session that took it, so the unlock has
+   * to run on that connection, and the connection stays out of the pool until
+   * then. Returned to the pool, it carried the lock into whatever borrowed it
+   * next, and the unlock ran on whichever session the pool handed out — a
+   * no-op on any other — so the lock outlived the migration run and the next
+   * run waited for it.
+   */
+  private readonly advisoryLockHolders = new Map<string, any>();
+
   async acquireAdvisoryLock(lockId: string, timeoutMs: number = 0): Promise<boolean> {
     // Convert string lockId to a numeric hash for pg_advisory_lock
     const hash = this.hashLockId(lockId);
+
+    // A pool of one cannot spare a connection for the lock: take it on the
+    // shared connection, which every statement — the unlock included — uses.
+    if (this.connector.getPoolSize?.() === 1) {
+      return this.acquireAdvisoryLockOn(undefined, hash, timeoutMs);
+    }
+
+    const client = await this.connector.getConnection();
+    let held = false;
+    try {
+      held = await this.acquireAdvisoryLockOn(client, hash, timeoutMs);
+      return held;
+    } finally {
+      if (held) this.advisoryLockHolders.set(lockId, client);
+      else client.release();
+    }
+  }
+
+  private async acquireAdvisoryLockOn(
+    client: any,
+    hash: number,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    // Rows from a dedicated client arrive as `{ results }`.
+    const rowsOf = (result: any): any[] =>
+      Array.isArray(result) ? result : (result?.results ?? result?.rows ?? []);
 
     if (timeoutMs <= 0) {
       // Try to acquire without waiting
       const result: any = await this.connector.query(
         sql`SELECT pg_try_advisory_lock(${hash}) AS lock_result`,
+        client,
       );
-      const rows = Array.isArray(result) ? result : result?.rows ?? [];
-      if (rows.length === 0) return false;
-      return rows[0]?.lock_result === true;
+      return rowsOf(result)[0]?.lock_result === true;
     }
 
-    // Use a single dedicated connection so SET and the lock query share the same session
-    const client = await this.connector.getConnection();
+    // SET and the lock query share one session: the caller's dedicated
+    // client, or the pool's only connection.
+    const saved: any = await this.connector.query(`SHOW statement_timeout`, client);
+    const original = String(rowsOf(saved)[0]?.statement_timeout ?? "0");
+
+    // PostgreSQL does not accept bind parameters in SET, so the timeout must
+    // be interpolated as a literal (mirrors setQueryTimeout()).
+    const timeoutValue = `${Math.max(0, Math.floor(timeoutMs))}ms`;
+    await this.connector.query(`SET statement_timeout = '${timeoutValue}'`, client);
+
+    // Restore the session's own timeout. The value comes from
+    // SHOW statement_timeout (Postgres-controlled), but quotes are escaped
+    // defensively before it is interpolated.
+    const restore = () =>
+      this.connector.query(
+        `SET statement_timeout = '${original.replace(/'/g, "''")}'`,
+        client,
+      );
+
     try {
-      // Read on a dedicated client, the connector answers `{ results }`.
-      const saved: any = await this.connector.query(
-        `SHOW statement_timeout`,
-        client,
-      );
-      const savedRows = Array.isArray(saved)
-        ? saved
-        : (saved?.results ?? saved?.rows ?? []);
-      const original = String(savedRows[0]?.statement_timeout ?? "0");
-
-      // PostgreSQL does not accept bind parameters in SET, so the timeout must
-      // be interpolated as a literal (mirrors setQueryTimeout()).
-      const timeoutValue = `${Math.max(0, Math.floor(timeoutMs))}ms`;
-      await this.connector.query(
-        `SET statement_timeout = '${timeoutValue}'`,
-        client,
-      );
-
-      // Restore the client's own timeout before it goes back to the pool.
-      // The value comes from SHOW statement_timeout (Postgres-controlled),
-      // but quotes are escaped defensively before it is interpolated.
-      const restore = () =>
-        this.connector.query(
-          `SET statement_timeout = '${original.replace(/'/g, "''")}'`,
-          client,
-        );
-
-      try {
-        await this.connector.query(
-          sql`SELECT pg_advisory_lock(${hash})`,
-          client,
-        );
-      } catch (e) {
-        // Only the timeout means another session holds the lock. Any other
-        // failure is reported as itself — and a restore that fails on a
-        // broken session must not replace it.
-        if (!isStatementTimeoutError(e)) {
-          await restore().catch(() => undefined);
-          throw e;
-        }
-        await restore();
-        return false;
+      await this.connector.query(sql`SELECT pg_advisory_lock(${hash})`, client);
+    } catch (e) {
+      // Only the timeout means another session holds the lock. Any other
+      // failure is reported as itself — and a restore that fails on a
+      // broken session must not replace it.
+      if (!isStatementTimeoutError(e)) {
+        await restore().catch(() => undefined);
+        throw e;
       }
       await restore();
-      return true;
-    } finally {
-      client.release();
+      return false;
     }
+    await restore();
+    return true;
   }
 
   async releaseAdvisoryLock(lockId: string): Promise<void> {
     const hash = this.hashLockId(lockId);
-    await this.connector.query(
-      sql`SELECT pg_advisory_unlock(${hash})`,
-    );
+    const client = this.advisoryLockHolders.get(lockId);
+    if (!client) {
+      // Taken on the pool's only connection (or not through this driver).
+      await this.connector.query(sql`SELECT pg_advisory_unlock(${hash})`);
+      return;
+    }
+    this.advisoryLockHolders.delete(lockId);
+    try {
+      await this.connector.query(sql`SELECT pg_advisory_unlock(${hash})`, client);
+    } catch (e) {
+      // Discard the session rather than pool it: the lock ends with it.
+      client.release(true);
+      throw e;
+    }
+    client.release();
   }
 
   private hashLockId(lockId: string): number {

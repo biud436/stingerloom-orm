@@ -291,6 +291,8 @@ Server B: checks __migrations table, finds nothing pending, exits
 
 If the lock cannot be acquired within the timeout (default: 10 seconds), the runner throws an `AdvisoryLockError`. Only an elapsed timeout is reported that way: any other failure while acquiring the lock (a dropped connection, a cancelled backend, MySQL's `GET_LOCK` reporting an error) is thrown as itself.
 
+The lock belongs to a database session, so the runner keeps one pooled connection for the whole run and releases the lock on that connection; the migrations' statements use the rest of the pool. With a pool of one, the lock is taken on the single connection every statement shares, which still keeps other processes out but cannot keep a second runner in the same process out — run migrations from application code with a pool of at least two.
+
 ### Using MigrationCli (Programmatic)
 
 For more control, create a custom migration script. This is useful when your config comes from environment variables or you need custom logic before/after migrations.

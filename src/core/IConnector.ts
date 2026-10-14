@@ -99,4 +99,13 @@ export abstract class IConnector {
   getVersion(): DbVersion {
     return DbVersion.UNKNOWN;
   }
+
+  /**
+   * The most connections the pool hands out at once, when known. A session
+   * lock held on its own connection leaves one fewer for everything else, so
+   * a pool of one cannot spare it.
+   */
+  getPoolSize(): number | undefined {
+    return undefined;
+  }
 }

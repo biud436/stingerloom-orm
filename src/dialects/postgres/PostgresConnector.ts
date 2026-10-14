@@ -24,6 +24,7 @@ export class PostgresConnector extends IConnector {
   private validateOnBorrow = false;
   private readonly logger = new Logger("PostgresConnector");
   private _dbVersion: DbVersion = DbVersion.UNKNOWN;
+  private poolSize: number | undefined;
   private warnedInvalidTenantIds = new Set<string>();
 
   private static readonly ISOLATION_LEVEL_SQL: Record<string, string> = {
@@ -86,6 +87,7 @@ export class PostgresConnector extends IConnector {
 
       // Apply in priority order: pool.max > connectionLimit > default (10)
       const maxConnections = poolOptions?.max ?? options.connectionLimit ?? 10;
+      this.poolSize = maxConnections;
 
       // Convert SSL/TLS options
       const ssl = "ssl" in options ? options.ssl : undefined;
@@ -140,6 +142,10 @@ export class PostgresConnector extends IConnector {
 
   override getVersion(): DbVersion {
     return this._dbVersion;
+  }
+
+  override getPoolSize(): number | undefined {
+    return this.poolSize;
   }
 
   /**
