@@ -264,8 +264,8 @@ async transfer(fromId: number, toId: number, amount: number) {
 The generated SQL:
 
 ```sql
-SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 BEGIN;
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 
 SELECT * FROM "accounts" WHERE "id" = 1;    -- from
 SELECT * FROM "accounts" WHERE "id" = 2;    -- to
@@ -275,6 +275,10 @@ UPDATE "accounts" SET "balance" = 1500 WHERE "id" = 2;   -- credit
 
 COMMIT;
 ```
+
+On MySQL/MariaDB the `SET TRANSACTION` comes before `START TRANSACTION`, since it applies to the next transaction there.
+
+A level you pass is always applied, whatever the server's or the session's default is. Without one, a MySQL/MariaDB transaction runs at READ COMMITTED (the ORM sets it, because InnoDB defaults to REPEATABLE READ), and a PostgreSQL transaction runs at the server's `default_transaction_isolation` with no extra statement. That is READ COMMITTED unless your database is configured otherwise.
 
 ---
 
@@ -551,8 +555,8 @@ try {
 The generated SQL:
 
 ```sql
-SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 BEGIN;
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 
 INSERT INTO "users" ("name") VALUES ('John Doe');
 UPDATE "profiles" SET "is_complete" = true WHERE "user_id" = 1;
@@ -608,8 +612,8 @@ COMMIT;
 The `updateAge()` method generates:
 
 ```sql
-SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 BEGIN;
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 SELECT * FROM "cats" WHERE "id" = 1;
 UPDATE "cats" SET "age" = 4 WHERE "id" = 1;
 COMMIT;

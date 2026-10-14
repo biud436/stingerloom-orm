@@ -289,7 +289,7 @@ await em.transaction(async (txEm) => {
 
 | Option | Type | Default | Equivalent decorator form |
 | --- | --- | --- | --- |
-| `isolationLevel` | `"READ UNCOMMITTED" \| "READ COMMITTED" \| "REPEATABLE READ" \| "SERIALIZABLE"` | driver default | `@Transactional("SERIALIZABLE")` |
+| `isolationLevel` | `"READ UNCOMMITTED" \| "READ COMMITTED" \| "REPEATABLE READ" \| "SERIALIZABLE"` | READ COMMITTED (PostgreSQL: the server's default) | `@Transactional("SERIALIZABLE")` |
 | `propagation` | `TransactionPropagation` | `REQUIRED` | `@Transactional({ propagation })` |
 | `connectionName` | `string` | default connection | `@Transactional({ connectionName })` |
 | `retryOnDeadlock` | `boolean` | `false` | — (callback only) |

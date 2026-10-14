@@ -22,7 +22,11 @@ import {
   rawQuery,
   type TestConnectionResult,
 } from "./helpers/test-connection";
-import { getTestDrivers, type TestDriverConfig } from "./helpers/driver-config";
+import {
+  getTestDrivers,
+  type TestDriverConfig,
+  type TestDriverType,
+} from "./helpers/driver-config";
 import { qi } from "./helpers/driver-helpers";
 import {
   Entity,
@@ -125,6 +129,51 @@ async function openMySqlSide(options: any): Promise<SideConnection> {
   };
 }
 
+/**
+ * The isolation level the current transaction runs at, as the server applies
+ * it. PostgreSQL reports it. MySQL/MariaDB only report the session default
+ * (`@@transaction_isolation` ignores SET TRANSACTION), so there it is
+ * classified by behavior against a second connection: SERIALIZABLE turns the
+ * plain read into a shared lock that blocks a writer; REPEATABLE READ keeps
+ * its snapshot across a committed change; READ UNCOMMITTED sees an
+ * uncommitted one; READ COMMITTED sees neither.
+ */
+async function observeIsolation(probe: {
+  type: TestDriverType;
+  em: EntityManager;
+  Row: new () => any;
+  table: string;
+  rowId: number;
+  side?: SideConnection;
+}): Promise<Level> {
+  const { type, em, Row, table, rowId, side } = probe;
+  if (type === "postgres") {
+    const rows = (await em.query("SHOW transaction_isolation")) as any[];
+    return rows[0].transaction_isolation.toUpperCase() as Level;
+  }
+  const t = (name: string) => qi(type, name);
+  const read = async (): Promise<number> =>
+    (await em.findOne(Row, { where: { id: rowId } })).val;
+  const bump = (by: number) =>
+    `UPDATE ${t(table)} SET ${t("val")} = ${t("val")} + ${by} WHERE ${t("id")} = ${rowId}`;
+  const v0 = await read();
+  try {
+    await side!.query(bump(1));
+  } catch (e: any) {
+    if (e?.errno === 1205) return "SERIALIZABLE";
+    throw e;
+  }
+  const v1 = await read();
+  if (v1 === v0) return "REPEATABLE READ";
+  await side!.query("START TRANSACTION");
+  try {
+    await side!.query(bump(100));
+    return (await read()) === v1 + 100 ? "READ UNCOMMITTED" : "READ COMMITTED";
+  } finally {
+    await side!.query("ROLLBACK");
+  }
+}
+
 describe.each(getTestDrivers())(
   "[Integration] $label: transaction contract",
   ({ type, options }: TestDriverConfig) => {
@@ -182,42 +231,8 @@ describe.each(getTestDrivers())(
         .map((r: any) => r.name)
         .filter((n: string) => n !== "probe");
 
-    const readProbe = async (): Promise<number> =>
-      (await em.findOne(Row, { where: { id: probeId } })).val;
-
-    /**
-     * The isolation level the current transaction runs at, as the server
-     * applies it. PostgreSQL reports it. MySQL/MariaDB only report the
-     * session default (`@@transaction_isolation` ignores SET TRANSACTION), so
-     * there it is classified by behavior against a second connection:
-     * SERIALIZABLE turns the plain read into a shared lock that blocks a
-     * writer; REPEATABLE READ keeps its snapshot across a committed change;
-     * READ UNCOMMITTED sees an uncommitted one; READ COMMITTED sees neither.
-     */
-    const observedIsolation = async (): Promise<Level> => {
-      if (type === "postgres") {
-        const rows = (await em.query("SHOW transaction_isolation")) as any[];
-        return rows[0].transaction_isolation.toUpperCase() as Level;
-      }
-      const bump = (by: number) =>
-        `UPDATE ${t(table)} SET ${t("val")} = ${t("val")} + ${by} WHERE ${t("id")} = ${probeId}`;
-      const v0 = await readProbe();
-      try {
-        await side!.query(bump(1));
-      } catch (e: any) {
-        if (e?.errno === 1205) return "SERIALIZABLE";
-        throw e;
-      }
-      const v1 = await readProbe();
-      if (v1 === v0) return "REPEATABLE READ";
-      await side!.query("START TRANSACTION");
-      try {
-        await side!.query(bump(100));
-        return (await readProbe()) === v1 + 100 ? "READ UNCOMMITTED" : "READ COMMITTED";
-      } finally {
-        await side!.query("ROLLBACK");
-      }
-    };
+    const observedIsolation = (): Promise<Level> =>
+      observeIsolation({ type, em, Row, table, rowId: probeId, side });
 
     // ── (a) isolation level ──────────────────────────────────────────
 
@@ -519,6 +534,84 @@ describe.each(getTestDrivers())(
             await rawQuery(`DROP SCHEMA IF EXISTS "${tenant}" CASCADE`);
           }
         },
+      );
+    });
+  },
+);
+
+/**
+ * The session's default isolation level is whatever the server, a role, or a
+ * SET SESSION made it — not necessarily the database's out-of-the-box one.
+ * One pooled connection, so the SET SESSION reaches every transaction below.
+ */
+describe.each(getTestDrivers())(
+  "[Integration] $label: isolation level against a non-default session default",
+  ({ type, options }: TestDriverConfig) => {
+    let conn: TestConnectionResult;
+    let em: EntityManager;
+    let Row: new () => any;
+    let side: SideConnection | undefined;
+    let rowId: number;
+    const table = `txd_${String(Date.now()).slice(-7)}`;
+
+    beforeAll(async () => {
+      conn = await createTestConnection(
+        { synchronize: true, logging: false, ...options, pool: { max: 1 } } as any,
+        () => {
+          @Entity({ name: table })
+          class TxdRow {
+            @PrimaryGeneratedColumn() id!: number;
+            @Column({ type: "int" }) val!: number;
+          }
+          Row = TxdRow;
+          return { entities: [TxdRow] };
+        },
+      );
+      em = conn.em;
+      if (type !== "postgres") side = await openMySqlSide(options);
+      rowId = (await em.save(Row, { val: 0 })).id;
+      await rawQuery(
+        type === "postgres"
+          ? "SET SESSION default_transaction_isolation = 'serializable'"
+          : "SET SESSION transaction_isolation = 'SERIALIZABLE'",
+      );
+    }, 60000);
+
+    afterAll(async () => {
+      if (side) await side.close();
+      try {
+        await dropTestTable(table);
+      } catch {
+        // ignore
+      }
+      if (conn) await conn.cleanup();
+    }, 30000);
+
+    const observedIsolation = (): Promise<Level> =>
+      observeIsolation({ type, em, Row, table, rowId, side });
+
+    it("a requested level equal to the database's usual default is still applied", async () => {
+      // READ COMMITTED is PostgreSQL's out-of-the-box default, REPEATABLE
+      // READ InnoDB's — the levels whose SET used to be skipped.
+      const level = type === "postgres" ? "READ COMMITTED" : "REPEATABLE READ";
+      expect(await em.transaction(() => observedIsolation(), { isolationLevel: level })).toBe(
+        level,
+      );
+    });
+
+    it("@Transactional applies its level the same way", async () => {
+      class Probe {
+        @Transactional("READ COMMITTED")
+        async readCommitted(): Promise<Level> {
+          return observedIsolation();
+        }
+      }
+      expect(await new Probe().readCommitted()).toBe("READ COMMITTED");
+    });
+
+    it("without a level, PostgreSQL follows the session default and MySQL runs at READ COMMITTED", async () => {
+      expect(await em.transaction(() => observedIsolation())).toBe(
+        type === "postgres" ? "SERIALIZABLE" : "READ COMMITTED",
       );
     });
   },

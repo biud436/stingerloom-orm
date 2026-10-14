@@ -289,12 +289,15 @@ export class MySqlConnector extends IConnector {
     });
   }
 
-  // MySQL default isolation level — skip SET TRANSACTION when it matches (#212)
-  private static readonly DEFAULT_ISOLATION: TRANSACTION_ISOLATION_LEVEL = "REPEATABLE READ";
+  /**
+   * The level a transaction runs at when none is requested. InnoDB's own
+   * default is REPEATABLE READ, so it is always set explicitly.
+   */
+  private static readonly ORM_DEFAULT_ISOLATION: TRANSACTION_ISOLATION_LEVEL = "READ COMMITTED";
 
   async startTransaction(
     connection: Connection,
-    level: TRANSACTION_ISOLATION_LEVEL = "REPEATABLE READ",
+    level?: TRANSACTION_ISOLATION_LEVEL,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!connection) {
@@ -310,14 +313,15 @@ export class MySqlConnector extends IConnector {
         });
       };
 
-      // #212: skip SET TRANSACTION when it matches the default isolation level
-      if (level !== MySqlConnector.DEFAULT_ISOLATION) {
-        this.setTransactionIsolationLevel(connection, level)
-          .then(beginTx)
-          .catch(reject);
-      } else {
-        beginTx();
-      }
+      // Always set the level. Skipping it when it matched InnoDB's default
+      // ran a requested REPEATABLE READ at whatever the server or a SET
+      // SESSION had made the session's default.
+      this.setTransactionIsolationLevel(
+        connection,
+        level ?? MySqlConnector.ORM_DEFAULT_ISOLATION,
+      )
+        .then(beginTx)
+        .catch(reject);
     });
   }
 

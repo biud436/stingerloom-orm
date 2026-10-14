@@ -198,10 +198,12 @@ describe("TransactionSessionManager", () => {
       await expect(session.startTransaction()).rejects.toThrow(DatabaseNotConnectedError);
     });
 
-    it("should start transaction with default isolation level", async () => {
+    it("leaves an unspecified isolation level to the dialect", async () => {
+      // A filled-in default was indistinguishable from a requested level, so
+      // the dialects skipped a requested one that equaled their own default.
       await session.connect();
       await session.startTransaction();
-      expect(dsStartTx).toHaveBeenCalledWith("READ COMMITTED");
+      expect(dsStartTx).toHaveBeenCalledWith(undefined);
     });
 
     it("should start transaction with custom isolation level", async () => {
