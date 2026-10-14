@@ -54,7 +54,9 @@ those spots immediately surfaced a live defect (#414).
   DB-verified only via the subscriber equivalent — acceptable overlap.)
 - **Transactions / connections / drivers / migrations plumbing**: unit mocks
   are appropriate (no persisted-data claim); real transaction semantics are
-  covered by `sqlite/transactions`, `p3-transaction-rollback`.
+  covered by `sqlite/transactions`, `p3-transaction-rollback`, and — for
+  isolation levels, propagation, `@Transactional` and the read path's
+  BEGIN — dual-driver `transaction-contract-real` (see the fourth round).
 
 ## Second backfill round (2026-08-02) — former "accepted thin spots"
 
@@ -142,3 +144,36 @@ given SQL contracts; the STI "via buffer" seed routed through the buffer;
 `composite-pk` RETURNING guard added; two PG-only `sql-craft-patterns` cases
 turned from early `return` into real skips; the 19 `STRESS_TEST` tests wired to
 `pnpm test:stress` and a CI job.
+
+## Fourth round (2026-10-14) — transaction contract on real PG/MySQL
+
+`transaction-options`, `transaction-propagation`, `transactional` and
+`read-only-optimization` assert almost entirely through call counts on a
+mocked session, and no integration file used `isolationLevel`,
+`propagation` or `@Transactional`. The statements that decide the contract
+(BEGIN / START TRANSACTION, SET TRANSACTION, SAVEPOINT, SET LOCAL) are sent
+by the connectors straight to the driver connection, so the ORM's query log
+never shows them either.
+
+Backfilled in dual-driver `integration/transaction-contract-real.test.ts`,
+which records statements at the driver's `query()` and reads the outcome
+from the server:
+
+1. Isolation — each of the four levels is the level the transaction runs
+   at (PostgreSQL: `SHOW transaction_isolation`; MySQL/MariaDB report only
+   the session default, so the level is classified by behavior against a
+   second connection: shared-lock block, snapshot, dirty read). No option
+   runs at READ COMMITTED: PostgreSQL sends no SET, MySQL sends one before
+   START TRANSACTION.
+2. REQUIRES_NEW — a different backend / connection id, its commit survives
+   the outer rollback, its failure leaves the outer transaction to commit,
+   and it does not see the outer transaction's uncommitted rows. REQUIRED
+   joins: same connection, one outcome.
+3. NESTED — SAVEPOINT and ROLLBACK TO on the outer connection, outer writes
+   before and after kept; an outer rollback discards a successful nested
+   block; with no outer transaction it opens its own.
+4. `@Transactional` — the same three propagations plus the decorator's
+   isolation level, on a real class.
+5. Reads — `find()` sends no BEGIN; a `timeout` read opens one on
+   PostgreSQL only; a search_path tenant read runs BEGIN + `SET LOCAL
+   search_path` and returns the tenant schema's rows.
