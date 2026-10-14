@@ -219,7 +219,7 @@ All four combinations are available:
 | `forShareSkipLocked()` | `FOR SHARE SKIP LOCKED` |
 
 ::: warning
-NOWAIT and SKIP LOCKED require MySQL 8.0+ or PostgreSQL 9.5+.
+NOWAIT and SKIP LOCKED require MySQL 8.0+, MariaDB 10.6+ or PostgreSQL 9.5+. On MariaDB, which has no `FOR SHARE`, the shared variants are sent as `LOCK IN SHARE MODE NOWAIT` / `LOCK IN SHARE MODE SKIP LOCKED`; MariaDB is recognized from `type: "mariadb"` or from the server version.
 
 SQLite does not support row-level locking — its concurrency model is database-level (`BEGIN EXCLUSIVE`). The query builder appends `FOR UPDATE` to the SQL regardless of dialect, so calling these methods against SQLite produces a syntax error at execution time. Gate the call on the dialect (`em.getDriver().isSqlite()` / `isMySqlFamily()`) when you need portable code.
 :::

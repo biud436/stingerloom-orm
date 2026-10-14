@@ -828,7 +828,9 @@ Complete list of options accepted by `find()`, `findOne()`, `findAndCount()`, `f
 | `PESSIMISTIC_WRITE_SKIP_LOCKED` | `FOR UPDATE SKIP LOCKED` | Skips rows locked by other transactions |
 | `PESSIMISTIC_READ_SKIP_LOCKED` | `FOR SHARE SKIP LOCKED` | Shared lock, skips locked rows |
 
-NOWAIT and SKIP LOCKED require MySQL 8.0+ or PostgreSQL 9.5+. SQLite does not support pessimistic locking.
+NOWAIT and SKIP LOCKED require MySQL 8.0+, MariaDB 10.6+ or PostgreSQL 9.5+. SQLite does not support pessimistic locking.
+
+Shared locks are spelled per server: `PESSIMISTIC_READ` is `LOCK IN SHARE MODE` on MySQL and MariaDB, and the NOWAIT / SKIP LOCKED variants are `FOR SHARE ...` on MySQL 8 but `LOCK IN SHARE MODE ...` on MariaDB, which has no `FOR SHARE`. MariaDB is recognized from `type: "mariadb"` or from the server version.
 
 ---
 
