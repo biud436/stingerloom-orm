@@ -75,9 +75,9 @@ All five previously-accepted thin spots are closed:
 3. `PESSIMISTIC_READ` pass-through — backfilled: dual-driver
    `integration/pessimistic-read-lock.test.ts` (3) proves real PG/MySQL
    parse the suffix and that it is genuinely a SHARED lock (two overlapping
-   transactions hold it on the same row) — no defect. Still unit-only:
-   the NOWAIT / SKIP LOCKED **read** variants (`LOCK IN SHARE MODE NOWAIT`
-   etc.) — accepted; revisit if lock-suffix code churns.
+   transactions hold it on the same row) — no defect. The NOWAIT / SKIP
+   LOCKED **read** variants, left unit-only here, are covered since the
+   fifth round — and were broken on MySQL 8 (see there).
 4. `delete-operation.test.ts` (locally re-declared `buildDeleteSql` copy) —
    copy deleted; `integration/sqlite/delete-operation.test.ts` (10) verifies
    the shipped builder. **The copy had drifted**: it dropped `null` criteria
@@ -177,3 +177,39 @@ from the server:
 5. Reads — `find()` sends no BEGIN; a `timeout` read opens one on
    PostgreSQL only; a search_path tenant read runs BEGIN + `SET LOCAL
    search_path` and returns the tenant schema's rows.
+
+## Fifth round (2026-10-14) — dialect branches on real PG/MySQL
+
+Dialect-specific SQL that only unit string comparisons or SQLite had run.
+Each item's SQL differs per dialect, so a syntax error or a wrong spelling
+could pass CI:
+
+1. Row locks, index hints, CTEs, DISTINCT — dual-driver
+   `integration/sqb-dialect-suffix-dual.test.ts`: NOWAIT fails at once and
+   SKIP LOCKED skips a held row, through the query builder and
+   `find({ lock })`; index hints reach MySQL and are left out on PostgreSQL;
+   `hint()`, `with()` / `withRecursive()`, `setDistinct()`. **Defect found:**
+   the shared NOWAIT / SKIP LOCKED variants sent `LOCK IN SHARE MODE NOWAIT`,
+   a syntax error on MySQL 8 — now `FOR SHARE ...` there and
+   `LOCK IN SHARE MODE ...` on MariaDB.
+2. `MigrationRunner` — dual-driver `integration/migration-runner-real.test.ts`
+   (pools of four and one): order, records, hooks, rollback, a failing
+   migration, and the advisory lock against a second runner and from outside
+   the pool. **Defect found:** the session lock was taken and released through
+   the pool, so it could outlive the run and a second runner in the process
+   could take it on the holding session — the lock connection is now held
+   until the release.
+3. `synchronize: "safe"` / `"dry-run"` and `@FullTextIndex` — dual-driver
+   `integration/schema-sync-modes-dual.test.ts` — no defect.
+4. Query builder productivity methods — `integration/sqlite/select-query-builder-productivity.test.ts`
+   (`applyScope`, IN / EXISTS subqueries incl. correlated, `orWhereGroup`,
+   `take`, `getOneOrFail`, `whereHas` / `whereNotHas`, `getManyAndCount`)
+   checks rows instead of SQL — no defect.
+5. A column type registered with `em.registerColumnType()` —
+   `integration/sqlite/custom-column-type.test.ts`: DDL type and transformer
+   both ways — no defect; the method is now documented as process-wide.
+
+Already covered before this round and not repeated: INSERT builder conflict
+actions (`insert-query-builder-on-conflict`), `insertIgnore` /
+`createUpdateBuilder` (upsert and tenant suites), uuid reboot diff
+(`uuid-column-schema-sync`), `em.clear()` (`clear-contract`).

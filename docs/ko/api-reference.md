@@ -138,6 +138,7 @@ for await (const batch of em.streamBatch(User, {}, 500)) {
 |--------|-----------|------|
 | `extend` | `<TApi>(plugin: StingerloomPlugin<TApi>): this & TApi` | 플러그인 설치 |
 | `hasPlugin` | `(name: string): boolean` | 설치 여부 확인 |
+| `registerColumnType` | `(name: string, definition: CustomColumnTypeDefinition): void` | 커스텀 컬럼 타입을 프로세스 전역에 등록 ([ColumnTypeRegistry](#columntyperegistry)) |
 | `getPluginApi` | `<T>(name: string): T \| undefined` | 이름으로 플러그인 API 가져오기 |
 
 ### Events

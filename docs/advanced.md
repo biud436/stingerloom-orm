@@ -464,6 +464,8 @@ A type that is neither built in nor registered is rejected when the schema is sy
 | `registry.getTransformer(name)` | Get the transformer for a custom type |
 | `registry.getRegisteredNames()` | List all registered custom types |
 
+`em.registerColumnType(name, definition)` is a shorthand for `ColumnTypeRegistry.getInstance().register(name, definition)`. The registry is process-wide: a type registered through one EntityManager is known to every EntityManager in the process. Register custom types before `em.register()` synchronizes the schema.
+
 ### DialectExpression -- Dialect-Aware SQL
 
 `DialectExpression` provides a strategy pattern for generating SQL expressions that differ across databases.

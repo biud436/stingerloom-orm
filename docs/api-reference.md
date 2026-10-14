@@ -138,6 +138,7 @@ for await (const batch of em.streamBatch(User, {}, 500)) {
 |--------|-----------|-------------|
 | `extend` | `<TApi>(plugin: StingerloomPlugin<TApi>): this & TApi` | Install a plugin |
 | `hasPlugin` | `(name: string): boolean` | Check if installed |
+| `registerColumnType` | `(name: string, definition: CustomColumnTypeDefinition): void` | Register a custom column type process-wide ([ColumnTypeRegistry](#columntyperegistry)) |
 | `getPluginApi` | `<T>(name: string): T \| undefined` | Get plugin API by name |
 
 ### Events
