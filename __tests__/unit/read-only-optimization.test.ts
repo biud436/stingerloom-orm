@@ -320,21 +320,17 @@ describe("Read-only Query Optimization (Issue #78)", () => {
     });
 
     it("10. saveMany() should still use a transaction", async () => {
+      // One batch INSERT, then the re-read of both generated ids.
       mockQuery
         .mockResolvedValueOnce({
-          results: { insertId: 1, affectedRows: 1 },
+          results: { insertId: 1, affectedRows: 2 },
           fields: [],
         })
         .mockResolvedValueOnce({
-          results: [{ id: 1, name: "A" }],
-          fields: [],
-        })
-        .mockResolvedValueOnce({
-          results: { insertId: 2, affectedRows: 1 },
-          fields: [],
-        })
-        .mockResolvedValueOnce({
-          results: [{ id: 2, name: "B" }],
+          results: [
+            { id: 1, name: "A" },
+            { id: 2, name: "B" },
+          ],
           fields: [],
         });
 

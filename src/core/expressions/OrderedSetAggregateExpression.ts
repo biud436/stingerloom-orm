@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql, { Sql, raw } from "../../utils/sqlTag";
-import type { ConditionLike, ColumnResolver } from "./ConditionLike";
+import type { ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -298,9 +298,3 @@ export function isOrderedSetAggregateExpression(
       .__isOrderedSetAggregateExpression === true
   );
 }
-
-// ConditionLike marker import so TypeScript does not flag the type-only
-// reference above. Ordered-set aggregates cannot appear in WHERE/HAVING
-// directly (they require GROUP BY context in any case), so no condition
-// comparison methods are exposed.
-export type _OrderedSetAggregateLike = ConditionLike;

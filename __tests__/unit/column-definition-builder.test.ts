@@ -7,6 +7,7 @@ import {
   ColumnDefContext,
 } from "../../src/dialects/ColumnDefinitionBuilder";
 import { ColumnOption } from "../../src/decorators/Column";
+import { OrmError } from "../../src/errors/OrmError";
 
 // ═══════════════════════════════════════════════════════════════
 // Factory
@@ -26,6 +27,12 @@ describe("createColumnDefinitionBuilder factory", () => {
   it("should create SqliteColumnDefinitionBuilder for sqlite", () => {
     const builder = createColumnDefinitionBuilder("sqlite");
     expect(builder).toBeInstanceOf(SqliteColumnDefinitionBuilder);
+  });
+
+  it("throws for an unknown dialect instead of returning undefined", () => {
+    const create = () => createColumnDefinitionBuilder("oracle" as never);
+    expect(create).toThrow(OrmError);
+    expect(create).toThrow(/No column definition builder for "oracle"/);
   });
 });
 

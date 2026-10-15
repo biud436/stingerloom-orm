@@ -324,15 +324,6 @@ export class MetadataScanner {
   }
 
   /**
-   * Restores the original key from a prefixed key.
-   */
-  private unprefixKey(key: string): string {
-    if (!this.scannerPrefix) return key;
-    const prefix = `${this.scannerPrefix}::`;
-    return key.startsWith(prefix) ? key.slice(prefix.length) : key;
-  }
-
-  /**
    * Returns a Map view over the current context layer scoped to this scanner's namespace.
    * Supports the `for (const [_, value] of this.mapper)` pattern used by subclasses.
    */

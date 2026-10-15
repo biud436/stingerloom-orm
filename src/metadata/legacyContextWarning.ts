@@ -35,13 +35,3 @@ export function warnLegacyContextMutator(method: string): void {
       `STINGERLOOM_SUPPRESS_LEGACY_CONTEXT_WARN=1 to silence it.`,
   );
 }
-
-/**
- * Test-only helper to clear the "already warned" set between test files.
- * Not exported from `@stingerloom/orm`.
- *
- * @internal
- */
-export function __resetLegacyContextWarnings(): void {
-  warned.clear();
-}
