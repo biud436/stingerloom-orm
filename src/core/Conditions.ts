@@ -222,21 +222,6 @@ export class Conditions {
     return sql`NOT EXISTS ${subquery}`;
   }
 
-  private static readonly ALLOWED_OPERATORS = [
-    "=",
-    "!=",
-    "<>",
-    "<",
-    ">",
-    "<=",
-    ">=",
-    "LIKE",
-    "IN",
-    "NOT IN",
-    "IS NULL",
-    "IS NOT NULL",
-  ];
-
   /**
    * Binary operators valid for column-to-column comparisons.
    * Excludes unary (IS NULL, IS NOT NULL) and set (IN, NOT IN) operators.
@@ -267,15 +252,6 @@ export class Conditions {
     "IN",
     "NOT IN",
   ];
-
-  private static validateOperator(operator: string): void {
-    const normalized = operator.trim().toUpperCase();
-    if (!Conditions.ALLOWED_OPERATORS.includes(normalized)) {
-      throw new InvalidQueryError(
-        `Invalid operator: "${operator}". Allowed operators: ${Conditions.ALLOWED_OPERATORS.join(", ")}`,
-      );
-    }
-  }
 
   private static validateSubqueryOperator(operator: string): void {
     const normalized = operator.trim().toUpperCase();
