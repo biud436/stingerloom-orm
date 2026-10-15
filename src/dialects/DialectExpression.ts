@@ -3,6 +3,8 @@ import type { DialectName } from "../core/ColumnTypeRegistry";
 import { PostgresExpression } from "./expression/PostgresExpression";
 import { MySqlExpression } from "./expression/MySqlExpression";
 import { SqliteExpression } from "./expression/SqliteExpression";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * Metadata about a JSON/JSONB column, threaded through JSON-path expression
@@ -448,10 +450,21 @@ export function createDialectExpression(
       case "sqlite":
         expr = new SqliteExpression();
         break;
+      default:
+        throw unsupportedDialect(dialect);
     }
     cache.set(dialect, expr);
   }
   return expr;
+}
+
+/** An unknown dialect must not be cached as `undefined` for later callers. */
+function unsupportedDialect(dialect: never): OrmError {
+  return new OrmError(
+    OrmErrorCode.UNSUPPORTED_DATABASE,
+    `No SQL expression dialect for "${String(dialect)}".`,
+    'Use one of "mysql", "postgres" or "sqlite".',
+  );
 }
 
 /** @internal Reset cache. For testing only. */

@@ -4,6 +4,8 @@ import { MySqlColumnDefinitionBuilder } from "./mysql/MySqlColumnDefinitionBuild
 import { PostgresColumnDefinitionBuilder } from "./postgres/PostgresColumnDefinitionBuilder";
 import { SqliteColumnDefinitionBuilder } from "./sqlite/SqliteColumnDefinitionBuilder";
 import type { CommonCapabilities } from "./DialectCapabilities";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * Context required when building a column definition.
@@ -91,5 +93,11 @@ export function createColumnDefinitionBuilder(
       return new PostgresColumnDefinitionBuilder(schema ?? "public", capabilities);
     case "sqlite":
       return new SqliteColumnDefinitionBuilder(capabilities);
+    default:
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_DATABASE,
+        `No column definition builder for "${String(dialect as never)}".`,
+        'Use one of "mysql", "postgres" or "sqlite".',
+      );
   }
 }

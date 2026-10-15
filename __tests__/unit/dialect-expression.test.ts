@@ -153,5 +153,11 @@ describe("DialectExpression", () => {
       expect(pg).not.toBe(mysql);
       expect(mysql).not.toBe(sqlite);
     });
+
+    it("throws for an unknown dialect instead of caching undefined", () => {
+      const create = () => createDialectExpression("oracle" as never);
+      expect(create).toThrow(OrmError);
+      expect(create).toThrow(/No SQL expression dialect for "oracle"/);
+    });
   });
 });
