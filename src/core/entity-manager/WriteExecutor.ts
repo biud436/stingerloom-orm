@@ -2097,9 +2097,11 @@ export class WriteExecutor {
           )
         : pkValues.map((v) => (typeof v === "bigint" ? Number(v) : v));
 
+    // withDeleted: a row inserted with its @DeletedAt already set is still
+    // one of the saved entities.
     const found = await this.ctx.findInternal(
       entity,
-      { where: whereByProps<T>({ [this.ctx.propKey(pk)]: pkValues }) },
+      { where: whereByProps<T>({ [this.ctx.propKey(pk)]: pkValues }), withDeleted: true },
       session,
     );
     const resultArray = Array.isArray(found) ? found : found ? [found] : [];
@@ -2110,7 +2112,18 @@ export class WriteExecutor {
         row as InstanceType<ClazzType<T>>,
       );
     }
-    return pkValues.map((id) => resultMap.get(id)!).filter(Boolean);
+    const saved = pkValues.map((id) => resultMap.get(id));
+    const missing = saved.filter((row) => row === undefined).length;
+    if (missing > 0) {
+      throw new OrmError(
+        OrmErrorCode.QUERY_ERROR,
+        `saveMany(${entity.name}) inserted ${items.length} rows but could not read back ` +
+          `${missing} of them by their derived primary keys.`,
+        "The keys are derived from the driver's insert result; on MySQL this assumes " +
+          "auto_increment_increment = 1.",
+      );
+    }
+    return saved as InstanceType<ClazzType<T>>[];
   }
 
   /** afterInsert hooks, events and subscribers for a whole batch. */

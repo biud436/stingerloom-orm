@@ -106,6 +106,23 @@ function getSqlText(call: any[]): string {
   return sqlObj.text ?? sqlObj.sql ?? String(sqlObj);
 }
 
+/**
+ * MySQL batch INSERT: the INSERT reports the first generated id and the
+ * re-read by the derived ids returns one row per item.
+ */
+function mockMySqlBatchInsert(count: number) {
+  mockQuery.mockImplementation((q: any) => {
+    const text = q?.text ?? q?.sql ?? String(q);
+    if (text.includes("INSERT")) {
+      return Promise.resolve({ results: { insertId: 1 }, fields: [] });
+    }
+    return Promise.resolve({
+      results: Array.from({ length: count }, (_, i) => ({ id: i + 1 })),
+      fields: [],
+    });
+  });
+}
+
 function findInsertCall() {
   return mockQuery.mock.calls.find((call: any[]) =>
     getSqlText(call).includes("INSERT"),
@@ -327,7 +344,7 @@ describe("saveMany() batch INSERT — 어떤 아이템도 제공하지 않는 �
   });
 
   it("모든 아이템에서 undefined인 컬럼은 batch INSERT에서 빠져야 한다", async () => {
-    mockQuery.mockResolvedValue({ results: { insertId: 1 }, fields: [] });
+    mockMySqlBatchInsert(2);
 
     await em.saveMany(Category368, [
       { name: "a", lft: 1, rgt: 2 } as any,
@@ -342,7 +359,7 @@ describe("saveMany() batch INSERT — 어떤 아이템도 제공하지 않는 �
   });
 
   it("한 아이템이라도 값을 제공하면 컬럼은 유지되어야 한다", async () => {
-    mockQuery.mockResolvedValue({ results: { insertId: 1 }, fields: [] });
+    mockMySqlBatchInsert(2);
 
     await em.saveMany(Category368, [
       { name: "a", lft: 1, rgt: 2 } as any,
@@ -388,7 +405,7 @@ describe("saveMany() batch INSERT — 모든 컬럼 생략 엣지 케이스 (#37
   it("MySQL: 모든 컬럼이 undefined인 batch는 () VALUES (), () 형태여야 한다", async () => {
     const em = createTestEntityManager();
     setupMocks(em, pkOnlyMetadata);
-    mockQuery.mockResolvedValue({ results: { insertId: 1 }, fields: [] });
+    mockMySqlBatchInsert(2);
 
     await em.saveMany(PkOnly373, [{}, {}] as any);
 
