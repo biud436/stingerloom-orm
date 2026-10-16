@@ -159,5 +159,11 @@ describe("DialectExpression", () => {
       expect(create).toThrow(OrmError);
       expect(create).toThrow(/No SQL expression dialect for "oracle"/);
     });
+
+    it("keeps throwing for an unknown dialect and still serves known ones after it", () => {
+      expect(() => createDialectExpression("oracle" as never)).toThrow(OrmError);
+      expect(() => createDialectExpression("oracle" as never)).toThrow(OrmError);
+      expect(createDialectExpression("sqlite")).toBeInstanceOf(SqliteExpression);
+    });
   });
 });
