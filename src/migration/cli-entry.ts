@@ -19,8 +19,9 @@
  * got applied.
  */
 
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { MigrationCli, MigrationCommand } from "./MigrationCli";
 import { Migration } from "./Migration";
@@ -201,16 +202,24 @@ export function parseArgs(argv: string[]): ParsedArgs {
 /** Reads the installed package version for `--version`. */
 function readPackageVersion(): string {
   try {
-    // dist/migration/cli-entry.js and src/migration/cli-entry.ts are both two
-    // levels below the package root. `__dirname` is absent in the ESM build,
-    // where the ReferenceError lands in this catch.
-    const pkg = JSON.parse(
-      readFileSync(resolve(__dirname, "../../package.json"), "utf-8"),
-    );
+    const pkg = JSON.parse(readFileSync(packageJsonPath(), "utf-8"));
     return pkg.version ?? "unknown";
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * dist/migration/cli-entry.js and src/migration/cli-entry.ts are both two
+ * levels below the package root. The ESM build has no `__dirname`, so it
+ * resolves the package's CJS entry (dist/index.js) from the project instead.
+ */
+function packageJsonPath(): string {
+  if (typeof __dirname === "string") {
+    return resolve(__dirname, "../../package.json");
+  }
+  const entry = createRequire(`${process.cwd()}/`).resolve("@stingerloom/orm");
+  return resolve(dirname(entry), "../package.json");
 }
 
 async function loadConfig(
@@ -252,13 +261,18 @@ async function loadConfig(
 }
 
 async function requireConfig(filePath: string): Promise<any> {
+  // The CJS build has a native `require`. The ESM build does not, so recover
+  // one anchored to the config file — ts-node / tsx are the project's own
+  // dev dependencies and resolve from there.
+  const requireFn = typeof require === "function" ? require : createRequire(filePath);
+
   // ts files need ts-node or tsx; js files can be required directly
   if (filePath.endsWith(".ts")) {
     try {
-      require("ts-node/register");
+      requireFn("ts-node/register");
     } catch {
       try {
-        require("tsx/cjs");
+        requireFn("tsx/cjs");
       } catch {
         throw new CliError(`Cannot load TypeScript config: ${filePath}`, [
           "Install ts-node or tsx:",
@@ -267,7 +281,7 @@ async function requireConfig(filePath: string): Promise<any> {
         ]);
       }
     }
-    const mod = require(filePath);
+    const mod = requireFn(filePath);
     return mod.default ?? mod;
   }
 
@@ -277,7 +291,7 @@ async function requireConfig(filePath: string): Promise<any> {
   // dynamic import() with a file URL (Windows-safe).
   if (!filePath.endsWith(".mjs")) {
     try {
-      const mod = require(filePath);
+      const mod = requireFn(filePath);
       return mod.default ?? mod;
     } catch (err: any) {
       const code = err?.code ?? "";

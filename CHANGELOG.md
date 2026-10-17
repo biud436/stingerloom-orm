@@ -62,6 +62,8 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Fixed
 
+- **The migration CLI's ESM build reports its version and loads config files.** `dist/esm/migration/cli-entry.js` read package.json through `__dirname` and loaded the config with a bare `require`, neither of which exists in an ES module: `--version` printed `unknown`, and every command failed with "Failed to load config file" caused by `require is not defined`. It now resolves the package from the project and loads the config through `createRequire`. The published `stingerloom` bin is the CommonJS build and was not affected.
+
 - **`saveMany` returns every row its batch INSERT wrote, or fails.** When the driver has no RETURNING or the entity has eager relations, the batch path re-reads the inserted rows by their derived primary keys, and a key it could not find was dropped — `saveMany` returned a shorter array than it was given. A row inserted with its `@DeletedAt` already set was one such case, hidden by the re-read's soft-delete filter; it is now returned. Any other row that cannot be read back throws `OrmError` with `ORM_QUERY_ERROR` instead of vanishing from the result.
 
 - **An unknown dialect name throws instead of yielding `undefined`.** `createDialectExpression()` cached `undefined` for a name other than `mysql` / `postgres` / `sqlite`, and `createColumnDefinitionBuilder()` returned it, so the mistake surfaced later as a `TypeError` far from its cause. Both now throw `OrmError` with `ORM_UNSUPPORTED_DATABASE`.
