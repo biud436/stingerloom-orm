@@ -663,6 +663,134 @@ export class RelationLoader {
   }
 
   /**
+   * Reads the `RelatedEntity` rows whose `fkColumn` holds one of `parentIds`
+   * — the OneToMany children of each parent, or the inverse-side OneToOne —
+   * and groups them, hydrated, by that FK value in read order.
+   *
+   * Every such read applies the target's soft-delete predicate (unless
+   * `withDeleted`), its SINGLE_TABLE subtype and its tenant predicate.
+   * `shape` — a collection's `where` / `orderBy` / `take` / `skip` — is
+   * applied on top; a single-valued relation has none.
+   *
+   * The FK may be declared via @RelationColumn only (no backing @Column), so
+   * it is not guaranteed to be among the selected columns. It is selected
+   * again under `fkAlias` and read from the RAW row — the hydrated entity is
+   * keyed by property names, not DB column names.
+   */
+  private async loadChildrenByFk(
+    read: {
+      relationName: string;
+      RelatedEntity: ClazzType<any>;
+      relatedMetadata: { name?: string; columns: ColumnMetadata[] };
+      fkColumn: string;
+      fkAlias: string;
+      shape: RelationQueryOptions | undefined;
+      withDeleted: boolean | undefined;
+    },
+    parentIds: unknown[],
+    existingSession?: TransactionSessionManager,
+  ): Promise<Map<unknown, any[]>> {
+    const { RelatedEntity, relatedMetadata, fkColumn, fkAlias, shape, withDeleted } = read;
+    const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
+    const source = this.relatedRowSource(RelatedEntity, relatedMetadata);
+
+    const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
+      const qb = RawQueryBuilderFactory.create();
+      const selectCols = [...source.columns];
+      selectCols.push(
+        `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
+      );
+      const qualify = this.relatedColumnRef(RelatedEntity, true, (col) => this.ctx.wrap(col));
+      const order = this.relationOrder(relatedMetadata, shape, qualify);
+      const paged = RelationLoader.pagesRows(shape);
+      if (paged) {
+        const relatedKeys = relatedMetadata.columns
+          .filter((col: ColumnMetadata) => col.options?.primary)
+          .map((col: ColumnMetadata) => this.ctx.wrap(col.name));
+        selectCols.push(
+          this.rowNumberColumn(
+            read.relationName,
+            this.ctx.wrap(fkColumn),
+            order,
+            relatedKeys.length > 0 ? relatedKeys : [this.ctx.wrap(fkColumn)],
+          ),
+        );
+      }
+
+      const whereConditions: Sql[] = [
+        Conditions.in(this.ctx.wrap(fkColumn), ids),
+        ...this.relationWhere(
+          RelatedEntity,
+          relatedMetadata,
+          shape,
+          withDeleted,
+          source.qualifier,
+          qualify,
+        ),
+      ];
+
+      const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
+      if (deletedAtColumn && !withDeleted) {
+        whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
+      }
+      const subtype = this.singleTableScope(RelatedEntity);
+      if (subtype) whereConditions.push(subtype);
+
+      // Tenant scoping under the "tenant_column" strategy. The batched child
+      // query is a bare SELECT with no JOINs, so the predicate is unqualified.
+      const tenantPredicate = this.ctx.buildTenantWhereClause(RelatedEntity);
+      if (tenantPredicate) {
+        whereConditions.push(tenantPredicate);
+      }
+
+      qb.select(selectCols)
+        .from(source.from, source.alias)
+        .where(whereConditions);
+      if (!paged && order.length > 0) qb.orderBy(order);
+
+      const resultQuery = paged
+        ? this.pageEachParent(qb.build(), fkAlias, shape!)
+        : qb.build();
+      const subQueryStart = Date.now();
+      this.ctx.beginTrackQuery();
+      const queryResult = (await session.query(resultQuery)) as QueryResult;
+      this.ctx.trackQuery(
+        relatedTableName,
+        resultQuery.text ?? String(resultQuery),
+        Date.now() - subQueryStart,
+      );
+      return queryResult;
+    };
+
+    const queryResult = await this.queryInChunks(parentIds, (chunk) =>
+      this.ctx.executeInTransaction(executeQuery(chunk), existingSession),
+    );
+
+    const byFk = new Map<unknown, any[]>();
+    const rows = queryResult.results ?? [];
+    if (rows.length === 0) return byFk;
+
+    // Strip the bookkeeping aliases before hydration, then bulk-deserialize.
+    // The query has no JOINs, so toEntities() is 1:1 and order-preserving with
+    // rows — letting us read each child's FK from the raw row by index.
+    const entityRows = rows.map((row) =>
+      RelationLoader.withoutAliases(row, [fkAlias, ROW_NUMBER_ALIAS]),
+    );
+    const children = source.toEntities(entityRows);
+    for (let i = 0; i < children.length; i++) {
+      const fkValue = rows[i][fkAlias];
+      if (fkValue === undefined || fkValue === null) continue;
+      let group = byFk.get(fkValue);
+      if (!group) {
+        group = [];
+        byFk.set(fkValue, group);
+      }
+      group.push(children[i]);
+    }
+    return byFk;
+  }
+
+  /**
    * Loads OneToMany relations with a batched query and assigns them to each parent entity.
    * Collects every parent ID, issues a single IN query to fetch all children,
    * and distributes them to each parent based on the FK value.
@@ -706,10 +834,6 @@ export class RelationLoader {
         (m) => m.columnName === rel.mappedBy,
       );
       const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
-      // The FK may be declared via @RelationColumn only (no backing @Column),
-      // so it is not guaranteed to appear in relatedMetadata.columns. Select it
-      // under a stable alias and read it from the RAW row when grouping — the
-      // hydrated entity is keyed by property names, not DB column names.
       const fkAlias = "__stg_o2m_fk";
       const options = RelationLoader.optionsOf(tree, rel.propertyKey);
       const relationWithDeleted = options?.withDeleted ?? withDeleted;
@@ -724,108 +848,22 @@ export class RelationLoader {
         continue;
       }
 
-      // 2. Batched query: WHERE fkColumn IN (...parentIds)
-      const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
-      const source = this.relatedRowSource(RelatedEntity, relatedMetadata);
-
-      const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
-        const qb = RawQueryBuilderFactory.create();
-        const selectCols = [...source.columns];
-        selectCols.push(
-          `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
-        );
-        const qualify = this.relatedColumnRef(RelatedEntity, true, (col) => this.ctx.wrap(col));
-        const order = this.relationOrder(relatedMetadata, options, qualify);
-        const paged = RelationLoader.pagesRows(options);
-        if (paged) {
-          const relatedKeys = relatedMetadata.columns
-            .filter((col: ColumnMetadata) => col.options?.primary)
-            .map((col: ColumnMetadata) => this.ctx.wrap(col.name));
-          selectCols.push(
-            this.rowNumberColumn(
-              rel.propertyKey,
-              this.ctx.wrap(fkColumn),
-              order,
-              relatedKeys.length > 0 ? relatedKeys : [this.ctx.wrap(fkColumn)],
-            ),
-          );
-        }
-
-        const whereConditions: Sql[] = [
-          Conditions.in(this.ctx.wrap(fkColumn), ids),
-          ...this.relationWhere(
-            RelatedEntity,
-            relatedMetadata,
-            options,
-            relationWithDeleted,
-            source.qualifier,
-            qualify,
-          ),
-        ];
-
-        const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
-        if (deletedAtColumn && !relationWithDeleted) {
-          whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
-        }
-        const subtype = this.singleTableScope(RelatedEntity);
-        if (subtype) whereConditions.push(subtype);
-
-        // Tenant scoping under the "tenant_column" strategy. The batched child
-        // query is a bare SELECT with no JOINs, so the predicate is unqualified.
-        const tenantPredicate = this.ctx.buildTenantWhereClause(RelatedEntity);
-        if (tenantPredicate) {
-          whereConditions.push(tenantPredicate);
-        }
-
-        qb.select(selectCols)
-          .from(source.from, source.alias)
-          .where(whereConditions);
-        if (!paged && order.length > 0) qb.orderBy(order);
-
-        const resultQuery = paged
-          ? this.pageEachParent(qb.build(), fkAlias, options!)
-          : qb.build();
-        const subQueryStart = Date.now();
-        this.ctx.beginTrackQuery();
-        const queryResult = (await session.query(resultQuery)) as QueryResult;
-        this.ctx.trackQuery(
-          relatedTableName,
-          resultQuery.text ?? String(resultQuery),
-          Date.now() - subQueryStart,
-        );
-        return queryResult;
-      };
-
-      const queryResult = await this.queryInChunks(parentIds, (chunk) =>
-        this.ctx.executeInTransaction(executeQuery(chunk), existingSession),
+      // 2. One batched query, grouped by the FK value
+      const childrenByParentId = await this.loadChildrenByFk(
+        {
+          relationName: rel.propertyKey,
+          RelatedEntity,
+          relatedMetadata,
+          fkColumn,
+          fkAlias,
+          shape: options,
+          withDeleted: relationWithDeleted,
+        },
+        parentIds,
+        existingSession,
       );
 
-      // 3. Group the results into a Map keyed by FK value
-      const childrenByParentId = new Map<any, any[]>();
-
-      if (queryResult.results && queryResult.results.length > 0) {
-        const rows = queryResult.results;
-        // Strip the FK alias before hydration, then bulk-deserialize. The query
-        // has no JOINs, so toEntities() is 1:1 and order-preserving with rows —
-        // letting us read each child's FK from the raw row by index.
-        const entityRows = rows.map((row) =>
-          RelationLoader.withoutAliases(row, [fkAlias, ROW_NUMBER_ALIAS]),
-        );
-        const allChildren = source.toEntities(entityRows);
-
-        for (let i = 0; i < allChildren.length; i++) {
-          const fkValue = rows[i][fkAlias];
-          if (fkValue === undefined || fkValue === null) continue;
-          let group = childrenByParentId.get(fkValue);
-          if (!group) {
-            group = [];
-            childrenByParentId.set(fkValue, group);
-          }
-          group.push(allChildren[i]);
-        }
-      }
-
-      // 4. Assign the matching child array to each parent
+      // 3. Assign the matching child array to each parent
       for (const parent of parents) {
         const parentId = this.parentIdOf(parent, pk);
         parent[rel.propertyKey] = childrenByParentId.get(parentId) ?? [];
@@ -1079,10 +1117,6 @@ export class RelationLoader {
         }
 
         const fkColumn = ownerRel.joinColumn;
-        // The owning side's FK may be declared via @RelationColumn only, so it
-        // is not guaranteed to be in relatedMetadata.columns. Select it under a
-        // stable alias and read it from the RAW row (the hydrated entity is
-        // keyed by property names, not DB column names).
         const fkAlias = "__stg_o2o_fk";
 
         // 1. Collect every parent ID (skipping null/undefined)
@@ -1095,78 +1129,27 @@ export class RelationLoader {
           continue;
         }
 
-        // 2. Batched query: WHERE fkColumn IN (...parentIds)
-        const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
-        const source = this.relatedRowSource(RelatedEntity, relatedMetadata);
-
-        const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
-          const qb = RawQueryBuilderFactory.create();
-          const selectCols = [...source.columns];
-          selectCols.push(
-            `${this.ctx.wrap(fkColumn)} AS ${this.ctx.wrap(fkAlias)}`,
-          );
-
-          const whereConditions: Sql[] = [
-            Conditions.in(this.ctx.wrap(fkColumn), ids),
-          ];
-
-          const deletedAtColumn = this.resolver.getDeletedAtColumn(RelatedEntity);
-          const relationWithDeleted =
-            RelationLoader.optionsOf(tree, rel.propertyKey)?.withDeleted ?? withDeleted;
-          if (deletedAtColumn && !relationWithDeleted) {
-            whereConditions.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
-          }
-          const subtype = this.singleTableScope(RelatedEntity);
-          if (subtype) whereConditions.push(subtype);
-
-          // Tenant scoping under the "tenant_column" strategy.
-          const tenantPredicate = this.ctx.buildTenantWhereClause(RelatedEntity);
-          if (tenantPredicate) {
-            whereConditions.push(tenantPredicate);
-          }
-
-          qb.select(selectCols)
-            .from(source.from, source.alias)
-            .where(whereConditions);
-
-          const resultQuery = qb.build();
-          const subQueryStart = Date.now();
-          this.ctx.beginTrackQuery();
-          const queryResult = (await session.query(resultQuery)) as QueryResult;
-          this.ctx.trackQuery(
-            relatedTableName,
-            resultQuery.text ?? String(resultQuery),
-            Date.now() - subQueryStart,
-          );
-          return queryResult;
-        };
-
-        const queryResult = await this.queryInChunks(parentIds, (chunk) =>
-          this.ctx.executeInTransaction(executeQuery(chunk), existingSession),
+        // 2. One batched query, grouped by the FK value
+        const relatedByParentId = await this.loadChildrenByFk(
+          {
+            relationName: rel.propertyKey,
+            RelatedEntity,
+            relatedMetadata,
+            fkColumn,
+            fkAlias,
+            shape: undefined,
+            withDeleted:
+              RelationLoader.optionsOf(tree, rel.propertyKey)?.withDeleted ?? withDeleted,
+          },
+          parentIds,
+          existingSession,
         );
 
-        // 3. Group the results into a Map keyed by FK value (1:1 mapping for OneToOne)
-        const relatedByParentId = new Map<any, any>();
-
-        if (queryResult.results && queryResult.results.length > 0) {
-          for (const row of queryResult.results) {
-            const fkValue = row[fkAlias];
-            if (fkValue === undefined || fkValue === null) continue;
-
-            const entityRow = { ...row };
-            delete entityRow[fkAlias];
-            const [related] = source.toEntities([entityRow]);
-
-            if (related !== undefined) {
-              relatedByParentId.set(fkValue, related);
-            }
-          }
-        }
-
-        // 4. Assign the matching related entity to each parent
+        // 3. Assign the matching related entity to each parent — the last row
+        //    read for a parent when the FK is not unique
         for (const parent of parents) {
-          const parentId = this.parentIdOf(parent, pk);
-          parent[rel.propertyKey] = relatedByParentId.get(parentId) ?? null;
+          const group = relatedByParentId.get(this.parentIdOf(parent, pk));
+          parent[rel.propertyKey] = group ? group[group.length - 1] : null;
         }
       } else {
         for (const parent of parents) {
