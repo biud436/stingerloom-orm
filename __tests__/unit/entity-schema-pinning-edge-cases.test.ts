@@ -232,6 +232,48 @@ describe("@Entity({ schema }) and inheritance", () => {
     expect(logs).toHaveLength(0);
   });
 
+  it("the decorator and EntitySchema resolve an STI child's schema the same way, each warning in its own words", () => {
+    const logs = captureLogs();
+
+    @Entity({ schema: "public" })
+    @Inheritance({ strategy: "SINGLE_TABLE" })
+    class Account {
+      @PrimaryGeneratedColumn()
+      id!: number;
+    }
+
+    @Entity({ schema: "ledger" })
+    class SavingsAccount extends Account {}
+
+    class Plan {
+      id!: number;
+    }
+    class ProPlan extends Plan {}
+    new EntitySchema<any>({
+      target: Plan,
+      schema: "public",
+      inheritance: { strategy: "SINGLE_TABLE" },
+      columns: { id: { type: "int", primary: true, autoIncrement: true } },
+    });
+    new EntitySchema<any>({
+      target: ProPlan,
+      schema: "ledger",
+      discriminatorValue: "pro",
+      columns: {},
+    });
+
+    const decorated = Reflect.getMetadata(ENTITY_TOKEN, SavingsAccount) as EntityMetadata;
+    const declared = Reflect.getMetadata(ENTITY_TOKEN, ProPlan) as EntityMetadata;
+    expect([decorated.name, decorated.schema]).toEqual(["account", "public"]);
+    expect([declared.name, declared.schema]).toEqual(["plan", "public"]);
+    expect(decorated.inheritanceRoot).toBe(Account);
+    expect(declared.inheritanceRoot).toBe(Plan);
+    expect((Reflect.getMetadata(ENTITY_TOKEN, Plan) as EntityMetadata).childEntities).toEqual([ProPlan]);
+
+    expect(logs.some((l) => l.includes('@Entity({ schema: "ledger" }) on SavingsAccount is ignored'))).toBe(true);
+    expect(logs.some((l) => l.includes('EntitySchema { schema: "ledger" } on ProPlan is ignored'))).toBe(true);
+  });
+
   it("a TPT child may pin its own table to another schema", () => {
     expect(getEntitySchema(Invoice)).toBe("billing");
     expect(getEntitySchema(ArchivedInvoice)).toBe("archive");

@@ -2,17 +2,14 @@
 import { getScannerInstance } from "../scanner/ScannerContainer";
 import {
   ColumnScanner,
-  EntityScanner,
   ManyToOneScanner,
   OneToManyScanner,
   ManyToManyScanner,
 } from "../scanner";
 import { OneToOneScanner } from "../scanner/OneToOneScanner";
-import { createEntityKey } from "../utils/scanner";
-import { camelToSnakeCase } from "../utils/camelToSnakeCase";
 import { Logger } from "../utils/Logger";
 import { COLUMN_TOKEN, ColumnType, KnownColumnType, ResolvedColumnOption, inferColumnDefaults } from "../decorators/Column";
-import { ENTITY_TOKEN, EntityMetadata } from "../decorators/Entity";
+import { registerEntityMetadata } from "../decorators/Entity";
 import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../decorators/ManyToOne";
 import { ONE_TO_MANY_TOKEN, OneToManyMetadata } from "../decorators/OneToMany";
 import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../decorators/OneToOne";
@@ -25,7 +22,7 @@ import { UPDATE_TIMESTAMP_TOKEN } from "../decorators/UpdateTimestamp";
 import { DELETED_AT_TOKEN } from "../decorators/DeletedAt";
 import { HOOK_TOKEN, HookMetadata } from "../decorators/Hooks";
 import { VALIDATION_TOKEN, ValidationMetadata } from "../decorators/Validation";
-import { INHERITANCE_TOKEN, InheritanceStrategy } from "../decorators/Inheritance";
+import { INHERITANCE_TOKEN } from "../decorators/Inheritance";
 import { DISCRIMINATOR_COLUMN_TOKEN } from "../decorators/DiscriminatorColumn";
 import { DISCRIMINATOR_VALUE_TOKEN } from "../decorators/DiscriminatorValue";
 import { ComputedColumn } from "../decorators/ComputedColumn";
@@ -513,140 +510,6 @@ export class EntitySchemaRegistrar {
   }
 
   static registerEntity<T>(options: EntitySchemaOptions<T>): void {
-    const scanner = getScannerInstance(EntityScanner);
-    const columnScanner = getScannerInstance(ColumnScanner);
-    const manyToOneScanner = getScannerInstance(ManyToOneScanner);
-    const oneToManyScanner = getScannerInstance(OneToManyScanner);
-    const oneToOneScanner = getScannerInstance(OneToOneScanner);
-    const manyToManyScanner = getScannerInstance(ManyToManyScanner);
-
-    const cls = options.target;
-    const proto = cls.prototype;
-
-    const hasExplicitName = !!options.tableName;
-    let nameKey = options.tableName || camelToSnakeCase(cls.name);
-    let schemaKey: string | undefined = options.schema || undefined;
-
-    // ── Inheritance detection (mirrors Entity.ts logic) ──────────────
-    let inheritanceRoot: ClazzType<any> | undefined;
-    let inheritanceStrategy: InheritanceStrategy | undefined;
-    let discriminatorValue: string | undefined;
-    let discriminatorColumn:
-      | { name: string; type: KnownColumnType; length: number }
-      | undefined;
-    let childEntities: ClazzType<any>[] | undefined;
-
-    // Build prototype chain for column inheritance
-    const protoChain: object[] = [];
-    let currentProto = proto;
-    while (currentProto && currentProto !== Object.prototype) {
-      protoChain.push(currentProto);
-      currentProto = Object.getPrototypeOf(currentProto);
-    }
-
-    // Build constructor chain for relation & inheritance detection
-    const constructorChain: Function[] = [];
-    let ctor: Function = cls;
-    while (ctor && ctor !== Function.prototype && ctor !== Object) {
-      constructorChain.push(ctor);
-      ctor = Object.getPrototypeOf(ctor);
-    }
-
-    // Check if THIS class is the inheritance root
-    const inheritanceMeta = Reflect.getOwnMetadata(INHERITANCE_TOKEN, cls);
-    if (inheritanceMeta) {
-      inheritanceStrategy = inheritanceMeta.strategy;
-      const dcMeta = Reflect.getOwnMetadata(DISCRIMINATOR_COLUMN_TOKEN, cls);
-      discriminatorColumn = dcMeta ?? {
-        name: "dtype",
-        type: "varchar" as KnownColumnType,
-        length: 31,
-      };
-      childEntities = [];
-      discriminatorValue =
-        Reflect.getOwnMetadata(DISCRIMINATOR_VALUE_TOKEN, cls) ?? cls.name;
-    } else {
-      // Walk up to find parent with @Inheritance
-      for (let i = 1; i < constructorChain.length; i++) {
-        const parent = constructorChain[i];
-        const parentInheritance = Reflect.getOwnMetadata(
-          INHERITANCE_TOKEN,
-          parent,
-        );
-        if (parentInheritance) {
-          inheritanceRoot = parent as ClazzType<any>;
-          inheritanceStrategy = parentInheritance.strategy;
-
-          discriminatorValue =
-            Reflect.getOwnMetadata(DISCRIMINATOR_VALUE_TOKEN, cls) ??
-            cls.name;
-
-          discriminatorColumn =
-            Reflect.getOwnMetadata(DISCRIMINATOR_COLUMN_TOKEN, parent) ?? {
-              name: "dtype",
-              type: "varchar" as KnownColumnType,
-              length: 31,
-            };
-
-          // STI: use root's table name
-          if (inheritanceStrategy === "SINGLE_TABLE" && !hasExplicitName) {
-            const rootMeta = Reflect.getOwnMetadata(ENTITY_TOKEN, parent) as
-              | EntityMetadata
-              | undefined;
-            if (rootMeta) {
-              nameKey = rootMeta.name;
-            }
-          }
-
-          // Register this child in the root's metadata
-          const rootMeta = Reflect.getOwnMetadata(ENTITY_TOKEN, parent) as
-            | EntityMetadata
-            | undefined;
-          if (rootMeta?.childEntities) {
-            rootMeta.childEntities.push(cls);
-          }
-          // Mirrors Entity.ts: a TPT child lives in the root's schema unless
-          // it pins its own table elsewhere; an STI child shares the root's
-          // table, so its own `schema` is ignored (warned when it differs).
-          if (inheritanceStrategy === "SINGLE_TABLE") {
-            if (schemaKey !== undefined && schemaKey !== rootMeta?.schema) {
-              entitySchemaLogger.warn(
-                `EntitySchema { schema: "${schemaKey}" } on ${cls.name} is ignored: ` +
-                  `it is a SINGLE_TABLE child of ${parent.name} and shares its table "${rootMeta?.name ?? nameKey}"` +
-                  (rootMeta?.schema
-                    ? ` in schema "${rootMeta.schema}".`
-                    : " in the default schema."),
-              );
-            }
-            schemaKey = rootMeta?.schema;
-          } else if (schemaKey === undefined && rootMeta?.schema) {
-            schemaKey = rootMeta.schema;
-          }
-
-          break;
-        }
-      }
-    }
-
-    // Filter metadata by target — walk the prototype/constructor chains like
-    // @Entity does, so columns and relations declared on (decorated) ancestor
-    // classes are included even without an explicit `inheritance` option.
-    const columns = columnScanner
-      .allMetadata<ColumnMetadata>()
-      .filter((c) => protoChain.includes(c.target as object));
-    const manyToOnes = manyToOneScanner
-      .allMetadata<ManyToOneMetadata<unknown>>()
-      .filter((m) => constructorChain.includes(m.target as Function));
-    const oneToManys = oneToManyScanner
-      .allMetadata<OneToManyMetadata<unknown>>()
-      .filter((m) => constructorChain.includes(m.target as Function));
-    const oneToOnes = oneToOneScanner
-      .allMetadata<OneToOneMetadata<unknown>>()
-      .filter((m) => constructorChain.includes(m.target as Function));
-    const manyToManys = manyToManyScanner
-      .allMetadata<ManyToManyMetadata<unknown>>()
-      .filter((m) => constructorChain.includes(m.target as Function));
-
     const entityOption =
       options.tableName || options.schema
         ? {
@@ -655,28 +518,12 @@ export class EntitySchemaRegistrar {
           }
         : undefined;
 
-    const metadata: EntityMetadata = {
-      target: cls,
-      columns,
-      manyToOnes,
-      oneToManys,
-      oneToOnes,
-      manyToManys,
+    registerEntityMetadata(options.target, {
+      name: options.tableName,
+      schema: options.schema,
       options: entityOption,
-      name: nameKey,
-      nameExplicit: hasExplicitName,
-      ...(schemaKey !== undefined ? { schema: schemaKey } : {}),
-      rawClassName: cls.name,
-      inheritanceRoot,
-      inheritanceStrategy,
-      discriminatorValue,
-      discriminatorColumn,
-      childEntities,
-    };
-
-    // Scanner key: use class name (unique per class) to avoid STI key collision
-    const scannerKey = createEntityKey(camelToSnakeCase(cls.name));
-    scanner.setOnPublic(scannerKey, metadata);
-    Reflect.defineMetadata(ENTITY_TOKEN, metadata, cls);
+      logger: entitySchemaLogger,
+      describeSchemaOption: (schema) => `EntitySchema { schema: "${schema}" }`,
+    });
   }
 }
