@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { join, raw, Sql } from "../../utils/sqlTag";
+import sql, { raw, Sql } from "../../utils/sqlTag";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "../mysql/BaseSchema";
-import { ColumnOption, ColumnType } from "../../decorators";
+import { ColumnType } from "../../decorators";
 import { ISqlDriver, CreateTableForeignKey } from "../SqlDriver";
 import type { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { referentialActionClause } from "../../types/ReferentialAction";
@@ -13,6 +13,7 @@ import { Logger } from "../../utils/Logger";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { SqliteColumnDefinitionBuilder } from "./SqliteColumnDefinitionBuilder";
+import { buildCreateTableDefinitions } from "../createTableDefinitions";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { SqliteConnector } from "./SqliteConnector";
 import { DbVersion } from "../DbVersion";
@@ -293,49 +294,23 @@ export class SqliteDriver implements ISqlDriver {
     foreignKeys?: CreateTableForeignKey[],
     computedColumns?: ComputedColumnMetadata[],
   ) {
-    const pkColumns = columns.filter(
-      (c) => (c.options as ColumnOption | undefined)?.primary,
+    const definitions = buildCreateTableDefinitions(
+      this.columnDefBuilder,
+      tableName,
+      columns,
+      computedColumns,
     );
-    const isCompositePk = pkColumns.length > 1;
-
-    const columnsMap = columns.map((column) => {
-      const option = (column.options ?? this.columnDefBuilder.defaultColumnOption) as ColumnOption;
-      return raw(
-        this.columnDefBuilder.buildColumnDef(option, {
-          columnName: column.name,
-          tableName,
-          isCompositePk,
-        }),
-      );
-    });
-
-    for (const cc of computedColumns ?? []) {
-      columnsMap.push(
-        raw(
-          this.columnDefBuilder.buildComputedColumnDef(cc, {
-            columnName: cc.name,
-            tableName,
-          }),
-        ),
-      );
-    }
-
-    if (isCompositePk) {
-      const pkList = pkColumns.map((c) => this.wrap(c.name)).join(", ");
-      columnsMap.push(raw(`PRIMARY KEY (${pkList})`));
-    }
 
     // SQLite cannot ALTER TABLE ADD FOREIGN KEY, so FK constraints must be
     // part of the CREATE TABLE statement. Referencing a table that is created
     // later in the same sync pass is fine — SQLite resolves parent tables at
     // DML time, not at CREATE time.
     for (const fk of foreignKeys ?? []) {
-      columnsMap.push(raw(this.buildForeignKeyClause(fk)));
+      definitions.push(this.buildForeignKeyClause(fk));
     }
 
-    const result = sql`CREATE TABLE IF NOT EXISTS ${raw(this.wrap(tableName))} (${join(
-      columnsMap,
-      ",",
+    const result = sql`CREATE TABLE IF NOT EXISTS ${raw(this.wrap(tableName))} (${raw(
+      definitions.join(","),
     )})`;
 
     return this.connector.query(result.text);

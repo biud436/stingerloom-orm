@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../../utils";
-import { COLUMN_TOKEN, ColumnOption, ColumnType } from "../../decorators/Column";
+import { COLUMN_TOKEN, ColumnType } from "../../decorators/Column";
 import {
   ENTITY_TOKEN,
   EntityMetadata,
@@ -54,6 +54,7 @@ import {
   EntityColumnDef,
 } from "./entityColumns";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
+import { buildCreateTableDefinitions } from "../../dialects/createTableDefinitions";
 import {
   ColumnDefinitionBuilder,
   createColumnDefinitionBuilder,
@@ -126,33 +127,18 @@ export class SchemaGenerator {
     const tableName = this.getTableName(entity);
     const columns = this.getColumns(entity);
 
-    // Composite PK detection: two or more primary columns means a composite PK.
-    const pkColumns = columns.filter((col) => col.options.primary);
-    if (pkColumns.length === 0) {
+    if (!columns.some((col) => col.options.primary)) {
       throw new PrimaryKeyNotFoundError(tableName);
     }
-    const isCompositePk = pkColumns.length > 1;
 
-    const columnDefs = columns.map((col) =>
-      this.renderColumnDef(col, tableName, isCompositePk),
-    );
-
-    // Computed/generated columns — rendered by the shared builder so this
+    // Built by the same helper as the drivers' createTable(), so this
     // migration-time DDL can never diverge from the runtime synchronize path.
-    for (const cc of collectTableComputedColumns(entity)) {
-      columnDefs.push(
-        this.columnDefBuilder.buildComputedColumnDef(cc, {
-          columnName: cc.name,
-          tableName,
-        }),
-      );
-    }
-
-    // For a composite PK, append the PRIMARY KEY (col1, col2, ...) constraint.
-    if (isCompositePk) {
-      const pkDef = `PRIMARY KEY (${pkColumns.map((col) => this.wrapId(col.name)).join(", ")})`;
-      columnDefs.push(pkDef);
-    }
+    const columnDefs = buildCreateTableDefinitions(
+      this.columnDefBuilder,
+      tableName,
+      columns,
+      collectTableComputedColumns(entity),
+    );
 
     const ddl = `CREATE TABLE IF NOT EXISTS ${this.wrapTable(tableName, this.schemaOf(entity))} (${columnDefs.join(", ")})`;
 
@@ -836,18 +822,6 @@ export class SchemaGenerator {
     return columns
       .filter((col) => col.options.primary)
       .map((col) => col.name);
-  }
-
-  private renderColumnDef(
-    col: ColumnDef,
-    _tableName: string,
-    isCompositePk = false,
-  ): string {
-    return this.columnDefBuilder.buildColumnDef(col.options, {
-      columnName: col.name,
-      tableName: _tableName,
-      isCompositePk,
-    });
   }
 
   private castType(type: ColumnType): string {

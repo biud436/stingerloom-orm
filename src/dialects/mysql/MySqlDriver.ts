@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { join, raw, Sql } from "../../utils/sqlTag";
+import sql, { raw, Sql } from "../../utils/sqlTag";
 import type { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "./BaseSchema";
-import { ColumnOption, ColumnType } from "../../decorators";
+import { ColumnType } from "../../decorators";
 import { ISqlDriver } from "../SqlDriver";
 import { Exception } from "../../errors";
 import { OrmError } from "../../errors/OrmError";
@@ -12,6 +12,7 @@ import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
 import { MySqlColumnDefinitionBuilder } from "./MySqlColumnDefinitionBuilder";
+import { buildCreateTableDefinitions } from "../createTableDefinitions";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { MySqlConnector } from "./MySqlConnector";
 import { DbVersion } from "../DbVersion";
@@ -369,41 +370,15 @@ export class MySqlDriver implements ISqlDriver {
     _foreignKeys?: unknown,
     computedColumns?: ComputedColumnMetadata[],
   ) {
-    const pkColumns = columns.filter(
-      (c) => (c.options as ColumnOption | undefined)?.primary,
+    const definitions = buildCreateTableDefinitions(
+      this.columnDefBuilder,
+      tableName,
+      columns,
+      computedColumns,
     );
-    const isCompositePk = pkColumns.length > 1;
 
-    const columnsMap = columns.map((column) => {
-      const option = (column.options ?? this.columnDefBuilder.defaultColumnOption) as ColumnOption;
-      return raw(
-        this.columnDefBuilder.buildColumnDef(option, {
-          columnName: column.name,
-          tableName,
-          isCompositePk,
-        }),
-      );
-    });
-
-    for (const cc of computedColumns ?? []) {
-      columnsMap.push(
-        raw(
-          this.columnDefBuilder.buildComputedColumnDef(cc, {
-            columnName: cc.name,
-            tableName,
-          }),
-        ),
-      );
-    }
-
-    if (isCompositePk) {
-      const pkList = pkColumns.map((c) => this.wrap(c.name)).join(", ");
-      columnsMap.push(raw(`PRIMARY KEY (${pkList})`));
-    }
-
-    const result = sql`CREATE TABLE IF NOT EXISTS ${raw(this.wrap(tableName))} (${join(
-      columnsMap,
-      ",",
+    const result = sql`CREATE TABLE IF NOT EXISTS ${raw(this.wrap(tableName))} (${raw(
+      definitions.join(","),
     )})`;
 
     return this.connector.query(result.text);
