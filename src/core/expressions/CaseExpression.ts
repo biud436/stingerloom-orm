@@ -1,37 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, raw, join } from "../../utils/sqlTag";
-import type { ConditionLike, ColumnResolver } from "./ConditionLike";
-import type { DialectExpression } from "../../dialects/DialectExpression";
+import sql, { join } from "../../utils/sqlTag";
+import type { ConditionLike } from "./ConditionLike";
 import { ScalarExpression } from "./ScalarExpression";
-
-/**
- * @internal Shared helper — render any value usable as a CASE result:
- * a column/scalar expression unwraps to its inner SQL, everything else
- * is bound as a parameter.
- */
-function renderResultValue(
-  value: unknown,
-  resolveColumn: ColumnResolver,
-  dialect?: DialectExpression,
-): Sql {
-  if (
-    value !== null &&
-    typeof value === "object" &&
-    (value as { __isScalarExpression?: unknown }).__isScalarExpression === true
-  ) {
-    return (value as {
-      renderer: (r: ColumnResolver, d?: DialectExpression) => Sql;
-    }).renderer(resolveColumn, dialect);
-  }
-  if (
-    value !== null &&
-    typeof value === "object" &&
-    (value as { __isColumnExpression?: unknown }).__isColumnExpression === true
-  ) {
-    return sql`${raw(resolveColumn((value as { toString(): string }).toString()))}`;
-  }
-  return sql`${value as any}`;
-}
+import { renderExpressionArg } from "./expressionArg";
 
 interface CaseBranch {
   condition: ConditionLike;
@@ -113,11 +84,11 @@ export class CaseBuilder {
     return new ScalarExpression((resolveColumn, dialect) => {
       const whenParts = branches.map((b) => {
         const cond = b.condition.resolve(resolveColumn, dialect);
-        const result = renderResultValue(b.result, resolveColumn, dialect);
+        const result = renderExpressionArg(b.result, resolveColumn, dialect);
         return sql`WHEN ${cond} THEN ${result}`;
       });
       if (elseValue) {
-        const def = renderResultValue(elseValue.value, resolveColumn, dialect);
+        const def = renderExpressionArg(elseValue.value, resolveColumn, dialect);
         return sql`CASE ${join(whenParts, " ")} ELSE ${def} END`;
       }
       return sql`CASE ${join(whenParts, " ")} END`;
@@ -196,14 +167,14 @@ export class CaseValueBuilder {
     const branches = this.branches;
     const elseValue = this.elseValue;
     return new ScalarExpression((resolveColumn, dialect) => {
-      const subj = renderResultValue(subject, resolveColumn, dialect);
+      const subj = renderExpressionArg(subject, resolveColumn, dialect);
       const whenParts = branches.map((b) => {
-        const val = renderResultValue(b.value, resolveColumn, dialect);
-        const res = renderResultValue(b.result, resolveColumn, dialect);
+        const val = renderExpressionArg(b.value, resolveColumn, dialect);
+        const res = renderExpressionArg(b.result, resolveColumn, dialect);
         return sql`WHEN ${val} THEN ${res}`;
       });
       if (elseValue) {
-        const def = renderResultValue(elseValue.value, resolveColumn, dialect);
+        const def = renderExpressionArg(elseValue.value, resolveColumn, dialect);
         return sql`CASE ${subj} ${join(whenParts, " ")} ELSE ${def} END`;
       }
       return sql`CASE ${subj} ${join(whenParts, " ")} END`;

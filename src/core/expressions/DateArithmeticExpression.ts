@@ -1,75 +1,25 @@
-import sql, { Sql, raw } from "../../utils/sqlTag";
+import type { Sql } from "../../utils/sqlTag";
 import type {
   DateAddUnit,
   DateTruncUnit,
   DialectExpression,
 } from "../../dialects/DialectExpression";
 import type { ColumnResolver } from "./ConditionLike";
-import { ScalarExpression } from "./ScalarExpression";
-import type { InnerRenderer } from "./StringExpression";
-import { OrmError } from "../../errors/OrmError";
-import { OrmErrorCode } from "../../errors/OrmErrorCode";
-
-function dialectRequired(feature: string): OrmError {
-  return new OrmError(
-    OrmErrorCode.INVALID_QUERY,
-    `${feature} requires a DialectExpression. Ensure the query builder was ` +
-      "created via EntityManager.createQueryBuilder() — the dialect is propagated " +
-      "from the active EntityManager, so a builder constructed in isolation has no " +
-      "way to render dialect-specific SQL.",
-  );
-}
+import { ScalarExpression, dialectRequired } from "./ScalarExpression";
+import { renderExpressionArg } from "./expressionArg";
 
 /**
  * @internal Render any argument usable as a date source — column /
- * scalar expressions unwrap to their inner SQL, plain values bind as
- * parameters.
+ * scalar expressions unwrap to their inner SQL, an `"alias.col"` string
+ * (e.g. `"i.completedAt"`) names a column, other values bind as parameters.
  */
 function renderDateArg(
   arg: unknown,
   resolveColumn: ColumnResolver,
   dialect?: DialectExpression,
 ): Sql {
-  if (
-    arg !== null &&
-    typeof arg === "object" &&
-    (arg as { __isScalarExpression?: unknown }).__isScalarExpression === true
-  ) {
-    return (arg as {
-      renderer: (r: ColumnResolver, d?: DialectExpression) => Sql;
-    }).renderer(resolveColumn, dialect);
-  }
-  if (
-    arg !== null &&
-    typeof arg === "object" &&
-    (arg as { __isColumnExpression?: unknown }).__isColumnExpression === true
-  ) {
-    return sql`${raw(resolveColumn((arg as { toString(): string }).toString()))}`;
-  }
-  if (typeof arg === "string" && arg.includes(".")) {
-    // Treat "alias.col" strings as column refs (e.g. "i.completedAt").
-    return sql`${raw(resolveColumn(arg))}`;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return sql`${arg as any}`;
-}
-
-/**
- * Build a date-addition scalar — `value + N units`. Accepts negative
- * `n` for subtraction (e.g. `addDays(-7)`).
- */
-export function buildDateAdd(
-  inner: InnerRenderer,
-  n: number,
-  unit: DateAddUnit,
-): ScalarExpression {
-  return new ScalarExpression((resolveColumn, dialect) => {
-    if (!dialect) {
-      throw dialectRequired("Date add expressions");
-    }
-    const value = inner(resolveColumn, dialect);
-    return dialect.dateAdd(value, n, unit);
-  });
+  const strings = typeof arg === "string" && arg.includes(".") ? "column" : "value";
+  return renderExpressionArg(arg, resolveColumn, dialect, strings);
 }
 
 /**

@@ -13,44 +13,14 @@ import {
   type RegexInput,
 } from "../../expressions/RegexPattern";
 import { AliasedExpression } from "../../expressions/AliasedExpression";
-import type { ScalarExpression } from "../../expressions/ScalarExpression";
+import { ScalarExpression } from "../../expressions/ScalarExpression";
 import { coalesce as coalesceFn } from "../../expressions/NullishExpression";
 import {
   greatest as greatestFn,
   least as leastFn,
 } from "../../expressions/ComparisonExpression";
-import { buildCastScalar } from "../../expressions/CastExpression";
-import { buildDateComponentFromRef } from "../../expressions/DateComponentExpression";
-import {
-  buildToLowerCase,
-  buildToUpperCase,
-  buildTrim,
-  buildLength,
-  buildSubstring,
-  buildConcat,
-  buildIndexOf,
-  buildReplace,
-  type InnerRenderer,
-} from "../../expressions/StringExpression";
-import {
-  buildAdd,
-  buildSub,
-  buildMul,
-  buildDiv,
-  buildMod,
-  buildNeg,
-  buildAbs,
-  buildFloor,
-  buildCeil,
-  buildRound,
-  buildSqrt,
-} from "../../expressions/NumericExpression";
-import { buildDateAdd } from "../../expressions/DateArithmeticExpression";
 import type {
   ArrayOperator,
-  CastKind,
-  DateAddUnit,
-  DateComponent,
   FullTextSearchOptions,
 } from "../../../dialects/DialectExpression";
 
@@ -429,23 +399,23 @@ export class ColumnExpression {
 
   /** `CAST(column AS <dialect-string-type>)` — TEXT / CHAR. */
   stringValue(): ScalarExpression {
-    return this.buildCast("string");
+    return this.asScalar().stringValue();
   }
   /** `CAST(column AS <dialect-int-type>)` — INTEGER / SIGNED. */
   intValue(): ScalarExpression {
-    return this.buildCast("int");
+    return this.asScalar().intValue();
   }
   /** `CAST(column AS <dialect-long-type>)` — BIGINT / SIGNED. */
   longValue(): ScalarExpression {
-    return this.buildCast("long");
+    return this.asScalar().longValue();
   }
   /** `CAST(column AS <dialect-float-type>)` — REAL / DECIMAL. */
   floatValue(): ScalarExpression {
-    return this.buildCast("float");
+    return this.asScalar().floatValue();
   }
   /** `CAST(column AS <dialect-boolean-type>)` — BOOLEAN / UNSIGNED / INTEGER. */
   booleanValue(): ScalarExpression {
-    return this.buildCast("boolean");
+    return this.asScalar().booleanValue();
   }
   /**
    * `CAST(column AS <dialect-bigint-type>)` — same SQL target as
@@ -455,189 +425,177 @@ export class ColumnExpression {
    * in application code to get a native `bigint`.
    */
   bigintValue(): ScalarExpression {
-    return this.buildCast("bigint");
-  }
-
-  private buildCast(kind: CastKind): ScalarExpression {
-    const ref = this.ref;
-    return buildCastScalar(kind, (resolveColumn) =>
-      sql`${raw(resolveColumn(ref))}`,
-    );
+    return this.asScalar().bigintValue();
   }
 
   // ── Date / time component helpers (Tier 2) ─────────────
 
   /** `EXTRACT(YEAR …)` / `YEAR(col)` / `strftime('%Y', col)`. */
   year(): ScalarExpression {
-    return this.buildDateComponent("year");
+    return this.asScalar().year();
   }
   /** `EXTRACT(MONTH …)` / `MONTH(col)` / `strftime('%m', col)`. */
   month(): ScalarExpression {
-    return this.buildDateComponent("month");
+    return this.asScalar().month();
   }
   /** Alias of `.dayOfMonth()` — 1–31. */
   day(): ScalarExpression {
-    return this.buildDateComponent("day");
+    return this.asScalar().day();
   }
   /** `EXTRACT(HOUR …)` / `HOUR(col)` / `strftime('%H', col)`. */
   hour(): ScalarExpression {
-    return this.buildDateComponent("hour");
+    return this.asScalar().hour();
   }
   /** Minute of hour, 0–59. */
   minute(): ScalarExpression {
-    return this.buildDateComponent("minute");
+    return this.asScalar().minute();
   }
   /** Second of minute, 0–59. */
   second(): ScalarExpression {
-    return this.buildDateComponent("second");
+    return this.asScalar().second();
   }
   /** Day of week — engine-specific encoding (see DialectExpression doc). */
   dayOfWeek(): ScalarExpression {
-    return this.buildDateComponent("dayOfWeek");
+    return this.asScalar().dayOfWeek();
   }
   /** Day of month, 1–31. */
   dayOfMonth(): ScalarExpression {
-    return this.buildDateComponent("dayOfMonth");
+    return this.asScalar().dayOfMonth();
   }
   /** Day of year, 1–366. */
   dayOfYear(): ScalarExpression {
-    return this.buildDateComponent("dayOfYear");
+    return this.asScalar().dayOfYear();
   }
   /** Week of year — engine-specific encoding (see DialectExpression doc). */
   week(): ScalarExpression {
-    return this.buildDateComponent("week");
-  }
-
-  private buildDateComponent(component: DateComponent): ScalarExpression {
-    return buildDateComponentFromRef(component, this.ref);
+    return this.asScalar().week();
   }
 
   // ── String helpers (Tier 3 / JS-idiomatic) ─────────────
 
   /** `LOWER(col)`. Matches JS `String.prototype.toLowerCase`. */
   toLowerCase(): ScalarExpression {
-    return buildToLowerCase(this.innerRenderer());
+    return this.asScalar().toLowerCase();
   }
   /** `UPPER(col)`. Matches JS `String.prototype.toUpperCase`. */
   toUpperCase(): ScalarExpression {
-    return buildToUpperCase(this.innerRenderer());
+    return this.asScalar().toUpperCase();
   }
   /** `TRIM(col)`. */
   trim(): ScalarExpression {
-    return buildTrim(this.innerRenderer());
+    return this.asScalar().trim();
   }
   /** `CHAR_LENGTH(col)` — character count (multibyte safe). */
   length(): ScalarExpression {
-    return buildLength(this.innerRenderer());
+    return this.asScalar().length();
   }
   /**
    * `SUBSTR(col, start+1[, end-start])` — matches JS `String.prototype
    * .substring(indexStart, indexEnd?)` (0-based, end exclusive).
    */
   substring(start: number, end?: number): ScalarExpression {
-    return buildSubstring(this.innerRenderer(), start, end);
+    return this.asScalar().substring(start, end);
   }
   /** `CONCAT(col, ...args)`. */
   concat(...args: unknown[]): ScalarExpression {
-    return buildConcat(this.innerRenderer(), args);
+    return this.asScalar().concat(...args);
   }
   /**
    * `STRPOS/LOCATE/INSTR(col, needle) - 1` — returns 0-based position,
    * `-1` when not found. Matches JS `String.prototype.indexOf`.
    */
   indexOf(needle: unknown): ScalarExpression {
-    return buildIndexOf(this.innerRenderer(), needle);
+    return this.asScalar().indexOf(needle);
   }
   /** `REPLACE(col, from, to)`. */
   replace(from: unknown, to: unknown): ScalarExpression {
-    return buildReplace(this.innerRenderer(), from, to);
+    return this.asScalar().replace(from, to);
   }
 
   // ── Numeric arithmetic (Tier 3) ────────────────────────
 
   /** `(col + right)`. Right may be a primitive or another expression. */
   add(right: unknown): ScalarExpression {
-    return buildAdd(this.innerRenderer(), right);
+    return this.asScalar().add(right);
   }
   /** `(col - right)`. */
   sub(right: unknown): ScalarExpression {
-    return buildSub(this.innerRenderer(), right);
+    return this.asScalar().sub(right);
   }
   /** `(col * right)`. */
   mul(right: unknown): ScalarExpression {
-    return buildMul(this.innerRenderer(), right);
+    return this.asScalar().mul(right);
   }
   /** `(col / right)`. */
   div(right: unknown): ScalarExpression {
-    return buildDiv(this.innerRenderer(), right);
+    return this.asScalar().div(right);
   }
   /** `(col % right)`. */
   mod(right: unknown): ScalarExpression {
-    return buildMod(this.innerRenderer(), right);
+    return this.asScalar().mod(right);
   }
   /** `-col`. */
   neg(): ScalarExpression {
-    return buildNeg(this.innerRenderer());
+    return this.asScalar().neg();
   }
 
   // ── Math functions (Tier 3) ────────────────────────────
 
   /** `ABS(col)`. */
   abs(): ScalarExpression {
-    return buildAbs(this.innerRenderer());
+    return this.asScalar().abs();
   }
   /** `FLOOR(col)`. */
   floor(): ScalarExpression {
-    return buildFloor(this.innerRenderer());
+    return this.asScalar().floor();
   }
   /** `CEIL(col)`. */
   ceil(): ScalarExpression {
-    return buildCeil(this.innerRenderer());
+    return this.asScalar().ceil();
   }
   /** `ROUND(col)` or `ROUND(col, digits)`. */
   round(digits?: number): ScalarExpression {
-    return buildRound(this.innerRenderer(), digits);
+    return this.asScalar().round(digits);
   }
   /** `SQRT(col)`. */
   sqrt(): ScalarExpression {
-    return buildSqrt(this.innerRenderer());
+    return this.asScalar().sqrt();
   }
 
   // ── Date arithmetic (Tier 3) ───────────────────────────
 
   /** `col + N years` — calendar-aware on all supported drivers. */
   addYears(n: number): ScalarExpression {
-    return this.buildDateAdd(n, "year");
+    return this.asScalar().addYears(n);
   }
   /** `col + N months` — calendar-aware on all supported drivers. */
   addMonths(n: number): ScalarExpression {
-    return this.buildDateAdd(n, "month");
+    return this.asScalar().addMonths(n);
   }
   /** `col + N days`. */
   addDays(n: number): ScalarExpression {
-    return this.buildDateAdd(n, "day");
+    return this.asScalar().addDays(n);
   }
   /** `col + N hours`. */
   addHours(n: number): ScalarExpression {
-    return this.buildDateAdd(n, "hour");
+    return this.asScalar().addHours(n);
   }
   /** `col + N minutes`. */
   addMinutes(n: number): ScalarExpression {
-    return this.buildDateAdd(n, "minute");
+    return this.asScalar().addMinutes(n);
   }
   /** `col + N seconds`. */
   addSeconds(n: number): ScalarExpression {
-    return this.buildDateAdd(n, "second");
+    return this.asScalar().addSeconds(n);
   }
 
-  private buildDateAdd(n: number, unit: DateAddUnit): ScalarExpression {
-    return buildDateAdd(this.innerRenderer(), n, unit);
-  }
-
-  /** @internal Inner-fragment renderer shared by Tier 3 helpers. */
-  private innerRenderer(): InnerRenderer {
+  /**
+   * The column as a scalar expression — the CAST, date, string, numeric and
+   * date-arithmetic helpers above are ScalarExpression's, applied to it.
+   */
+  private asScalar(): ScalarExpression {
     const ref = this.ref;
-    return (resolveColumn) => sql`${raw(resolveColumn(ref))}`;
+    return new ScalarExpression((resolveColumn) => sql`${raw(resolveColumn(ref))}`);
   }
 
   // ── Aggregate helpers (Tier 1) ─────────────────────────
