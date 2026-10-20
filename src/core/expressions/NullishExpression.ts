@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import sql, { Sql, raw, join } from "../../utils/sqlTag";
+import sql, { Sql, join } from "../../utils/sqlTag";
 import type { ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import { ScalarExpression } from "./ScalarExpression";
@@ -8,20 +8,7 @@ import {
   isAggregateExpression,
 } from "./AggregateExpression";
 import { isJsonPathExpression } from "./JsonPathExpression";
-import { isScalarExpression } from "./ScalarExpression";
-
-/**
- * Duck-type guard for `ColumnExpression` — defined inline here to avoid
- * an import cycle with `SelectQueryBuilder.ts`. `ColumnExpression`
- * carries an `__isColumnExpression` marker for exactly this purpose.
- */
-function isColumnExpr(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { __isColumnExpression?: unknown }).__isColumnExpression === true
-  );
-}
+import { renderExpressionArg } from "./expressionArg";
 
 /**
  * Inputs accepted by `coalesce()` / `nullif()`. Column and path
@@ -42,14 +29,8 @@ export function renderNullishArg(
   resolveColumn: ColumnResolver,
   dialect?: DialectExpression,
 ): Sql {
-  if (isColumnExpr(arg)) {
-    return sql`${raw(resolveColumn((arg as { toString(): string }).toString()))}`;
-  }
   if (isAggregateExpression(arg)) {
     return (arg as AggregateExpression).renderFunction(resolveColumn, dialect);
-  }
-  if (isScalarExpression(arg)) {
-    return (arg as ScalarExpression).renderer(resolveColumn, dialect);
   }
   if (isJsonPathExpression(arg)) {
     if (!dialect) {
@@ -65,7 +46,7 @@ export function renderNullishArg(
     };
     return dialect.jsonExtract(resolveColumn(jp._ref), jp._path, true, jp._meta);
   }
-  return sql`${arg as any}`;
+  return renderExpressionArg(arg, resolveColumn, dialect);
 }
 
 /**

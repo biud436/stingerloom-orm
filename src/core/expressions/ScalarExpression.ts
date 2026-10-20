@@ -9,6 +9,9 @@ import type {
 } from "../../dialects/DialectExpression";
 import { AliasedExpression } from "./AliasedExpression";
 import { OrderExpression } from "./OrderExpression";
+import { renderExpressionArg } from "./expressionArg";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 /**
  * Renderer contract for a scalar SQL expression — produces one `Sql`
@@ -204,7 +207,7 @@ export class ScalarExpression {
   trim(): ScalarExpression {
     return buildStringFn("TRIM", this.renderer);
   }
-  /** `CHAR_LENGTH(x)` — character count. */
+  /** `CHAR_LENGTH(x)` — character count (multibyte-safe). */
   length(): ScalarExpression {
     return buildStringFn("CHAR_LENGTH", this.renderer);
   }
@@ -238,6 +241,12 @@ export class ScalarExpression {
   div(right: unknown): ScalarExpression {
     return buildBinaryOpFromRenderer(this.renderer, "/", right);
   }
+  /**
+   * `(x % y)` — standard SQL on PostgreSQL / SQLite; MySQL also accepts
+   * `%` as a MOD operator. Result semantics match JS `%` for positive
+   * operands; for negative values, SQL engines differ (MySQL/SQLite
+   * match JS, PostgreSQL returns the sign of the dividend).
+   */
   mod(right: unknown): ScalarExpression {
     return buildBinaryOpFromRenderer(this.renderer, "%", right);
   }
@@ -252,9 +261,18 @@ export class ScalarExpression {
   floor(): ScalarExpression {
     return buildStringFn("FLOOR", this.renderer);
   }
+  /**
+   * `CEIL(x)` — MySQL, PostgreSQL, and SQLite (SQLite 3.35+) all accept
+   * `CEIL`. Older SQLite may require `CEILING` or a compile flag; this
+   * helper uses `CEIL` which matches PostgreSQL and MySQL docs.
+   */
   ceil(): ScalarExpression {
     return buildStringFn("CEIL", this.renderer);
   }
+  /**
+   * `ROUND(x)` or `ROUND(x, digits)`. Positive `digits` rounds to that
+   * many decimal places; 0 (default) rounds to integer.
+   */
   round(digits?: number): ScalarExpression {
     return buildRoundFromRenderer(this.renderer, digits);
   }
@@ -287,7 +305,7 @@ export class ScalarExpression {
     );
   }
 
-  // ── Date arithmetic (Tier 3) ───────────────────────────
+  // ── Date arithmetic (Tier 3) — `value + N units`; negative `n` subtracts ──
   addYears(n: number): ScalarExpression {
     return buildDateAddFromRenderer(this.renderer, n, "year");
   }
@@ -308,43 +326,39 @@ export class ScalarExpression {
   }
 }
 
-// ── Shared helpers for ScalarExpression Tier 3 methods ──
+// ── Rendering behind the helper methods ──
+// A ColumnExpression's helpers run through these as well, on a
+// ScalarExpression of its column reference.
 
-type InnerRender = (r: ColumnResolver, d?: DialectExpression) => Sql;
+/**
+ * @internal The error a dialect-dependent expression throws when it is
+ * rendered without a dialect.
+ */
+export function dialectRequired(feature: string): OrmError {
+  return new OrmError(
+    OrmErrorCode.INVALID_QUERY,
+    `${feature} requires a DialectExpression. Ensure the query builder was ` +
+      "created via EntityManager.createQueryBuilder() — the dialect is propagated " +
+      "from the active EntityManager, so a builder constructed in isolation has no " +
+      "way to render dialect-specific SQL.",
+  );
+}
 
 /** @internal Build `FN(x)` wrapping the inner renderer. */
-function buildStringFn(fn: string, inner: InnerRender): ScalarExpression {
+function buildStringFn(fn: string, inner: ScalarRenderer): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
     const v = inner(resolveColumn, dialect);
     return sql`${raw(fn)}(${v})`;
   });
 }
 
-/** @internal Render an argument as either a nested expression's inner SQL or a bound parameter. */
-function renderArg(
-  arg: unknown,
-  resolveColumn: ColumnResolver,
-  dialect?: DialectExpression,
-): Sql {
-  if (
-    arg !== null &&
-    typeof arg === "object" &&
-    (arg as { __isScalarExpression?: unknown }).__isScalarExpression === true
-  ) {
-    return (arg as { renderer: InnerRender }).renderer(resolveColumn, dialect);
-  }
-  if (
-    arg !== null &&
-    typeof arg === "object" &&
-    (arg as { __isColumnExpression?: unknown }).__isColumnExpression === true
-  ) {
-    return sql`${raw(resolveColumn((arg as { toString(): string }).toString()))}`;
-  }
-  return sql`${arg as string | number | boolean | null}`;
-}
-
+/**
+ * `SUBSTR(x, jsStart + 1[, end - jsStart])` — JS `substring` semantics
+ * (0-based, end exclusive). Negative arguments are not adjusted: SQL
+ * engines interpret them engine-specifically, so clamp at the call site.
+ */
 function buildSubstringFromRenderer(
-  inner: InnerRender,
+  inner: ScalarRenderer,
   start: number,
   end: number | undefined,
 ): ScalarExpression {
@@ -358,24 +372,19 @@ function buildSubstringFromRenderer(
 }
 
 function buildConcatFromRenderer(
-  inner: InnerRender,
+  inner: ScalarRenderer,
   args: unknown[],
 ): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
     const head = inner(resolveColumn, dialect);
-    const tail = args.map((a) => renderArg(a, resolveColumn, dialect));
-    const all = [head, ...tail];
-    // Inline manual join to avoid extra import churn.
-    let acc = sql`${all[0]}`;
-    for (let i = 1; i < all.length; i++) {
-      acc = sql`${acc}, ${all[i]}`;
-    }
-    return sql`CONCAT(${acc})`;
+    const tail = args.map((a) => renderExpressionArg(a, resolveColumn, dialect));
+    return sql`CONCAT(${join([head, ...tail], ", ")})`;
   });
 }
 
+/** `STRPOS / LOCATE / INSTR` (dialect-specific) minus 1 — 0-based, `-1` when absent. */
 function buildIndexOfFromRenderer(
-  inner: InnerRender,
+  inner: ScalarRenderer,
   needle: unknown,
 ): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
@@ -386,44 +395,44 @@ function buildIndexOfFromRenderer(
       );
     }
     const haystack = inner(resolveColumn, dialect);
-    const n = renderArg(needle, resolveColumn, dialect);
+    const n = renderExpressionArg(needle, resolveColumn, dialect);
     return sql`(${dialect.stringIndexOf(haystack, n)} - 1)`;
   });
 }
 
 function buildReplaceFromRenderer(
-  inner: InnerRender,
+  inner: ScalarRenderer,
   from: unknown,
   to: unknown,
 ): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
     const v = inner(resolveColumn, dialect);
-    const a = renderArg(from, resolveColumn, dialect);
-    const b = renderArg(to, resolveColumn, dialect);
+    const a = renderExpressionArg(from, resolveColumn, dialect);
+    const b = renderExpressionArg(to, resolveColumn, dialect);
     return sql`REPLACE(${v}, ${a}, ${b})`;
   });
 }
 
 function buildBinaryOpFromRenderer(
-  inner: InnerRender,
+  inner: ScalarRenderer,
   op: string,
   right: unknown,
 ): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
     const left = inner(resolveColumn, dialect);
-    const r = renderArg(right, resolveColumn, dialect);
+    const r = renderExpressionArg(right, resolveColumn, dialect);
     return sql`(${left} ${raw(op)} ${r})`;
   });
 }
 
-function buildUnaryNegFromRenderer(inner: InnerRender): ScalarExpression {
+function buildUnaryNegFromRenderer(inner: ScalarRenderer): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
     return sql`(-${inner(resolveColumn, dialect)})`;
   });
 }
 
 function buildRoundFromRenderer(
-  inner: InnerRender,
+  inner: ScalarRenderer,
   digits: number | undefined,
 ): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
@@ -434,16 +443,13 @@ function buildRoundFromRenderer(
 }
 
 function buildDateAddFromRenderer(
-  inner: InnerRender,
+  inner: ScalarRenderer,
   n: number,
   unit: DateAddUnit,
 ): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
     if (!dialect) {
-      throw new Error(
-        "Date add expressions require a DialectExpression. Ensure the query " +
-          "builder was created via EntityManager.createQueryBuilder().",
-      );
+      throw dialectRequired("Date add expressions");
     }
     const v = inner(resolveColumn, dialect);
     return dialect.dateAdd(v, n, unit);
@@ -487,7 +493,7 @@ export class ScalarCondition implements ConditionLike {
     // `u.price.mul(2).gt(u.cost)` compares against the column reference
     // instead of binding the expression object as a parameter. Plain
     // primitives still flow through `sql` as bound parameters.
-    const rhs = (v: unknown) => renderArg(v, resolveColumn, dialect);
+    const rhs = (v: unknown) => renderExpressionArg(v, resolveColumn, dialect);
 
     if (op === "IS NULL") return sql`${expr} IS NULL`;
     if (op === "IS NOT NULL") return sql`${expr} IS NOT NULL`;

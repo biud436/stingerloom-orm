@@ -6,6 +6,7 @@ import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { unsupportedExpression } from "../../errors/UnsupportedExpressionError";
 import { AliasedExpression } from "./AliasedExpression";
+import { renderExpressionArg } from "./expressionArg";
 
 /**
  * Names of SQL ordered-set aggregate functions this builder can emit.
@@ -183,10 +184,11 @@ export class OrderedSetAggregateExpression {
       });
     }
 
-    const orderSql = renderOrderTarget(
+    const orderSql = renderExpressionArg(
       this.orderByTarget,
       resolveColumn,
       dialect,
+      "column",
     );
     const dirSuffix = this.orderDirection === "DESC" ? raw(" DESC") : raw("");
 
@@ -195,34 +197,6 @@ export class OrderedSetAggregateExpression {
     }
     return sql`${raw(this.funcName)}(${this.fraction as number}) WITHIN GROUP (ORDER BY ${orderSql}${dirSuffix})`;
   }
-}
-
-/** Render the ORDER BY target — column/scalar expressions unwrap, strings resolve, primitives bind. */
-function renderOrderTarget(
-  target: unknown,
-  resolveColumn: ColumnResolver,
-  dialect: DialectExpression,
-): Sql {
-  if (
-    target !== null &&
-    typeof target === "object" &&
-    (target as { __isScalarExpression?: unknown }).__isScalarExpression === true
-  ) {
-    return (target as {
-      renderer: (r: ColumnResolver, d?: DialectExpression) => Sql;
-    }).renderer(resolveColumn, dialect);
-  }
-  if (
-    target !== null &&
-    typeof target === "object" &&
-    (target as { __isColumnExpression?: unknown }).__isColumnExpression === true
-  ) {
-    return sql`${raw(resolveColumn((target as { toString(): string }).toString()))}`;
-  }
-  if (typeof target === "string") {
-    return sql`${raw(resolveColumn(target))}`;
-  }
-  return sql`${target as any}`;
 }
 
 /**

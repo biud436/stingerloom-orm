@@ -3,6 +3,7 @@ import sql, { Sql, raw } from "../../utils/sqlTag";
 import type { ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import { WindowBuilder, type WindowHeadRenderer } from "./WindowExpression";
+import { renderExpressionArg } from "./expressionArg";
 
 /**
  * @internal Resolve an arbitrary argument that may appear inside a
@@ -14,26 +15,7 @@ function renderWindowArg(
   resolveColumn: ColumnResolver,
   dialect: DialectExpression | undefined,
 ): Sql {
-  if (
-    arg !== null &&
-    typeof arg === "object" &&
-    (arg as { __isScalarExpression?: unknown }).__isScalarExpression === true
-  ) {
-    return (arg as {
-      renderer: (r: ColumnResolver, d?: DialectExpression) => Sql;
-    }).renderer(resolveColumn, dialect);
-  }
-  if (
-    arg !== null &&
-    typeof arg === "object" &&
-    (arg as { __isColumnExpression?: unknown }).__isColumnExpression === true
-  ) {
-    return sql`${raw(resolveColumn((arg as { toString(): string }).toString()))}`;
-  }
-  if (typeof arg === "string") {
-    return sql`${raw(resolveColumn(arg))}`;
-  }
-  return sql`${arg as any}`;
+  return renderExpressionArg(arg, resolveColumn, dialect, "column");
 }
 
 /** @internal Build a `FUNC()` head renderer with no arguments. */

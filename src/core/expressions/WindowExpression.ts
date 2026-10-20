@@ -2,6 +2,7 @@
 import sql, { Sql, raw, join } from "../../utils/sqlTag";
 import type { ColumnResolver } from "./ConditionLike";
 import { resolveColumnOrExpression } from "./bareColumnRef";
+import { renderExpression } from "./expressionArg";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import type { AggregateExpression } from "./AggregateExpression";
 import { OrderExpression } from "./OrderExpression";
@@ -178,24 +179,8 @@ function renderPartitionArg(
   resolveColumn: ColumnResolver,
   dialect: DialectExpression | undefined,
 ): Sql {
-  if (
-    arg !== null &&
-    typeof arg === "object" &&
-    (arg as { __isColumnExpression?: unknown }).__isColumnExpression === true
-  ) {
-    return sql`${raw(
-      resolveColumn((arg as { toString(): string }).toString()),
-    )}`;
-  }
-  if (
-    arg !== null &&
-    typeof arg === "object" &&
-    (arg as { __isScalarExpression?: unknown }).__isScalarExpression === true
-  ) {
-    return (arg as {
-      renderer: (r: ColumnResolver, d?: DialectExpression) => Sql;
-    }).renderer(resolveColumn, dialect);
-  }
+  const expression = renderExpression(arg, resolveColumn, dialect);
+  if (expression) return expression;
   if (typeof arg === "string") {
     // Same rule as SelectQueryBuilder's string slots: a bare `prop` /
     // `alias.prop` is resolved, an expression is emitted verbatim.

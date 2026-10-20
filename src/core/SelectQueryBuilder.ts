@@ -93,33 +93,6 @@ import {
   type SelectExpressionContext,
 } from "./expressions/ComputedColumnExpression";
 import { coalesce as coalesceFn } from "./expressions/NullishExpression";
-import { buildCastScalar } from "./expressions/CastExpression";
-import { buildDateComponentFromRef } from "./expressions/DateComponentExpression";
-import {
-  buildToLowerCase,
-  buildToUpperCase,
-  buildTrim,
-  buildLength,
-  buildSubstring,
-  buildConcat,
-  buildIndexOf,
-  buildReplace,
-  type InnerRenderer,
-} from "./expressions/StringExpression";
-import {
-  buildAdd,
-  buildSub,
-  buildMul,
-  buildDiv,
-  buildMod,
-  buildNeg,
-  buildAbs,
-  buildFloor,
-  buildCeil,
-  buildRound,
-  buildSqrt,
-} from "./expressions/NumericExpression";
-import { buildDateAdd } from "./expressions/DateArithmeticExpression";
 import { Logger } from "../utils/Logger";
 import { aggregateToNumber } from "./BigintColumnTransformer";
 import { ExplainResult } from "./ExplainResult";

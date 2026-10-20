@@ -4,6 +4,7 @@ import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import { OrderExpression } from "./OrderExpression";
 import { ScalarExpression } from "./ScalarExpression";
+import { renderExpressionArg } from "./expressionArg";
 
 /**
  * Renderer for an aggregate's *argument* expression. Used when the
@@ -325,33 +326,14 @@ function renderAggregateArg(
   resolveColumn: ColumnResolver,
   dialect: DialectExpression | undefined,
 ): Sql {
-  if (
-    arg !== null &&
-    typeof arg === "object" &&
-    (arg as { __isScalarExpression?: unknown }).__isScalarExpression === true
-  ) {
-    return (arg as {
-      renderer: (r: ColumnResolver, d?: DialectExpression) => Sql;
-    }).renderer(resolveColumn, dialect);
+  // `"*"` is a wildcard, not a column reference — emit it verbatim so
+  // `Expressions.count("*")` renders `COUNT(*)` instead of being routed
+  // through the alias-aware resolver (which would qualify it as
+  // `alias."*"` and produce an "unknown column" error).
+  if (arg === "*") {
+    return sql`*`;
   }
-  if (
-    arg !== null &&
-    typeof arg === "object" &&
-    (arg as { __isColumnExpression?: unknown }).__isColumnExpression === true
-  ) {
-    return sql`${raw(resolveColumn((arg as { toString(): string }).toString()))}`;
-  }
-  if (typeof arg === "string") {
-    // `"*"` is a wildcard, not a column reference — emit it verbatim so
-    // `Expressions.count("*")` renders `COUNT(*)` instead of being routed
-    // through the alias-aware resolver (which would qualify it as
-    // `alias."*"` and produce an "unknown column" error).
-    if (arg === "*") {
-      return sql`*`;
-    }
-    return sql`${raw(resolveColumn(arg))}`;
-  }
-  return sql`${arg as any}`;
+  return renderExpressionArg(arg, resolveColumn, dialect, "column");
 }
 
 /**
@@ -392,26 +374,10 @@ export class AggregateCondition implements ConditionLike {
     // clause can relate two aggregates (`SUM(revenue) > SUM(cost)`) or
     // compare an aggregate against a grouped column. Plain primitives
     // stay bound as parameters.
-    const rhs = (v: unknown): Sql => {
-      if (v !== null && typeof v === "object") {
-        const marker = v as Record<string, unknown>;
-        if (marker.__isAggregateExpression === true) {
-          return (v as AggregateExpression).renderFunction(
-            resolveColumn,
-            dialect,
-          );
-        }
-        if (marker.__isScalarExpression === true) {
-          return (v as ScalarExpression).renderer(resolveColumn, dialect);
-        }
-        if (marker.__isColumnExpression === true) {
-          return sql`${raw(
-            resolveColumn((v as { toString(): string }).toString()),
-          )}`;
-        }
-      }
-      return sql`${v as any}`;
-    };
+    const rhs = (v: unknown): Sql =>
+      isAggregateExpression(v)
+        ? v.renderFunction(resolveColumn, dialect)
+        : renderExpressionArg(v, resolveColumn, dialect);
 
     if (op === "BETWEEN") {
       const [min, max] = this.value as [any, any];
