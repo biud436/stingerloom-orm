@@ -128,6 +128,7 @@ import {
 import { WhereGroupBuilder } from "./query-builder/where-group/WhereGroupBuilder";
 import { lockClause, lockDialectOf } from "./LockClause";
 import { resolveUndefinedOperatorValue } from "./query-builder/whereArguments";
+import { runInternalQuery } from "./entity-manager/internal-query";
 import type {
   RowValidator,
   ArrayValidator,
@@ -3387,8 +3388,9 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   protected async execQuery<TRow = any>(built: Sql): Promise<TRow[]> {
     const policy = this.resolveCachePolicy();
-    if (!policy) return this.em.query<TRow>(built);
-    return policy.fetchRows(built, () => this.em.query<TRow>(built));
+    const run = () => runInternalQuery(() => this.em.query<TRow>(built));
+    if (!policy) return run();
+    return policy.fetchRows(built, run);
   }
 
   private resolveCachePolicy(): QueryCachePolicy | undefined {
@@ -3703,7 +3705,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     return new CompiledQuery<TResult, P>(
       built.strings,
       built.values,
-      (sql) => this.em.query<any>(sql),
+      (sql) => runInternalQuery(() => this.em.query<any>(sql)),
       deserialize,
     );
   }
@@ -3718,7 +3720,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     return new CompiledQuery<TResult, P>(
       built.strings,
       built.values,
-      (sql) => this.em.query<any>(sql),
+      (sql) => runInternalQuery(() => this.em.query<any>(sql)),
       (rows) => applyVal(rows) as unknown as TResult[],
     );
   }
@@ -4895,7 +4897,9 @@ export class SelectQueryBuilder<T, TResult = T> {
     const built = this.toSql();
     const explainPrefix = driver.buildExplainSql("");
     const explainQuery = sql`${raw(explainPrefix)}${built}`;
-    const rawRows = await this.em.query<Record<string, unknown>>(explainQuery);
+    const rawRows = await runInternalQuery(() =>
+      this.em.query<Record<string, unknown>>(explainQuery),
+    );
 
     // Reuse the dialect-aware parser EntityManager.explain() relies on so the
     // ExplainResult shape (rows/type/possibleKeys/key/cost) stays identical.

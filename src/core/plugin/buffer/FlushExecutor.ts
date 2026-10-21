@@ -17,6 +17,7 @@ import { BufferStrategy } from "./BufferStrategy";
 import { IdentityMapManager, EntityInstance, ColumnValueMap } from "./IdentityMapManager";
 import { CascadeProcessor } from "./CascadeProcessor";
 import { InheritanceResolver } from "../../InheritanceResolver";
+import { runInternalQuery } from "../../entity-manager/internal-query";
 import type { EntityManager } from "../../EntityManager";
 
 /**
@@ -455,7 +456,8 @@ export class FlushExecutor {
       params.push(...pkValues);
 
       const sql = `UPDATE ${wrappedTable} SET ${setClauses.join(", ")} WHERE ${wrappedPk} IN (${placeholders})`;
-      await txEm.query(sql, params);
+      // Reached only by entities without a tenant column (see isTenantScoped).
+      await runInternalQuery(() => txEm.query(sql, params));
 
       result.updates += items.length;
       // Mark every batched instance visited BEFORE running cascades, so a
