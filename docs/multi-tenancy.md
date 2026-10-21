@@ -757,12 +757,14 @@ The ORM injects the tenant predicate on queries it builds. If you call `em.query
 
 ```
 [multi-tenancy] em.query() called under tenant="acme" — raw SQL bypasses
-tenant predicate injection. Add "AND tenant_id = ?" to the query, or wrap
-the call in MetadataContext.runUnscoped() to acknowledge cross-tenant scope.
-    at MyService.rawReport (src/my-service.ts:42:23)
+automatic WHERE tenant_id injection. Filter by the tenant column manually,
+or wrap the call in MetadataContext.runUnscoped() when cross-tenant access
+is intended. Call site: at MyService.rawReport (src/my-service.ts:42:23)
 ```
 
-The warning deduplicates by call-site, so a hot loop logs once, not thousands of times. Silence it either by including `AND tenant_id = ?` in your SQL explicitly, or by wrapping intentional cross-tenant reads in `runUnscoped()`.
+The call site is the line that called `em.query()`, in a bundled build too, and the warning deduplicates by it, so a hot loop logs once, not thousands of times. Statements the query builder runs through `em.query()` itself — `getMany()`, `getCount()`, `paginate()`, `stream()`, `prepare()`, `explain()` and the rest — already carry the tenant predicate and never warn.
+
+The ORM does not read your SQL, so a statement that filters by `tenant_id` itself still warns. Wrap such a call, or an intentional cross-tenant read, in `runUnscoped()` to silence it — the raw statement runs as written either way.
 
 ### First-level cache isolation
 

@@ -37,6 +37,7 @@ import { OrmError } from "../../../errors/OrmError";
 import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import { LazyRelationInjector } from "./LazyRelationInjector";
 import { transactionStorage } from "../../../decorators/Transactional";
+import { runInternalQuery } from "../../entity-manager/internal-query";
 import type { EntityManager } from "../../EntityManager";
 
 /**
@@ -1490,10 +1491,10 @@ export class WriteBuffer {
         if (this.parent) {
           const spName = `sp_nested_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
           try {
-            await txEm.query(`SAVEPOINT ${spName}`);
+            await runInternalQuery(() => txEm.query(`SAVEPOINT ${spName}`));
             await flushFn(txEm);
           } catch (error) {
-            await txEm.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+            await runInternalQuery(() => txEm.query(`ROLLBACK TO SAVEPOINT ${spName}`));
             throw error;
           }
         } else {

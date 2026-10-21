@@ -757,12 +757,14 @@ ORM이 빌드한 쿼리에는 tenant predicate를 주입합니다. 하지만 `em
 
 ```
 [multi-tenancy] em.query() called under tenant="acme" — raw SQL bypasses
-tenant predicate injection. Add "AND tenant_id = ?" to the query, or wrap
-the call in MetadataContext.runUnscoped() to acknowledge cross-tenant scope.
-    at MyService.rawReport (src/my-service.ts:42:23)
+automatic WHERE tenant_id injection. Filter by the tenant column manually,
+or wrap the call in MetadataContext.runUnscoped() when cross-tenant access
+is intended. Call site: at MyService.rawReport (src/my-service.ts:42:23)
 ```
 
-경고는 호출 지점 단위로 중복 제거되니까 뜨거운 루프에서도 수천 번이 아니라 한 번만 찍힙니다. 경고를 없애려면 SQL에 `AND tenant_id = ?`를 명시적으로 포함하거나, 의도적인 크로스 테넌트 read라면 `runUnscoped()`로 감싸면 됩니다.
+호출 지점은 `em.query()`를 호출한 줄이고, 번들로 빌드한 앱에서도 마찬가지입니다. 경고는 호출 지점 단위로 중복 제거되니까 뜨거운 루프에서도 수천 번이 아니라 한 번만 찍힙니다. 쿼리 빌더가 내부에서 `em.query()`로 실행하는 문장(`getMany()`, `getCount()`, `paginate()`, `stream()`, `prepare()`, `explain()` 등)은 이미 tenant predicate를 담고 있어서 경고하지 않습니다.
+
+ORM은 SQL 내용을 읽지 않기 때문에 `tenant_id`로 직접 거르는 문장이라도 경고가 뜹니다. 그런 호출이나 의도적인 크로스 테넌트 read는 `runUnscoped()`로 감싸서 경고를 끄면 됩니다. 어느 쪽이든 raw 문장 자체는 작성한 그대로 실행돼요.
 
 ### 1차 캐시 격리
 

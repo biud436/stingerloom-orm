@@ -2870,7 +2870,7 @@ export class EntityManager implements BaseEntityManager {
 
   /** Engine delegator — implementation lives in {@link TenantScopeManager}. */
   private warnIfRawQueryBypassesTenant(): void {
-    this.tenantScope.warnIfRawQueryBypassesTenant();
+    this.tenantScope.warnIfRawQueryBypassesTenant(EntityManager.prototype.query);
   }
 
   /**

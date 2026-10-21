@@ -19,6 +19,7 @@ import {
 } from "../TenantQueryStrategy";
 import type { DatabaseClientOptions } from "../DatabaseClientOptions";
 import type { EntityManagerInternals } from "../EntityManagerInternals";
+import { isInternalQuery } from "./internal-query";
 
 /** Tenant-column strategy configuration (null when strategy is not "tenant_column"). */
 export interface TenantColumnConfig {
@@ -492,41 +493,21 @@ export class TenantScopeManager {
    *   connection/schema level, so raw SQL is still safe)
    * - no tenant context is active (bootstrap/admin path)
    * - the current context is in `runUnscoped()` mode (user opted in)
-   * - the caller is an internal ORM frame (SelectQueryBuilder, RelationLoader,
-   *   RawPipeline, etc. — those builders already inject the predicate before
-   *   reaching `em.query()`)
+   * - the statement is one the ORM built itself: the query builder and the
+   *   write buffer issue theirs inside `runInternalQuery()`
+   *
+   * @param entry The public `query()` the caller invoked — the call site the
+   *   warning names is the frame that called it.
    */
-  warnIfRawQueryBypassesTenant(): void {
+  warnIfRawQueryBypassesTenant(entry: (...args: any[]) => unknown): void {
     if (this.columnConfig === null) return;
+    if (isInternalQuery()) return;
     if (!MetadataContext.isActive()) return;
     if (MetadataContext.isUnscoped()) return;
     const tenant = MetadataContext.getCurrentTenant();
     if (tenant === "public") return;
 
-    const stack = new Error().stack;
-    if (!stack) return;
-
-    const lines = stack.split("\n");
-    let callerFrame: string | undefined;
-    for (let i = 1; i < lines.length; i++) {
-      const frame = lines[i];
-      // Skip frames from the EM facade / extracted engine files and node internals
-      if (frame.includes("EntityManager.ts")) continue;
-      if (frame.includes("EntityManager.js")) continue;
-      if (frame.includes("TenantScopeManager.ts")) continue;
-      if (frame.includes("TenantScopeManager.js")) continue;
-      if (frame.includes("RawQueryRunner.ts")) continue;
-      if (frame.includes("RawQueryRunner.js")) continue;
-      if (frame.includes("node:internal")) continue;
-      // Skip frames from internal ORM code — those callers either run under
-      // a tenant-aware builder or are part of the scoping machinery itself.
-      if (/stingerloom-orm[/\\](src|dist)[/\\]/.test(frame)) continue;
-      if (/node_modules[/\\]@stingerloom[/\\]orm[/\\]/.test(frame)) continue;
-      callerFrame = frame.trim();
-      break;
-    }
-    if (!callerFrame) return;
-
+    const callerFrame = rawQueryCallSite(entry);
     if (this.rawQueryWarnedCallSites.has(callerFrame)) return;
     this.rawQueryWarnedCallSites.add(callerFrame);
 
@@ -554,4 +535,31 @@ export class TenantScopeManager {
     );
     return false;
   }
+}
+
+/**
+ * The frame that called `entry`, which a raw-query warning names and is
+ * deduplicated by. `Error.captureStackTrace` leaves out `entry` and every
+ * frame above it, so the ORM's own frames are gone even in a bundle, where
+ * they share one file with the application's. Of the frames left, those the
+ * ORM's install path or Node identifies (a facade such as
+ * `MultiTenantEntityManager`) give way to the first one outside them.
+ */
+function rawQueryCallSite(entry: (...args: any[]) => unknown): string {
+  const trace: { stack?: string } = {};
+  Error.captureStackTrace(trace, entry);
+  const frames = (trace.stack ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("at "));
+  return (
+    frames.find(
+      (frame) =>
+        !frame.includes("node:internal") &&
+        !/stingerloom-orm[/\\](src|dist)[/\\]/.test(frame) &&
+        !/node_modules[/\\]@stingerloom[/\\]orm[/\\]/.test(frame),
+    ) ??
+    frames[0] ??
+    "(unknown)"
+  );
 }
