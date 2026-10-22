@@ -184,6 +184,21 @@ await MetadataContext.run("acme", async () => {
 
 테넌트는 순회가 첫 배치를 가져올 때(또는 `count()`가 실행될 때) 한 번만 읽습니다. 그래서 한 번의 순회 안에서 테넌트가 섞이지 않습니다.
 
+### 상속 계층
+
+상속 계층에 속한 엔티티라면 파이프라인은 `em.find()`가 읽는 행을 raw 행 그대로 읽습니다.
+
+| 엔티티 | 파이프라인이 읽는 것 |
+|--------|---------------------|
+| `SINGLE_TABLE` 자식 | 자기 서브타입만: 공유 테이블을 판별자로 거른 행 |
+| `JOINED` 자식 | 자식 테이블을 루트 테이블과 조인한 행. 상속 컬럼도 돌아오고 `where`·`select`·`orderBy`에 쓸 수 있습니다 |
+| `TABLE_PER_CLASS` 루트 | 모든 구체 테이블을 `UNION ALL`로 합친 행. 각 행에 계층의 모든 컬럼(자기 테이블에 없는 컬럼은 `NULL`)과 판별자 컬럼이 들어 있고, 서브클래스 프로퍼티로 `where`를 걸 수 있습니다 |
+| 그 밖의 엔티티(`SINGLE_TABLE`·`JOINED` 루트, `TABLE_PER_CLASS` 자식) | 자기 테이블 |
+
+`JOINED` 루트는 자기 테이블을 읽으므로 계층의 모든 행이 나오지만, 컬럼은 루트 것만 있습니다.
+
+`TABLE_PER_CLASS` 루트를 keyset으로 페이지할 때는 지정한 컬럼 다음에 판별자로도 정렬합니다. 구체 테이블마다 키를 따로 매기기 때문에 같은 `id`가 여러 테이블에 나오거든요.
+
 ## 페이지네이션 전략
 
 파이프라인은 두 가지 페이지네이션 전략을 지원합니다. 데이터 규모에 따라 적절한 것을 선택하세요.
@@ -850,7 +865,7 @@ em.extend(rawPipelinePlugin());
 
 2. **Entity 메타데이터** — 컬럼 이름, property-to-column 매핑(NamingStrategy), 테이블 이름은 모두 `Reflect.getMetadata()`에서 Entity 클래스당 한 번만 읽고 `WeakMap`에 캐싱합니다.
 
-여기에 `find()`가 적용하는 테넌트 스코프를 `PluginContext.tenantPredicate()`로 더합니다([멀티테넌시](#멀티테넌시) 참고).
+여기에 `find()`가 적용하는 테넌트 스코프를 `PluginContext.tenantPredicate()`로 더합니다([멀티테넌시](#멀티테넌시) 참고). 상속 계층은 `find()`와 집계가 쓰는 소스, 즉 JOINED 자식의 파생 테이블과 TABLE_PER_CLASS의 `UNION ALL`을 그대로 읽습니다([상속 계층](#상속-계층) 참고).
 
 ### SelectQueryBuilder를 안 쓰는 이유
 

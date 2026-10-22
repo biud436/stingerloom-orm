@@ -184,6 +184,21 @@ await MetadataContext.run("acme", async () => {
 
 The tenant is read once, when an iteration fetches its first batch (or when `count()` runs), so one pass never mixes tenants.
 
+### Inheritance Hierarchies
+
+For an entity in an inheritance hierarchy the pipeline reads the rows `em.find()` reads, still as raw rows:
+
+| Entity | What the pipeline reads |
+|--------|-------------------------|
+| `SINGLE_TABLE` child | Its own subtype only: the shared table filtered by the discriminator |
+| `JOINED` child | Its table joined to the root's, so the inherited columns come back and work in `where`, `select` and `orderBy` |
+| `TABLE_PER_CLASS` root | Every concrete table through a `UNION ALL`. Each row carries every column of the hierarchy (`NULL` where its own table has none) and the discriminator column, and subclass properties work in `where` |
+| Any other entity (`SINGLE_TABLE` / `JOINED` root, `TABLE_PER_CLASS` child) | Its own table |
+
+A `JOINED` root reads its own table: every row of the hierarchy, with the root's columns only.
+
+Keyset pagination over a `TABLE_PER_CLASS` root also orders by the discriminator after your column. Each concrete table numbers its keys on its own, so an `id` repeats across them.
+
 ## Pagination Strategies
 
 The pipeline supports two pagination strategies. The right choice depends on how much data you are traversing.
@@ -850,7 +865,7 @@ The pipeline does not reinvent SQL generation. It reuses two core ORM modules:
 
 2. **Entity metadata** — Column names, property-to-column mappings (NamingStrategy), and table names are all read from `Reflect.getMetadata()` once per entity class and cached in a `WeakMap`.
 
-It also adds the tenant scope `find()` applies, through `PluginContext.tenantPredicate()` (see [Multi-Tenancy](#multi-tenancy)).
+It also adds the tenant scope `find()` applies, through `PluginContext.tenantPredicate()` (see [Multi-Tenancy](#multi-tenancy)). An inheritance hierarchy is read through the same sources `find()` and the aggregates use: the joined child's derived table and the table-per-class `UNION ALL` (see [Inheritance Hierarchies](#inheritance-hierarchies)).
 
 ### Why Not Just Use SelectQueryBuilder?
 

@@ -12,6 +12,14 @@ import { attachWhereValueTransform } from "../../WhereValueTransform";
 import { MetadataContext } from "../../../metadata/MetadataContext";
 import { isValidPgIdentifier } from "../../../dialects/postgres/pgIdentifier";
 import { runInternalQuery } from "../../entity-manager/internal-query";
+import { InheritanceResolver } from "../../InheritanceResolver";
+import { RelationMetadataResolver } from "../../RelationMetadataResolver";
+import { buildJoinedChildFromSource, isJoinedChild } from "../../JoinedChildSource";
+import {
+  buildTpcFromSource,
+  isTpcPolymorphicRoot,
+  type TpcSourceContext,
+} from "../../TpcUnionSource";
 
 /**
  * Options for creating a RawPipeline.
@@ -97,13 +105,50 @@ interface EntityInfo {
 
 const entityInfoCache = new WeakMap<Function, EntityInfo>();
 
-/** The table and WHERE conditions every statement of one traversal shares. */
+/** Reads inheritance metadata off the classes; holds no state of its own. */
+const inheritance = new InheritanceResolver();
+
+/** The source and WHERE conditions every statement of one traversal shares. */
 interface PipelineScope {
-  table: string;
+  /** The table, or the derived table an inheritance hierarchy is read from. */
+  from: Sql;
   where: Sql[];
+  /**
+   * A second keyset column for a source whose ordering column repeats: the
+   * discriminator of a TABLE_PER_CLASS root's UNION, whose tables number
+   * their keys independently.
+   */
+  tiebreak?: string;
 }
 
-function getEntityInfo(entity: ClazzType<any>, wrap: (s: string) => string): EntityInfo {
+/** Where a keyset traversal resumes: the last row's ordering values. */
+interface KeysetCursor {
+  value: unknown;
+  tie: unknown;
+}
+
+/**
+ * A TABLE_PER_CLASS root reads every concrete table, so it resolves names
+ * through its subclasses' columns as well — a read of the root filters and
+ * orders by a subclass property as a read of that subclass does.
+ */
+function withSubclassColumns(entity: ClazzType<any>, info: EntityInfo): EntityInfo {
+  const columns = [...info.columns];
+  const propToCol = new Map(info.propToCol);
+  for (const subclass of inheritance.getConcreteEntities(entity)) {
+    if (subclass === entity) continue;
+    for (const col of getEntityInfo(subclass).columns) {
+      const prop = col.propertyKey ?? col.name;
+      if (propToCol.has(prop)) continue;
+      propToCol.set(prop, col.name);
+      columns.push(col);
+    }
+  }
+  attachWhereValueTransform(propToCol, columns);
+  return { ...info, columns, propToCol };
+}
+
+function getEntityInfo(entity: ClazzType<any>): EntityInfo {
   let cached = entityInfoCache.get(entity);
   if (cached) return cached;
 
@@ -134,7 +179,10 @@ function getEntityInfo(entity: ClazzType<any>, wrap: (s: string) => string): Ent
  *
  * Uses the same WHERE resolver as `em.find()` for query compatibility,
  * and supports keyset pagination for efficient large-offset traversal.
- * Every statement reads as the active tenant, as `em.find()` does.
+ * Every statement reads the rows `em.find()` reads: the active tenant's, and
+ * for an inheritance hierarchy the entity's subtype — a single-table child's
+ * rows only, a joined child's columns from both its tables, a
+ * table-per-class root's rows from every concrete table.
  *
  * @example
  * ```ts
@@ -156,6 +204,7 @@ export class RawPipeline<T> {
   private readonly info: EntityInfo;
   private readonly useKeyset: boolean;
   private readonly dialect: "mysql" | "postgres" | "sqlite" | undefined;
+  private relationResolver?: RelationMetadataResolver;
 
   constructor(
     private readonly ctx: PluginContext,
@@ -163,7 +212,10 @@ export class RawPipeline<T> {
     private readonly options: RawPipelineOptions<T>,
   ) {
     this.batchSize = Math.max(options.batchSize ?? 1000, 1);
-    this.info = getEntityInfo(entity, (s) => ctx.wrap(s));
+    const info = getEntityInfo(entity);
+    this.info = isTpcPolymorphicRoot(inheritance, entity)
+      ? withSubclassColumns(entity, info)
+      : info;
     this.useKeyset = !!options.keyset && !!options.orderBy;
 
     // Detect dialect once at construction time
@@ -237,20 +289,17 @@ export class RawPipeline<T> {
     const orderCol = this.info.propToCol.get(orderProp) ?? orderProp;
     const isAsc = orderDir !== "DESC";
 
-    let lastValue: unknown = null;
-    let isFirst = true;
+    let cursor: KeysetCursor | null = null;
 
     while (true) {
-      const query = this.buildKeysetQuery(scope, orderCol, isAsc, lastValue, isFirst);
+      const query = this.buildKeysetQuery(scope, orderCol, isAsc, cursor);
       const rows = await this.executeQuery(query);
 
       if (rows.length === 0) break;
       yield rows;
 
       // Update cursor from last row
-      const lastRow = rows[rows.length - 1];
-      lastValue = lastRow[orderCol] ?? lastRow[orderProp];
-      isFirst = false;
+      cursor = this.cursorAfter(rows[rows.length - 1], scope, orderCol, orderProp);
 
       if (rows.length < this.batchSize) break;
     }
@@ -316,19 +365,16 @@ export class RawPipeline<T> {
     const orderCol = this.info.propToCol.get(orderProp) ?? orderProp;
     const isAsc = orderDir !== "DESC";
 
-    let lastValue: unknown = null;
-    let isFirst = true;
+    let cursor: KeysetCursor | null = null;
 
     while (true) {
-      const query = this.buildKeysetQuery(scope, orderCol, isAsc, lastValue, isFirst);
+      const query = this.buildKeysetQuery(scope, orderCol, isAsc, cursor);
       const rows = await driver.queryWithOptions(query, driverOptions);
 
       if (!rows || rows.length === 0) break;
       yield rows;
 
-      const lastRow = rows[rows.length - 1];
-      lastValue = lastRow[orderCol] ?? lastRow[orderProp];
-      isFirst = false;
+      cursor = this.cursorAfter(rows[rows.length - 1], scope, orderCol, orderProp);
 
       if (rows.length < this.batchSize) break;
     }
@@ -367,13 +413,13 @@ export class RawPipeline<T> {
    * Count rows matching the pipeline's WHERE clause.
    */
   async count(): Promise<number> {
-    const { table, where } = this.resolveScope();
+    const { from, where } = this.resolveScope();
 
     let countSql: Sql;
     if (where.length > 0) {
-      countSql = sql`SELECT COUNT(*) as cnt FROM ${raw(table)} WHERE ${join(where, " AND ")}`;
+      countSql = sql`SELECT COUNT(*) as cnt FROM ${from} WHERE ${join(where, " AND ")}`;
     } else {
-      countSql = sql`SELECT COUNT(*) as cnt FROM ${raw(table)}`;
+      countSql = sql`SELECT COUNT(*) as cnt FROM ${from}`;
     }
 
     // Tenant-scoped like the batches, so not raw SQL bypassing the predicate.
@@ -392,7 +438,7 @@ export class RawPipeline<T> {
     const columns = this.resolveColumns();
     const orderByClause = this.resolveOrderBy();
 
-    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${raw(scope.table)}`];
+    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${scope.from}`];
 
     if (scope.where.length > 0) {
       parts.push(sql`WHERE ${join(scope.where, " AND ")}`);
@@ -416,69 +462,124 @@ export class RawPipeline<T> {
     scope: PipelineScope,
     orderCol: string,
     isAsc: boolean,
-    lastValue: unknown,
-    isFirst: boolean,
+    cursor: KeysetCursor | null,
   ): Sql {
     const columns = this.resolveColumns();
     const whereClauses = [...scope.where];
     const wrappedCol = this.ctx.wrap(orderCol);
+    const wrappedTie = scope.tiebreak ? this.ctx.wrap(scope.tiebreak) : null;
+    const op = raw(isAsc ? ">" : "<");
 
     // Add keyset condition
-    if (!isFirst && lastValue !== null && lastValue !== undefined) {
-      const cursorCondition = isAsc
-        ? sql`${raw(wrappedCol)} > ${lastValue as any}`
-        : sql`${raw(wrappedCol)} < ${lastValue as any}`;
-      whereClauses.push(cursorCondition);
+    if (cursor && cursor.value !== null && cursor.value !== undefined) {
+      const value = cursor.value as any;
+      whereClauses.push(
+        wrappedTie
+          ? sql`(${raw(wrappedCol)} ${op} ${value} OR (${raw(wrappedCol)} = ${value} AND ${raw(wrappedTie)} ${op} ${cursor.tie as any}))`
+          : sql`${raw(wrappedCol)} ${op} ${value}`,
+      );
     }
 
     const dir = isAsc ? "ASC" : "DESC";
-    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${raw(scope.table)}`];
+    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${scope.from}`];
 
     if (whereClauses.length > 0) {
       parts.push(sql`WHERE ${join(whereClauses, " AND ")}`);
     }
 
-    parts.push(sql`ORDER BY ${raw(wrappedCol)} ${raw(dir)}`);
+    const order = wrappedTie
+      ? `${wrappedCol} ${dir}, ${wrappedTie} ${dir}`
+      : `${wrappedCol} ${dir}`;
+    parts.push(sql`ORDER BY ${raw(order)}`);
     parts.push(sql`LIMIT ${this.batchSize}`);
 
     return join(parts, " ");
   }
 
-  /**
-   * The table and WHERE conditions of one traversal or one `count()`,
-   * resolved once so every batch reads as the same tenant.
-   */
-  private resolveScope(): PipelineScope {
-    return { table: this.resolveTable(), where: this.resolveWhere() };
+  /** The cursor the next keyset batch resumes after. */
+  private cursorAfter(
+    lastRow: Record<string, unknown>,
+    scope: PipelineScope,
+    orderCol: string,
+    orderProp: string,
+  ): KeysetCursor {
+    return {
+      value: lastRow[orderCol] ?? lastRow[orderProp],
+      tie: scope.tiebreak ? lastRow[scope.tiebreak] : undefined,
+    };
   }
 
   /**
-   * The table every statement names. Under the `search_path` strategy the ORM
-   * selects a tenant's schema with `SET LOCAL search_path` inside the
-   * transaction it reads in, and the batches run on a pooled connection with
-   * no such transaction — so they name the tenant's schema themselves. A
-   * tenant id the connector would not switch to (not a valid identifier) is
-   * left out the same way, and a table pinned to a schema keeps its pin.
+   * The source and WHERE conditions of one traversal or one `count()`,
+   * resolved once so every batch reads as the same tenant.
    */
-  private resolveTable(): string {
-    const table = this.info.tableName;
-    if (this.dialect === "postgres") {
-      const tenant = MetadataContext.getCurrentTenant();
-      if (
-        tenant !== "public" &&
-        this.ctx.em.getTenantStrategy().needsTransactionForTenantRead() &&
-        this.ctx.em.resolveEntitySchema(this.entity) === undefined &&
-        isValidPgIdentifier(tenant)
-      ) {
-        return `${this.ctx.wrap(tenant)}.${this.ctx.wrap(table)}`;
-      }
+  private resolveScope(): PipelineScope {
+    const tenantSchema = this.tenantSchema();
+    const wrapTable = (name: string) => this.wrapTable(name, tenantSchema);
+    const where = this.resolveWhere();
+
+    if (isTpcPolymorphicRoot(inheritance, this.entity)) {
+      return {
+        from: buildTpcFromSource(this.sourceContext(wrapTable), this.entity),
+        where,
+        tiebreak: inheritance.getDiscriminatorColumn(this.entity)?.name ?? "dtype",
+      };
     }
-    return this.ctx.wrapTable(table);
+    const joined = isJoinedChild(inheritance, this.entity)
+      ? buildJoinedChildFromSource(this.sourceContext(wrapTable), this.entity)
+      : null;
+    return { from: joined ?? raw(wrapTable(this.info.tableName)), where };
+  }
+
+  /** What the shared inheritance source builders read metadata and names through. */
+  private sourceContext(wrapTable: (name: string) => string): TpcSourceContext {
+    this.relationResolver ??= new RelationMetadataResolver();
+    return {
+      inheritanceResolver: inheritance,
+      resolver: this.relationResolver,
+      wrap: (n) => this.ctx.wrap(n),
+      wrapTable,
+      typedNullPadding: this.dialect === "postgres",
+    };
+  }
+
+  /**
+   * The schema the statements name for the active tenant, or null when the
+   * connection's own setup already reads the right one. Under the
+   * `search_path` strategy the ORM selects a tenant's schema with `SET LOCAL
+   * search_path` inside the transaction it reads in, and the batches run on a
+   * pooled connection with no such transaction — so they name the tenant's
+   * schema themselves. A tenant id the connector would not switch to (not a
+   * valid identifier) is left out the same way.
+   */
+  private tenantSchema(): string | null {
+    if (this.dialect !== "postgres") return null;
+    const tenant = MetadataContext.getCurrentTenant();
+    if (
+      tenant === "public" ||
+      !this.ctx.em.getTenantStrategy().needsTransactionForTenantRead() ||
+      !isValidPgIdentifier(tenant)
+    ) {
+      return null;
+    }
+    return tenant;
+  }
+
+  /**
+   * A table as the statements name it: in the tenant's schema (see
+   * {@link tenantSchema}), unless `wrapTable()` already names a schema — a
+   * table pinned with `@Entity({ schema })` keeps its pin.
+   */
+  private wrapTable(tableName: string, tenantSchema: string | null): string {
+    const wrapped = this.ctx.wrapTable(tableName);
+    if (!tenantSchema || wrapped !== this.ctx.wrap(tableName)) return wrapped;
+    return `${this.ctx.wrap(tenantSchema)}.${wrapped}`;
   }
 
   /**
    * The caller's `where`, resolved by the same WhereResolver as em.find(),
-   * and the tenant predicate em.find() adds under `"tenant_column"`.
+   * and the predicates em.find() adds: a single-table child's discriminator
+   * and the tenant predicate under `"tenant_column"`.
    */
   private resolveWhere(): Sql[] {
     const clauses: Sql[] = [];
@@ -489,6 +590,10 @@ export class RawPipeline<T> {
         dialect: this.dialect,
       };
       clauses.push(...resolveWhereClause(this.options.where as WhereClause<T>, opts));
+    }
+    const subtype = inheritance.getSingleTableChildDiscriminator(this.entity);
+    if (subtype) {
+      clauses.push(sql`${raw(this.ctx.wrap(subtype.columnName))} = ${subtype.value}`);
     }
     const tenant = this.ctx.tenantPredicate(this.entity);
     if (tenant) clauses.push(tenant);
