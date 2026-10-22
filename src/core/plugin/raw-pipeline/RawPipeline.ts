@@ -9,6 +9,9 @@ import { COLUMN_TOKEN } from "../../../decorators/Column";
 import { resolveWhereClause, type WhereResolverOptions } from "../../WhereResolver";
 import type { ColumnMetadata } from "../../../scanner/ColumnScanner";
 import { attachWhereValueTransform } from "../../WhereValueTransform";
+import { MetadataContext } from "../../../metadata/MetadataContext";
+import { isValidPgIdentifier } from "../../../dialects/postgres/pgIdentifier";
+import { runInternalQuery } from "../../entity-manager/internal-query";
 
 /**
  * Options for creating a RawPipeline.
@@ -94,6 +97,12 @@ interface EntityInfo {
 
 const entityInfoCache = new WeakMap<Function, EntityInfo>();
 
+/** The table and WHERE conditions every statement of one traversal shares. */
+interface PipelineScope {
+  table: string;
+  where: Sql[];
+}
+
 function getEntityInfo(entity: ClazzType<any>, wrap: (s: string) => string): EntityInfo {
   let cached = entityInfoCache.get(entity);
   if (cached) return cached;
@@ -125,6 +134,7 @@ function getEntityInfo(entity: ClazzType<any>, wrap: (s: string) => string): Ent
  *
  * Uses the same WHERE resolver as `em.find()` for query compatibility,
  * and supports keyset pagination for efficient large-offset traversal.
+ * Every statement reads as the active tenant, as `em.find()` does.
  *
  * @example
  * ```ts
@@ -174,29 +184,33 @@ export class RawPipeline<T> {
     if (driver?.queryWithOptions) {
       return driver.queryWithOptions(query, {}) as Promise<Record<string, unknown>[]>;
     }
-    // Fallback for drivers without queryWithOptions
-    return this.ctx.em.query<Record<string, unknown>>(query);
+    // Fallback for drivers without queryWithOptions. Tenant-scoped like every
+    // batch, so not raw SQL bypassing the tenant predicate.
+    return runInternalQuery(() => this.ctx.em.query<Record<string, unknown>>(query));
   }
 
   /**
    * Yield batches of plain objects (no entity instantiation).
    */
   async *raw(): AsyncGenerator<Record<string, unknown>[], void, undefined> {
+    const scope = this.resolveScope();
     if (this.useKeyset) {
-      yield* this.rawKeyset();
+      yield* this.rawKeyset(scope);
     } else {
-      yield* this.rawOffset();
+      yield* this.rawOffset(scope);
     }
   }
 
   /**
    * LIMIT/OFFSET pagination.
    */
-  private async *rawOffset(): AsyncGenerator<Record<string, unknown>[], void, undefined> {
+  private async *rawOffset(
+    scope: PipelineScope,
+  ): AsyncGenerator<Record<string, unknown>[], void, undefined> {
     let offset = 0;
 
     while (true) {
-      const query = this.buildQuery(offset);
+      const query = this.buildQuery(scope, offset);
       const rows = await this.executeQuery(query);
 
       if (rows.length === 0) break;
@@ -210,10 +224,12 @@ export class RawPipeline<T> {
    * Keyset (cursor) pagination — uses WHERE col > lastValue instead of OFFSET.
    * Requires orderBy with exactly one column.
    */
-  private async *rawKeyset(): AsyncGenerator<Record<string, unknown>[], void, undefined> {
+  private async *rawKeyset(
+    scope: PipelineScope,
+  ): AsyncGenerator<Record<string, unknown>[], void, undefined> {
     const orderEntries = Object.entries(this.options.orderBy ?? {});
     if (orderEntries.length === 0) {
-      yield* this.rawOffset();
+      yield* this.rawOffset(scope);
       return;
     }
 
@@ -225,7 +241,7 @@ export class RawPipeline<T> {
     let isFirst = true;
 
     while (true) {
-      const query = this.buildKeysetQuery(orderCol, isAsc, lastValue, isFirst);
+      const query = this.buildKeysetQuery(scope, orderCol, isAsc, lastValue, isFirst);
       const rows = await this.executeQuery(query);
 
       if (rows.length === 0) break;
@@ -252,18 +268,23 @@ export class RawPipeline<T> {
       return;
     }
 
+    const scope = this.resolveScope();
     if (this.useKeyset) {
-      yield* this.binaryKeyset(driver, driverOptions);
+      yield* this.binaryKeyset(driver, driverOptions, scope);
     } else {
-      yield* this.binaryOffset(driver, driverOptions);
+      yield* this.binaryOffset(driver, driverOptions, scope);
     }
   }
 
-  private async *binaryOffset(driver: any, driverOptions: DriverQueryOptions): AsyncGenerator<any[], void, undefined> {
+  private async *binaryOffset(
+    driver: any,
+    driverOptions: DriverQueryOptions,
+    scope: PipelineScope,
+  ): AsyncGenerator<any[], void, undefined> {
     let offset = 0;
 
     while (true) {
-      const query = this.buildQuery(offset);
+      const query = this.buildQuery(scope, offset);
       const rows = await driver.queryWithOptions(query, driverOptions);
 
       if (!rows || rows.length === 0) break;
@@ -273,17 +294,21 @@ export class RawPipeline<T> {
     }
   }
 
-  private async *binaryKeyset(driver: any, driverOptions: DriverQueryOptions): AsyncGenerator<any[], void, undefined> {
+  private async *binaryKeyset(
+    driver: any,
+    driverOptions: DriverQueryOptions,
+    scope: PipelineScope,
+  ): AsyncGenerator<any[], void, undefined> {
     // arrayMode returns rows as arrays — cannot extract cursor by column name.
     // Fall back to offset pagination for arrayMode + keyset.
     if (driverOptions.arrayMode) {
-      yield* this.binaryOffset(driver, driverOptions);
+      yield* this.binaryOffset(driver, driverOptions, scope);
       return;
     }
 
     const orderEntries = Object.entries(this.options.orderBy ?? {});
     if (orderEntries.length === 0) {
-      yield* this.binaryOffset(driver, driverOptions);
+      yield* this.binaryOffset(driver, driverOptions, scope);
       return;
     }
 
@@ -295,7 +320,7 @@ export class RawPipeline<T> {
     let isFirst = true;
 
     while (true) {
-      const query = this.buildKeysetQuery(orderCol, isAsc, lastValue, isFirst);
+      const query = this.buildKeysetQuery(scope, orderCol, isAsc, lastValue, isFirst);
       const rows = await driver.queryWithOptions(query, driverOptions);
 
       if (!rows || rows.length === 0) break;
@@ -342,17 +367,19 @@ export class RawPipeline<T> {
    * Count rows matching the pipeline's WHERE clause.
    */
   async count(): Promise<number> {
-    const wrappedTable = this.ctx.wrapTable(this.info.tableName);
-    const whereClauses = this.resolveWhere();
+    const { table, where } = this.resolveScope();
 
     let countSql: Sql;
-    if (whereClauses.length > 0) {
-      countSql = sql`SELECT COUNT(*) as cnt FROM ${raw(wrappedTable)} WHERE ${join(whereClauses, " AND ")}`;
+    if (where.length > 0) {
+      countSql = sql`SELECT COUNT(*) as cnt FROM ${raw(table)} WHERE ${join(where, " AND ")}`;
     } else {
-      countSql = sql`SELECT COUNT(*) as cnt FROM ${raw(wrappedTable)}`;
+      countSql = sql`SELECT COUNT(*) as cnt FROM ${raw(table)}`;
     }
 
-    const result = await this.ctx.em.query<{ cnt: number | string }>(countSql);
+    // Tenant-scoped like the batches, so not raw SQL bypassing the predicate.
+    const result = await runInternalQuery(() =>
+      this.ctx.em.query<{ cnt: number | string }>(countSql),
+    );
     return Number(result[0]?.cnt ?? 0);
   }
 
@@ -361,16 +388,14 @@ export class RawPipeline<T> {
   /**
    * Build SELECT with LIMIT/OFFSET pagination.
    */
-  private buildQuery(offset: number): Sql {
-    const wrappedTable = this.ctx.wrapTable(this.info.tableName);
+  private buildQuery(scope: PipelineScope, offset: number): Sql {
     const columns = this.resolveColumns();
-    const whereClauses = this.resolveWhere();
     const orderByClause = this.resolveOrderBy();
 
-    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${raw(wrappedTable)}`];
+    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${raw(scope.table)}`];
 
-    if (whereClauses.length > 0) {
-      parts.push(sql`WHERE ${join(whereClauses, " AND ")}`);
+    if (scope.where.length > 0) {
+      parts.push(sql`WHERE ${join(scope.where, " AND ")}`);
     }
     if (orderByClause) {
       parts.push(sql`ORDER BY ${raw(orderByClause)}`);
@@ -388,14 +413,14 @@ export class RawPipeline<T> {
    * Build SELECT with keyset (cursor) pagination.
    */
   private buildKeysetQuery(
+    scope: PipelineScope,
     orderCol: string,
     isAsc: boolean,
     lastValue: unknown,
     isFirst: boolean,
   ): Sql {
-    const wrappedTable = this.ctx.wrapTable(this.info.tableName);
     const columns = this.resolveColumns();
-    const whereClauses = this.resolveWhere();
+    const whereClauses = [...scope.where];
     const wrappedCol = this.ctx.wrap(orderCol);
 
     // Add keyset condition
@@ -407,7 +432,7 @@ export class RawPipeline<T> {
     }
 
     const dir = isAsc ? "ASC" : "DESC";
-    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${raw(wrappedTable)}`];
+    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${raw(scope.table)}`];
 
     if (whereClauses.length > 0) {
       parts.push(sql`WHERE ${join(whereClauses, " AND ")}`);
@@ -420,18 +445,54 @@ export class RawPipeline<T> {
   }
 
   /**
-   * Resolve WHERE clause using the same WhereResolver as em.find().
+   * The table and WHERE conditions of one traversal or one `count()`,
+   * resolved once so every batch reads as the same tenant.
+   */
+  private resolveScope(): PipelineScope {
+    return { table: this.resolveTable(), where: this.resolveWhere() };
+  }
+
+  /**
+   * The table every statement names. Under the `search_path` strategy the ORM
+   * selects a tenant's schema with `SET LOCAL search_path` inside the
+   * transaction it reads in, and the batches run on a pooled connection with
+   * no such transaction — so they name the tenant's schema themselves. A
+   * tenant id the connector would not switch to (not a valid identifier) is
+   * left out the same way, and a table pinned to a schema keeps its pin.
+   */
+  private resolveTable(): string {
+    const table = this.info.tableName;
+    if (this.dialect === "postgres") {
+      const tenant = MetadataContext.getCurrentTenant();
+      if (
+        tenant !== "public" &&
+        this.ctx.em.getTenantStrategy().needsTransactionForTenantRead() &&
+        this.ctx.em.resolveEntitySchema(this.entity) === undefined &&
+        isValidPgIdentifier(tenant)
+      ) {
+        return `${this.ctx.wrap(tenant)}.${this.ctx.wrap(table)}`;
+      }
+    }
+    return this.ctx.wrapTable(table);
+  }
+
+  /**
+   * The caller's `where`, resolved by the same WhereResolver as em.find(),
+   * and the tenant predicate em.find() adds under `"tenant_column"`.
    */
   private resolveWhere(): Sql[] {
-    if (!this.options.where) return [];
-
-    const opts: WhereResolverOptions = {
-      wrapColumn: (n) => this.ctx.wrap(n),
-      propertyToColumn: this.info.propToCol,
-      dialect: this.dialect,
-    };
-
-    return [...resolveWhereClause(this.options.where as WhereClause<T>, opts)];
+    const clauses: Sql[] = [];
+    if (this.options.where) {
+      const opts: WhereResolverOptions = {
+        wrapColumn: (n) => this.ctx.wrap(n),
+        propertyToColumn: this.info.propToCol,
+        dialect: this.dialect,
+      };
+      clauses.push(...resolveWhereClause(this.options.where as WhereClause<T>, opts));
+    }
+    const tenant = this.ctx.tenantPredicate(this.entity);
+    if (tenant) clauses.push(tenant);
+    return clauses;
   }
 
   private resolveColumns(): string {

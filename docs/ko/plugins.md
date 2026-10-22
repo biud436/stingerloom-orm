@@ -153,6 +153,7 @@ em.getLog(); // typed as string[]
 | `ctx.isSqlite()` | SQLite 드라이버인지 확인 | SQLite가 지원하지 않는 기능(ALTER COLUMN, EXPLAIN 등)을 건너뛸 때. |
 | `ctx.wrap(identifier)` | 드라이버의 quoting 방식으로 식별자를 감싸기 | SQL 문자열을 만들 때 컬럼명이나 테이블명을 안전하게 quote해야 할 때. MySQL은 backtick, PostgreSQL/SQLite는 double quote를 사용해요. |
 | `ctx.wrapTable(tableName)` | 테이블명 quote (schema prefix 포함) | `wrap()`과 같지만 schema 한정 이름을 처리해요 (예: PostgreSQL의 `"public"."user"`). |
+| `ctx.tenantPredicate(entity, alias?)` | 엔티티에 `find()`가 붙이는 테넌트 조건, 또는 `null` | `tenantStrategy: "tenant_column"`에서 플러그인이 유저 엔티티에 SELECT·UPDATE·DELETE를 직접 만들 때. WHERE 절에 AND로 붙이면 현재 테넌트의 행만 건드립니다. `find()`가 조건을 붙이지 않는 경우(다른 전략, `@NonTenantEntity()`, `runUnscoped()`, `"public"` 컨텍스트)에는 `null`이에요. 테넌트 컨텍스트가 없으면 `tenantOnMissingContext`를 먼저 적용하므로 예외가 날 수 있습니다. |
 | `ctx.executeInTransaction(fn)` | 트랜잭션 안에서 콜백 실행 | 여러 SQL 문을 원자적으로 실행해야 할 때. 성공 시 commit, 에러 시 rollback돼요. |
 | `ctx.executeReadOnly(fn)` | 읽기 전용 트랜잭션에서 콜백 실행 | 읽기만 할 때 DB에 최적화 신호를 보내고 싶을 때 (read-replica 환경에서 replica를 사용해요). |
 | `ctx.getEntityMetadata(cls)` | 엔티티 클래스의 구조적 메타데이터 | 유저 엔티티의 컬럼, 관계, PK, 인덱스, 테이블명을 검사해야 할 때 — 예를 들어 엔티티별 감사 테이블을 발행하거나 스키마 문서를 생성할 때. 등록되지 않은 클래스는 `null`을 반환해요. |

@@ -15,6 +15,7 @@ import { validateIsolationLevel } from "../../utils/validateIsolationLevel";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DbVersion, detectDbVersion } from "../DbVersion";
+import { isValidPgIdentifier } from "./pgIdentifier";
 
 export class PostgresConnector extends IConnector {
   pool?: Pool;
@@ -38,10 +39,8 @@ export class PostgresConnector extends IConnector {
    * Validates a PostgreSQL identifier (only alphanumerics, underscores, and dollar signs are allowed).
    * Throws when the name contains invalid characters.
    */
-  private static readonly IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_$-]*$/;
-
   private static isValidIdentifier(name: string): boolean {
-    return PostgresConnector.IDENTIFIER_PATTERN.test(name);
+    return isValidPgIdentifier(name);
   }
 
   private static validateIdentifier(name: string): void {

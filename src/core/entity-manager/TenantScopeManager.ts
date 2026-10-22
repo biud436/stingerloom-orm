@@ -493,8 +493,9 @@ export class TenantScopeManager {
    *   connection/schema level, so raw SQL is still safe)
    * - no tenant context is active (bootstrap/admin path)
    * - the current context is in `runUnscoped()` mode (user opted in)
-   * - the statement is one the ORM built itself: the query builder and the
-   *   write buffer issue theirs inside `runInternalQuery()`
+   * - the statement is one the ORM built itself: the query builder, the
+   *   write buffer and the raw pipeline issue theirs inside
+   *   `runInternalQuery()`
    *
    * @param entry The public `query()` the caller invoked — the call site the
    *   warning names is the frame that called it.

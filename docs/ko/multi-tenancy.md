@@ -565,7 +565,7 @@ await em.register({
 
 1. **DDL 주입.** `SchemaRegistrar`가 모든 테이블에 `tenant_id VARCHAR(64) NOT NULL` (또는 설정된 타입)을 추가합니다. 엔티티 클래스에 컬럼을 선언할 필요가 없습니다.
 2. **INSERT 자동 채움 + 검증.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()`가 `MetadataContext.getCurrentTenant()` 값으로 `tenant_id`를 채웁니다. 테넌트 컨텍스트 없이 INSERT 하면 `MISSING_TENANT_CONTEXT`를 던지고, 컨텍스트와 다른 `tenant_id`를 명시적으로 넘기면 `TENANT_MISMATCH`를 던집니다. UPDATE 쪽도 마찬가지여서, 다른 테넌트를 지목한 payload로 `save()`를 하면 행이 옮겨지는 대신 거부됩니다.
-3. **read WHERE 주입.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, 그리고 `SelectQueryBuilder.getMany()` / `getCount()` / `exists()`에 `AND tenant_id = ?`가 자동으로 붙습니다. Eager JOIN과 relation loader도 같은 predicate를 상속해요.
+3. **read WHERE 주입.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, 그리고 `SelectQueryBuilder.getMany()` / `getCount()` / `exists()`에 `AND tenant_id = ?`가 자동으로 붙습니다. Eager JOIN과 relation loader도 같은 predicate를 상속하고, [Raw Pipeline](./raw-pipeline.md#멀티테넌시)의 `em.pipe()` 배치와 `count()`에도 붙어요.
 4. **write WHERE 주입.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()`, 그리고 `save()` / `saveMany()`의 UPDATE 분기까지 전부 `AND tenant_id = ?`를 받기 때문에, 테넌트 A에서 실행한 쿼리가 테넌트 B의 행을 건드릴 수 없습니다. upsert 계열도 충돌 분기에 같은 predicate가 붙어요(아래 표 참고). 테넌트 컨텍스트가 **아예 없는** 상태의 동작은 아래 `tenantOnMissingContext` 정책이 결정합니다.
 
 #### 어떤 쓰기 경로에 predicate가 붙나
