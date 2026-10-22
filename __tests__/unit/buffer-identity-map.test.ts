@@ -97,6 +97,7 @@ const mockCtx: PluginContext = {
   isSqlite: jest.fn().mockReturnValue(false),
   wrap: jest.fn((id: string) => `"${id}"`),
   wrapTable: jest.fn((t: string) => `"${t}"`),
+  tenantPredicate: jest.fn().mockReturnValue(null),
   executeInTransaction: jest.fn(),
   executeReadOnly: jest.fn(),
   getEntityMetadata: jest.fn().mockReturnValue(null),

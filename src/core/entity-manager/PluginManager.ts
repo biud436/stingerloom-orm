@@ -139,6 +139,7 @@ export class PluginManager {
         isSqlite: () => ctx.isSqlite(),
         wrap: (id) => ctx.wrap(id),
         wrapTable: (t) => ctx.wrapTable(t),
+        tenantPredicate: (entity, alias) => ctx.buildTenantWhereClause(entity, alias),
         executeInTransaction: (fn) => ctx.executeInTransaction(fn),
         executeReadOnly: (fn) => ctx.executeReadOnly(fn),
         getEntityMetadata: (entity) => ctx.getManager().getEntityMetadata(entity),

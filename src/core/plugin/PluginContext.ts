@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../../utils";
+import type { Sql } from "../../utils/sqlTag";
 import { ISqlDriver } from "../../dialects/SqlDriver";
 import { EntityEventEmitter } from "../EntityEventEmitter";
 import { EntitySubscriber } from "../EntitySubscriber";
@@ -54,6 +55,18 @@ export interface PluginContext {
 
   /** Wrap a table name (with optional schema prefix) */
   wrapTable(tableName: string): string;
+
+  /**
+   * The `tenant = ?` predicate a statement reading or writing `entity` needs
+   * under the `"tenant_column"` strategy, the column qualified by `alias` when
+   * given — the predicate `find()` adds. Null where `find()` adds none: another
+   * strategy, `@NonTenantEntity()`, `runUnscoped()`, the `"public"` context.
+   * With no tenant context active the `tenantOnMissingContext` policy applies
+   * first, so this can throw `MISSING_TENANT_CONTEXT`.
+   *
+   * AND it into the WHERE clause of any statement a plugin builds itself.
+   */
+  tenantPredicate<T>(entity: ClazzType<T>, alias?: string): Sql | null;
 
   /** Execute a callback within a transaction */
   executeInTransaction<R>(

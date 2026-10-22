@@ -165,6 +165,25 @@ em.pipe(User, {
 })
 ```
 
+### 멀티테넌시
+
+파이프라인은 현재 테넌트 기준으로 읽기 때문에 `em.find()`와 같은 행을 돌려줍니다.
+
+- **`tenant_column`**: 모든 배치와 `count()`에 `tenant_id = ?` 조건이 붙고, 넘긴 `where`와 AND로 묶입니다. `MetadataContext.runUnscoped()`, `"public"` 컨텍스트, `@NonTenantEntity()`에서는 `find()`와 마찬가지로 조건이 빠집니다. 테넌트 컨텍스트가 없으면 `tenantOnMissingContext` 정책을 따르므로, `"throw"`라면 첫 배치에서 거부됩니다.
+- **`search_path`** (PostgreSQL 기본값): ORM은 `find()`가 실행되는 트랜잭션 안에서 `SET LOCAL search_path`로 테넌트 스키마를 고릅니다. 파이프라인의 배치는 그 트랜잭션을 거치지 않으므로, 대신 테이블 이름에 스키마를 붙입니다: `SELECT * FROM "acme"."user"`. `@Entity({ schema })`로 고정한 테이블은 그 스키마를 그대로 쓰고, 올바른 식별자가 아닌 테넌트 ID는 `find()`처럼 기본 스키마를 읽어요.
+- **`schema_qualified`**: 테이블 이름에 이미 테넌트 스키마가 붙어 있습니다.
+
+```typescript
+await MetadataContext.run("acme", async () => {
+  const total = await em.pipe(Order).count(); // acme의 주문만
+  for await (const batch of em.pipe(Order).raw()) {
+    // acme의 행만
+  }
+});
+```
+
+테넌트는 순회가 첫 배치를 가져올 때(또는 `count()`가 실행될 때) 한 번만 읽습니다. 그래서 한 번의 순회 안에서 테넌트가 섞이지 않습니다.
+
 ## 페이지네이션 전략
 
 파이프라인은 두 가지 페이지네이션 전략을 지원합니다. 데이터 규모에 따라 적절한 것을 선택하세요.
@@ -830,6 +849,8 @@ em.extend(rawPipelinePlugin());
 1. **`WhereResolver`** — `em.find()`, `em.update()`, `em.softDelete()`가 사용하는 것과 동일한 모듈입니다. 따라서 모든 WHERE 연산자(`contains`, `ilike`, `search`, `OR`, `AND`, `NOT`, `between`)가 동일하게 동작합니다.
 
 2. **Entity 메타데이터** — 컬럼 이름, property-to-column 매핑(NamingStrategy), 테이블 이름은 모두 `Reflect.getMetadata()`에서 Entity 클래스당 한 번만 읽고 `WeakMap`에 캐싱합니다.
+
+여기에 `find()`가 적용하는 테넌트 스코프를 `PluginContext.tenantPredicate()`로 더합니다([멀티테넌시](#멀티테넌시) 참고).
 
 ### SelectQueryBuilder를 안 쓰는 이유
 

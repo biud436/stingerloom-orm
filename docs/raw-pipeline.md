@@ -165,6 +165,25 @@ em.pipe(User, {
 })
 ```
 
+### Multi-Tenancy
+
+The pipeline reads as the active tenant, so it returns the same rows `em.find()` does:
+
+- **`tenant_column`**: every batch and `count()` carry the `tenant_id = ?` predicate, ANDed with your `where`. `MetadataContext.runUnscoped()`, the `"public"` context and `@NonTenantEntity()` drop it, as they do for `find()`. With no tenant context active the `tenantOnMissingContext` policy applies, so `"throw"` rejects the first batch.
+- **`search_path`** (the PostgreSQL default): the ORM selects a tenant's schema with `SET LOCAL search_path` inside the transaction a `find()` runs in. The pipeline's batches skip that transaction, so they name the schema in the table instead: `SELECT * FROM "acme"."user"`. A table pinned with `@Entity({ schema })` keeps its schema, and a tenant id that is not a valid identifier reads the default schema, as `find()` does.
+- **`schema_qualified`**: table names already carry the tenant's schema.
+
+```typescript
+await MetadataContext.run("acme", async () => {
+  const total = await em.pipe(Order).count(); // acme's orders only
+  for await (const batch of em.pipe(Order).raw()) {
+    // acme's rows only
+  }
+});
+```
+
+The tenant is read once, when an iteration fetches its first batch (or when `count()` runs), so one pass never mixes tenants.
+
 ## Pagination Strategies
 
 The pipeline supports two pagination strategies. The right choice depends on how much data you are traversing.
@@ -830,6 +849,8 @@ The pipeline does not reinvent SQL generation. It reuses two core ORM modules:
 1. **`WhereResolver`** — The same module that `em.find()`, `em.update()`, and `em.softDelete()` use. This means every WHERE operator (including `contains`, `ilike`, `search`, `OR`, `AND`, `NOT`, `between`) works identically.
 
 2. **Entity metadata** — Column names, property-to-column mappings (NamingStrategy), and table names are all read from `Reflect.getMetadata()` once per entity class and cached in a `WeakMap`.
+
+It also adds the tenant scope `find()` applies, through `PluginContext.tenantPredicate()` (see [Multi-Tenancy](#multi-tenancy)).
 
 ### Why Not Just Use SelectQueryBuilder?
 
