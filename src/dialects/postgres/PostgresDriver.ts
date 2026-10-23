@@ -16,6 +16,7 @@ import { PostgresColumnDefinitionBuilder } from "./PostgresColumnDefinitionBuild
 import { buildCreateTableDefinitions } from "../createTableDefinitions";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { PostgresConnector } from "./PostgresConnector";
+import { pgQueryWithOptions } from "./pgQueryWithOptions";
 import { DbVersion } from "../DbVersion";
 import { PostgresCapabilities } from "../DialectCapabilities";
 import { resolvePostgresCapabilities } from "../resolveCapabilities";
@@ -235,19 +236,7 @@ export class PostgresDriver implements ISqlDriver {
         "Ensure the database is connected before using the raw pipeline",
       );
     }
-
-    let paramIndex = 0;
-    const pgSql = query.sql.replace(/\?/g, () => `$${++paramIndex}`);
-
-    const queryConfig: any = {
-      text: pgSql,
-      values: query.values,
-    };
-    if (options.binary) queryConfig.binary = true;
-    if (options.arrayMode) queryConfig.rowMode = "array";
-
-    const result: any = await pgConnector.pool.query(queryConfig);
-    return result.rows;
+    return pgQueryWithOptions(pgConnector.pool, query, options);
   }
 
   /**

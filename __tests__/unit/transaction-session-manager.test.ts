@@ -6,6 +6,7 @@ import { DatabaseConnectionFailedError } from "../../src/errors/DatabaseConnecti
 // jest.mock is hoisted, so factories can only use jest.fn() — not external const.
 
 const dsQuery = jest.fn();
+const dsQueryWithOptions = jest.fn();
 const dsStartTx = jest.fn().mockResolvedValue(undefined);
 const dsCommit = jest.fn().mockResolvedValue(undefined);
 const dsRollback = jest.fn().mockResolvedValue(undefined);
@@ -44,6 +45,7 @@ jest.mock("../../src/DatabaseClient", () => ({
 function makeMockDS() {
   return {
     query: dsQuery,
+    queryWithOptions: dsQueryWithOptions,
     startTransaction: dsStartTx,
     commit: dsCommit,
     rollback: dsRollback,
@@ -78,6 +80,8 @@ jest.mock("../../src/dialects/mysql/MySqlConnector", () => ({
 
 // Import AFTER mocks
 import { TransactionSessionManager } from "../../src/dialects/TransactionSessionManager";
+import { MySqlDataSource } from "../../src/dialects/mysql/MySqlDataSource";
+import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 
 describe("TransactionSessionManager", () => {
   let session: TransactionSessionManager;
@@ -188,6 +192,42 @@ describe("TransactionSessionManager", () => {
       const query = sql.default`SELECT * FROM users WHERE id = ${1}`;
       await session.query(query);
       expect(dsQuery).toHaveBeenCalledWith(query);
+    });
+  });
+
+  // ─── queryWithOptions() ────────────────────────────────────────
+
+  describe("queryWithOptions()", () => {
+    it("throws DatabaseNotConnectedError when not connected", async () => {
+      const sql = require("sql-template-tag");
+      await expect(
+        session.queryWithOptions(sql.default`SELECT 1`, { binary: true }),
+      ).rejects.toThrow(DatabaseNotConnectedError);
+    });
+
+    it("runs the query with its options on the session's data source", async () => {
+      const sql = require("sql-template-tag");
+      dsQueryWithOptions.mockResolvedValueOnce([[1]]);
+      await session.connect();
+      const query = sql.default`SELECT id FROM users WHERE id = ${1}`;
+
+      const rows = await session.queryWithOptions(query, { arrayMode: true });
+
+      expect(rows).toEqual([[1]]);
+      expect(dsQueryWithOptions).toHaveBeenCalledWith(query, { arrayMode: true });
+    });
+
+    it("rejects a data source that cannot apply driver-level options", async () => {
+      const sql = require("sql-template-tag");
+      (MySqlDataSource as unknown as jest.Mock).mockImplementationOnce(() => {
+        const { queryWithOptions: _omit, ...rest } = makeMockDS();
+        return rest;
+      });
+      await session.connect();
+
+      await expect(
+        session.queryWithOptions(sql.default`SELECT 1`, { binary: true }),
+      ).rejects.toMatchObject({ code: OrmErrorCode.UNSUPPORTED_OPERATION });
     });
   });
 

@@ -170,7 +170,7 @@ em.pipe(User, {
 파이프라인은 현재 테넌트 기준으로 읽기 때문에 `em.find()`와 같은 행을 돌려줍니다.
 
 - **`tenant_column`**: 모든 배치와 `count()`에 `tenant_id = ?` 조건이 붙고, 넘긴 `where`와 AND로 묶입니다. `MetadataContext.runUnscoped()`, `"public"` 컨텍스트, `@NonTenantEntity()`에서는 `find()`와 마찬가지로 조건이 빠집니다. 테넌트 컨텍스트가 없으면 `tenantOnMissingContext` 정책을 따르므로, `"throw"`라면 첫 배치에서 거부됩니다.
-- **`search_path`** (PostgreSQL 기본값): ORM은 `find()`가 실행되는 트랜잭션 안에서 `SET LOCAL search_path`로 테넌트 스키마를 고릅니다. 파이프라인의 배치는 그 트랜잭션을 거치지 않으므로, 대신 테이블 이름에 스키마를 붙입니다: `SELECT * FROM "acme"."user"`. `@Entity({ schema })`로 고정한 테이블은 그 스키마를 그대로 쓰고, 올바른 식별자가 아닌 테넌트 ID는 `find()`처럼 기본 스키마를 읽어요.
+- **`search_path`** (PostgreSQL 기본값): ORM은 `find()`가 실행되는 트랜잭션 안에서 `SET LOCAL search_path`로 테넌트 스키마를 고릅니다. 파이프라인의 배치는 이 설정에 기대지 않습니다. 트랜잭션 밖에서는 `SET LOCAL`이 없는 풀 커넥션에서 실행되므로, 대신 테이블 이름에 스키마를 붙입니다: `SELECT * FROM "acme"."user"`. `@Entity({ schema })`로 고정한 테이블은 그 스키마를 그대로 쓰고, 올바른 식별자가 아닌 테넌트 ID는 `find()`처럼 기본 스키마를 읽어요.
 - **`schema_qualified`**: 테이블 이름에 이미 테넌트 스키마가 붙어 있습니다.
 
 ```typescript
@@ -198,6 +198,24 @@ await MetadataContext.run("acme", async () => {
 `JOINED` 루트는 자기 테이블을 읽으므로 계층의 모든 행이 나오지만, 컬럼은 루트 것만 있습니다.
 
 `TABLE_PER_CLASS` 루트를 keyset으로 페이지할 때는 지정한 컬럼 다음에 판별자로도 정렬합니다. 구체 테이블마다 키를 따로 매기기 때문에 같은 `id`가 여러 테이블에 나오거든요.
+
+### 트랜잭션 안에서
+
+트랜잭션 밖에서는 배치마다 풀 커넥션에서 평범한 쿼리 하나를 실행하고, 앞뒤로 `BEGIN`/`COMMIT`을 붙이지 않습니다. `em.transaction()`이나 `@Transactional` 메서드 안에서는 모든 배치가 그 트랜잭션의 커넥션에서 실행되므로, 파이프라인도 트랜잭션의 나머지 코드와 같은 데이터를 읽습니다.
+
+- **커밋 전 쓰기.** 트랜잭션 앞부분에서 저장한 행은 나오고 삭제한 행은 나오지 않으며, `count()`도 배치와 같은 수를 돌려줍니다.
+- **하나의 스냅샷.** `REPEATABLE READ`나 `SERIALIZABLE`에서는 순회하는 도중 다른 커넥션이 커밋한 행이 중간에 끼어들지 않습니다.
+
+```typescript
+await em.transaction(async () => {
+  await em.save(Order, { status: "pending", total: 120 });
+  for await (const batch of em.pipe(Order).raw()) {
+    // 위에서 저장한 주문도 포함
+  }
+});
+```
+
+`raw()`, `binary()`, keyset 페이지네이션 모두 같은 규칙을 따릅니다. 커넥션은 순회가 첫 배치를 가져올 때 정해지므로 한 번의 순회 안에서 커넥션이 바뀌지 않습니다. 순회는 트랜잭션이 끝나기 전에 마치세요. 커밋이나 롤백이 끝나면 커넥션이 풀로 돌아가서 다음 배치가 실패해요.
 
 ## 페이지네이션 전략
 

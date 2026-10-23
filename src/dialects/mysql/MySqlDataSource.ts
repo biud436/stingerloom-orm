@@ -5,6 +5,9 @@ import { IDataSource } from "../IDataSource";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { MySqlConnectionError } from "./MySqlConnectionError";
 import { validateSavepointName } from "../../utils/validateSavepointName";
+import type { Sql } from "../../utils/sqlTag";
+import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
+import { mysqlQueryWithOptions } from "./mysqlQueryWithOptions";
 
 export class MySqlDataSource implements IDataSource {
   private connection?: Connection;
@@ -77,6 +80,14 @@ export class MySqlDataSource implements IDataSource {
     }
 
     return await this.connector.query(sql, this.connection);
+  }
+
+  async queryWithOptions(sql: Sql, options: DriverQueryOptions) {
+    if (!this.connection) {
+      throw new MySqlConnectionError();
+    }
+
+    return mysqlQueryWithOptions(this.connection as any, sql, options);
   }
 
   async savepoint(name: string) {
