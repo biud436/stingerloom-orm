@@ -13,6 +13,7 @@ import { ReplicationNodeConfig } from "./ReplicationRouter";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { validateSavepointName } from "../utils/validateSavepointName";
+import type { DriverQueryOptions } from "../types/DriverQueryOptions";
 
 /**
  * The `TransactionHolder` class extends the `IQueryEngine` and is responsible for managing
@@ -146,6 +147,28 @@ export class TransactionSessionManager extends IQueryEngine {
     const queryResult = await this.dataSource?.query(sql as any);
 
     return queryResult;
+  }
+
+  /**
+   * Executes a query on this session's connection with driver-level result
+   * options (binary values, array rows) — the session-bound counterpart of
+   * `ISqlDriver.queryWithOptions()`, which reads from the pool. Inside a
+   * transaction it reads the transaction's own writes and snapshot.
+   *
+   * @throws {DatabaseNotConnectedError} If there is no active database connection.
+   */
+  public async queryWithOptions(sql: Sql, options: DriverQueryOptions): Promise<any[]> {
+    if (!this.connection || !this.dataSource) {
+      throw new DatabaseNotConnectedError();
+    }
+    if (!this.dataSource.queryWithOptions) {
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        "This data source cannot run queries with driver-level options",
+        "Implement IDataSource.queryWithOptions()",
+      );
+    }
+    return this.dataSource.queryWithOptions(sql, options);
   }
 
   /**

@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import type { Sql } from "../utils/sqlTag";
+import type { DriverQueryOptions } from "../types/DriverQueryOptions";
 import { TRANSACTION_ISOLATION_LEVEL } from "./IsolationLevel";
 
 /**
@@ -42,6 +44,14 @@ export interface IDataSource {
    * @returns A promise that resolves with the result of the query.
    */
   query(sql: string): Promise<any>;
+
+  /**
+   * Executes `sql` on this data source's connection with driver-level result
+   * options — the connection-bound counterpart of
+   * `ISqlDriver.queryWithOptions()`, which reads from the pool.
+   * @returns A promise that resolves with the result rows.
+   */
+  queryWithOptions?(sql: Sql, options: DriverQueryOptions): Promise<any[]>;
 
   /**
    * Creates a savepoint with the given name within the current transaction.

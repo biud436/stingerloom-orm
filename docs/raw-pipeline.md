@@ -170,7 +170,7 @@ em.pipe(User, {
 The pipeline reads as the active tenant, so it returns the same rows `em.find()` does:
 
 - **`tenant_column`**: every batch and `count()` carry the `tenant_id = ?` predicate, ANDed with your `where`. `MetadataContext.runUnscoped()`, the `"public"` context and `@NonTenantEntity()` drop it, as they do for `find()`. With no tenant context active the `tenantOnMissingContext` policy applies, so `"throw"` rejects the first batch.
-- **`search_path`** (the PostgreSQL default): the ORM selects a tenant's schema with `SET LOCAL search_path` inside the transaction a `find()` runs in. The pipeline's batches skip that transaction, so they name the schema in the table instead: `SELECT * FROM "acme"."user"`. A table pinned with `@Entity({ schema })` keeps its schema, and a tenant id that is not a valid identifier reads the default schema, as `find()` does.
+- **`search_path`** (the PostgreSQL default): the ORM selects a tenant's schema with `SET LOCAL search_path` inside the transaction a `find()` runs in. The pipeline's batches do not rely on it — outside a transaction they run on a pooled connection with no `SET LOCAL` — so they name the schema in the table instead: `SELECT * FROM "acme"."user"`. A table pinned with `@Entity({ schema })` keeps its schema, and a tenant id that is not a valid identifier reads the default schema, as `find()` does.
 - **`schema_qualified`**: table names already carry the tenant's schema.
 
 ```typescript
@@ -198,6 +198,24 @@ For an entity in an inheritance hierarchy the pipeline reads the rows `em.find()
 A `JOINED` root reads its own table: every row of the hierarchy, with the root's columns only.
 
 Keyset pagination over a `TABLE_PER_CLASS` root also orders by the discriminator after your column. Each concrete table numbers its keys on its own, so an `id` repeats across them.
+
+### Inside a Transaction
+
+Outside a transaction each batch is a plain query on a pooled connection, with no `BEGIN`/`COMMIT` around it. Inside `em.transaction()` or a `@Transactional` method, every batch runs on the transaction's own connection instead, so the pipeline reads what the rest of the transaction reads:
+
+- **Its uncommitted writes.** A row saved earlier in the transaction comes back, a deleted one does not, and `count()` agrees with the batches.
+- **One snapshot.** Under `REPEATABLE READ` or `SERIALIZABLE`, rows that other connections commit while you page through do not appear partway.
+
+```typescript
+await em.transaction(async () => {
+  await em.save(Order, { status: "pending", total: 120 });
+  for await (const batch of em.pipe(Order).raw()) {
+    // includes the order saved above
+  }
+});
+```
+
+`raw()`, `binary()` and keyset pagination all follow this rule. The connection is chosen when an iteration fetches its first batch, so one pass never switches connections. Finish iterating before the transaction ends: once it commits or rolls back, its connection goes back to the pool and the next batch fails.
 
 ## Pagination Strategies
 

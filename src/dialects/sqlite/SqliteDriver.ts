@@ -20,8 +20,7 @@ import { DbVersion } from "../DbVersion";
 import { SqliteCapabilities } from "../DialectCapabilities";
 import { resolveSqliteCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
-import { planSafeIntegers, normalizeSafeIntegerRows } from "./SqliteSafeIntegers";
-import { sanitizeSqliteBindValues } from "./SqliteBindValues";
+import { sqliteQueryWithOptions } from "./sqliteQueryWithOptions";
 
 /**
  * SQL driver implementation for SQLite.
@@ -69,36 +68,7 @@ export class SqliteDriver implements ISqlDriver {
   async queryWithOptions(query: Sql, options: DriverQueryOptions): Promise<any[]> {
     const sqliteConnector = this.connector as SqliteConnector;
     const db = await sqliteConnector.getConnection();
-
-    const sanitized = this.sanitizeValuesForOptions(query.values);
-    const stmt = db.prepare(query.sql);
-
-    if (options.arrayMode) {
-      stmt.raw(true);
-    }
-
-    // better-sqlite3 throws if stmt.all() is called on a non-row-returning
-    // statement (e.g. CTE-prefixed UPDATE/DELETE without RETURNING). Branch
-    // on stmt.reader so writes route to stmt.run() (#287).
-    if (!stmt.reader) {
-      const result =
-        sanitized && sanitized.length > 0
-          ? stmt.run(...sanitized)
-          : stmt.run();
-      return [result] as any;
-    }
-
-    const plan = planSafeIntegers(stmt);
-    const rows =
-      sanitized && sanitized.length > 0
-        ? stmt.all(...sanitized)
-        : stmt.all();
-    return plan ? normalizeSafeIntegerRows(rows, plan) : rows;
-  }
-
-  /** Same sanitizing and array rejection as the connector's own query path. */
-  private sanitizeValuesForOptions(values?: any[]): any[] | undefined {
-    return sanitizeSqliteBindValues(values);
+    return sqliteQueryWithOptions(db, query, options);
   }
 
   /**

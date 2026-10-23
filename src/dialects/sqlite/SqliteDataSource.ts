@@ -5,6 +5,8 @@ import { IDataSource } from "../IDataSource";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { SqliteConnectionError } from "./SqliteConnectionError";
 import { validateSavepointName } from "../../utils/validateSavepointName";
+import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
+import { sqliteQueryWithOptions } from "./sqliteQueryWithOptions";
 
 export class SqliteDataSource implements IDataSource {
   private connection?: any;
@@ -54,6 +56,14 @@ export class SqliteDataSource implements IDataSource {
     }
 
     return await this.connector.query(sql as any, this.connection);
+  }
+
+  async queryWithOptions(sql: Sql, options: DriverQueryOptions) {
+    if (!this.connection) {
+      throw new SqliteConnectionError();
+    }
+
+    return sqliteQueryWithOptions(this.connection, sql, options);
   }
 
   async savepoint(name: string) {

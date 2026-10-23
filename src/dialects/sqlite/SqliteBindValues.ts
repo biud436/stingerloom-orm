@@ -19,9 +19,8 @@ import { InvalidQueryError } from "../../errors/InvalidQueryError";
  * array. Plain objects stay legal: they are how raw queries pass named
  * parameters (`em.query("SELECT :a", [{ a: 1 }])`).
  *
- * Shared by `SqliteConnector` (every query) and
- * `SqliteDriver.queryWithOptions()` (RawPipeline), which bind through their
- * own prepared statements.
+ * Shared by `SqliteConnector` (every query) and `sqliteQueryWithOptions()`
+ * (RawPipeline), which bind through their own prepared statements.
  */
 export function sanitizeSqliteBindValues(values?: any[]): any[] | undefined {
   if (!values) return values;

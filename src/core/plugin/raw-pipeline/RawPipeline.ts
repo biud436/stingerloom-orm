@@ -12,6 +12,7 @@ import { attachWhereValueTransform } from "../../WhereValueTransform";
 import { MetadataContext } from "../../../metadata/MetadataContext";
 import { isValidPgIdentifier } from "../../../dialects/postgres/pgIdentifier";
 import { runInternalQuery } from "../../entity-manager/internal-query";
+import { transactionStorage } from "../../../decorators/Transactional";
 import { InheritanceResolver } from "../../InheritanceResolver";
 import { RelationMetadataResolver } from "../../RelationMetadataResolver";
 import { buildJoinedChildFromSource, isJoinedChild } from "../../JoinedChildSource";
@@ -121,6 +122,9 @@ interface PipelineScope {
   tiebreak?: string;
 }
 
+/** Runs one statement of a traversal and returns its rows. */
+type BatchRunner = (query: Sql) => Promise<any[]>;
+
 /** Where a keyset traversal resumes: the last row's ordering values. */
 interface KeysetCursor {
   value: unknown;
@@ -225,20 +229,23 @@ export class RawPipeline<T> {
   }
 
   /**
-   * Execute a query using the fastest available path.
-   *
-   * Prefers driver.queryWithOptions() (direct pool query, no transaction wrapper)
-   * over em.query() (wraps each call in BEGIN/COMMIT) to avoid per-batch
-   * transaction overhead on remote databases.
+   * How one traversal runs its statements, chosen once so every batch runs on
+   * the same connection. Inside a transaction (`em.transaction()`,
+   * `@Transactional`) that is the transaction's own connection, so the
+   * batches read its uncommitted writes and its snapshot, as `count()` and
+   * `find()` there do. Otherwise each batch is a direct pool query, without
+   * the BEGIN/COMMIT that would add two round-trips per batch on a remote
+   * database. Null when the driver cannot run a query with driver-level
+   * options.
    */
-  private async executeQuery(query: Sql): Promise<Record<string, unknown>[]> {
+  private batchRunner(driverOptions: DriverQueryOptions): BatchRunner | null {
+    const session = transactionStorage.getStore();
+    if (session) return (query) => session.queryWithOptions(query, driverOptions);
     const driver = this.ctx.driver;
     if (driver?.queryWithOptions) {
-      return driver.queryWithOptions(query, {}) as Promise<Record<string, unknown>[]>;
+      return (query) => driver.queryWithOptions!(query, driverOptions);
     }
-    // Fallback for drivers without queryWithOptions. Tenant-scoped like every
-    // batch, so not raw SQL bypassing the tenant predicate.
-    return runInternalQuery(() => this.ctx.em.query<Record<string, unknown>>(query));
+    return null;
   }
 
   /**
@@ -246,63 +253,12 @@ export class RawPipeline<T> {
    */
   async *raw(): AsyncGenerator<Record<string, unknown>[], void, undefined> {
     const scope = this.resolveScope();
-    if (this.useKeyset) {
-      yield* this.rawKeyset(scope);
-    } else {
-      yield* this.rawOffset(scope);
-    }
-  }
-
-  /**
-   * LIMIT/OFFSET pagination.
-   */
-  private async *rawOffset(
-    scope: PipelineScope,
-  ): AsyncGenerator<Record<string, unknown>[], void, undefined> {
-    let offset = 0;
-
-    while (true) {
-      const query = this.buildQuery(scope, offset);
-      const rows = await this.executeQuery(query);
-
-      if (rows.length === 0) break;
-      yield rows;
-      if (rows.length < this.batchSize) break;
-      offset += this.batchSize;
-    }
-  }
-
-  /**
-   * Keyset (cursor) pagination — uses WHERE col > lastValue instead of OFFSET.
-   * Requires orderBy with exactly one column.
-   */
-  private async *rawKeyset(
-    scope: PipelineScope,
-  ): AsyncGenerator<Record<string, unknown>[], void, undefined> {
-    const orderEntries = Object.entries(this.options.orderBy ?? {});
-    if (orderEntries.length === 0) {
-      yield* this.rawOffset(scope);
-      return;
-    }
-
-    const [orderProp, orderDir] = orderEntries[0];
-    const orderCol = this.info.propToCol.get(orderProp) ?? orderProp;
-    const isAsc = orderDir !== "DESC";
-
-    let cursor: KeysetCursor | null = null;
-
-    while (true) {
-      const query = this.buildKeysetQuery(scope, orderCol, isAsc, cursor);
-      const rows = await this.executeQuery(query);
-
-      if (rows.length === 0) break;
-      yield rows;
-
-      // Update cursor from last row
-      cursor = this.cursorAfter(rows[rows.length - 1], scope, orderCol, orderProp);
-
-      if (rows.length < this.batchSize) break;
-    }
+    // A driver without queryWithOptions runs the batches through em.query().
+    // Tenant-scoped like every batch, so not raw SQL bypassing the predicate.
+    const run =
+      this.batchRunner({}) ??
+      ((query: Sql) => runInternalQuery(() => this.ctx.em.query<Record<string, unknown>>(query)));
+    yield* this.batches(scope, run, true);
   }
 
   /**
@@ -311,30 +267,42 @@ export class RawPipeline<T> {
   async *binary(
     driverOptions: DriverQueryOptions = { binary: true },
   ): AsyncGenerator<any[], void, undefined> {
-    const driver = this.ctx.driver;
-    if (!driver?.queryWithOptions) {
+    const run = this.batchRunner(driverOptions);
+    if (!run) {
       yield* this.raw();
       return;
     }
-
-    const scope = this.resolveScope();
-    if (this.useKeyset) {
-      yield* this.binaryKeyset(driver, driverOptions, scope);
-    } else {
-      yield* this.binaryOffset(driver, driverOptions, scope);
-    }
+    // arrayMode returns rows as arrays — cannot extract cursor by column name.
+    // Fall back to offset pagination for arrayMode + keyset.
+    yield* this.batches(this.resolveScope(), run, !driverOptions.arrayMode);
   }
 
-  private async *binaryOffset(
-    driver: any,
-    driverOptions: DriverQueryOptions,
+  /**
+   * Keyset pagination when it was asked for and the rows can carry the
+   * cursor (rows keyed by column name), LIMIT/OFFSET otherwise.
+   */
+  private batches(
     scope: PipelineScope,
+    run: BatchRunner,
+    rowsByName: boolean,
+  ): AsyncGenerator<any[], void, undefined> {
+    const [order] = Object.entries(this.options.orderBy ?? {});
+    return this.useKeyset && order && rowsByName
+      ? this.keysetBatches(scope, run, order)
+      : this.offsetBatches(scope, run);
+  }
+
+  /**
+   * LIMIT/OFFSET pagination.
+   */
+  private async *offsetBatches(
+    scope: PipelineScope,
+    run: BatchRunner,
   ): AsyncGenerator<any[], void, undefined> {
     let offset = 0;
 
     while (true) {
-      const query = this.buildQuery(scope, offset);
-      const rows = await driver.queryWithOptions(query, driverOptions);
+      const rows = await run(this.buildQuery(scope, offset));
 
       if (!rows || rows.length === 0) break;
       yield rows;
@@ -343,37 +311,27 @@ export class RawPipeline<T> {
     }
   }
 
-  private async *binaryKeyset(
-    driver: any,
-    driverOptions: DriverQueryOptions,
+  /**
+   * Keyset (cursor) pagination — uses WHERE col > lastValue instead of OFFSET,
+   * on the first `orderBy` column.
+   */
+  private async *keysetBatches(
     scope: PipelineScope,
+    run: BatchRunner,
+    [orderProp, orderDir]: [string, unknown],
   ): AsyncGenerator<any[], void, undefined> {
-    // arrayMode returns rows as arrays — cannot extract cursor by column name.
-    // Fall back to offset pagination for arrayMode + keyset.
-    if (driverOptions.arrayMode) {
-      yield* this.binaryOffset(driver, driverOptions, scope);
-      return;
-    }
-
-    const orderEntries = Object.entries(this.options.orderBy ?? {});
-    if (orderEntries.length === 0) {
-      yield* this.binaryOffset(driver, driverOptions, scope);
-      return;
-    }
-
-    const [orderProp, orderDir] = orderEntries[0];
     const orderCol = this.info.propToCol.get(orderProp) ?? orderProp;
     const isAsc = orderDir !== "DESC";
 
     let cursor: KeysetCursor | null = null;
 
     while (true) {
-      const query = this.buildKeysetQuery(scope, orderCol, isAsc, cursor);
-      const rows = await driver.queryWithOptions(query, driverOptions);
+      const rows = await run(this.buildKeysetQuery(scope, orderCol, isAsc, cursor));
 
       if (!rows || rows.length === 0) break;
       yield rows;
 
+      // Update cursor from last row
       cursor = this.cursorAfter(rows[rows.length - 1], scope, orderCol, orderProp);
 
       if (rows.length < this.batchSize) break;
@@ -547,10 +505,10 @@ export class RawPipeline<T> {
    * The schema the statements name for the active tenant, or null when the
    * connection's own setup already reads the right one. Under the
    * `search_path` strategy the ORM selects a tenant's schema with `SET LOCAL
-   * search_path` inside the transaction it reads in, and the batches run on a
-   * pooled connection with no such transaction — so they name the tenant's
-   * schema themselves. A tenant id the connector would not switch to (not a
-   * valid identifier) is left out the same way.
+   * search_path` inside the transaction it reads in, and outside a transaction
+   * the batches run on a pooled connection with no such setting — so they
+   * name the tenant's schema themselves. A tenant id the connector would not
+   * switch to (not a valid identifier) is left out the same way.
    */
   private tenantSchema(): string | null {
     if (this.dialect !== "postgres") return null;

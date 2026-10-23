@@ -5,6 +5,8 @@ import { IDataSource } from "../IDataSource";
 import { TRANSACTION_ISOLATION_LEVEL } from "../IsolationLevel";
 import { PostgresConnectionError } from "./PostgresConnectionError";
 import { validateSavepointName } from "../../utils/validateSavepointName";
+import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
+import { pgQueryWithOptions } from "./pgQueryWithOptions";
 
 export class PostgresDataSource implements IDataSource {
   private connection?: any;
@@ -75,6 +77,14 @@ export class PostgresDataSource implements IDataSource {
     }
 
     return await this.connector.query(sql as any, this.connection);
+  }
+
+  async queryWithOptions(sql: Sql, options: DriverQueryOptions) {
+    if (!this.connection) {
+      throw new PostgresConnectionError();
+    }
+
+    return pgQueryWithOptions(this.connection, sql, options);
   }
 
   async savepoint(name: string) {
