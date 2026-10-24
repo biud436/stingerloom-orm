@@ -149,6 +149,20 @@ em.pipe(Post, { where: { content: { search: "typescript orm" } } })
 
 This is important. In the initial version, the pipeline had its own WHERE builder that was missing many operators (`contains`, `startsWith`, `ilike`, `NOT`, `AND`, `search`). Now it delegates to the core `WhereResolver`, so there is zero divergence from `em.find()` behavior.
 
+The names are checked the way `find()` checks them, when the pipeline is created. A misspelled column or operator is rejected with the same message `find()` gives, instead of reaching the driver as a dialect-specific error:
+
+```typescript
+em.pipe(User, { where: { nmae: "Alice" } });
+// InvalidQueryError: Unknown column "nmae" in "where" for entity "User".
+// Suggestion: Valid columns: id, name, email, ...
+
+em.pipe(User, { where: { email: { isNotNull: true } } });
+// InvalidQueryError: Invalid where for entity "User":
+//   unknown operator "isNotNull" on "email" (where.email). Did you mean "isNull"?
+```
+
+`orderBy` and `select` are checked the same way.
+
 ### NamingStrategy Support
 
 If you use a `NamingStrategy` (like `SnakeNamingStrategy`), the pipeline maps property names to database column names automatically:
@@ -164,6 +178,8 @@ em.pipe(User, {
   orderBy: { firstName: "ASC" },       // → ORDER BY "first_name" ASC
 })
 ```
+
+The foreign-key property of a `@ManyToOne` / `@OneToOne` relation resolves to its join column too, as in `find()`: `where: { authorId: 1 }` filters on `author_id`.
 
 ### Multi-Tenancy
 
@@ -197,7 +213,7 @@ For an entity in an inheritance hierarchy the pipeline reads the rows `em.find()
 
 A `JOINED` root reads its own table: every row of the hierarchy, with the root's columns only.
 
-Keyset pagination over a `TABLE_PER_CLASS` root also orders by the discriminator after your column. Each concrete table numbers its keys on its own, so an `id` repeats across them.
+Keyset pagination over a `TABLE_PER_CLASS` root also orders by the discriminator after the primary key. Each concrete table numbers its keys on its own, so an `id` repeats across them.
 
 ### Inside a Transaction
 
@@ -258,6 +274,20 @@ for await (const batch of em.pipe(User, {
 ```
 
 The pipeline automatically tracks the last value from each batch and injects it as a WHERE condition for the next query. You do not need to manage the cursor yourself.
+
+`keyset: true` needs exactly one `orderBy` property and an entity with a primary key. Without them the pipeline is rejected when it is created, rather than falling back to LIMIT/OFFSET. When `select` leaves out the ordering column or the primary key, the pipeline reads them anyway, since each batch resumes from the last row's values. The rows then carry those columns as well.
+
+#### Ordering by a Column That Repeats Values
+
+Keyset batches page the way [`findWithCursor()`](./pagination.md#cursor-based-pagination) does. Ordering by the primary key is the single-column case shown above. Ordering by any other column pages by that column, then the primary key. Rows that share a value are neither skipped nor read twice where one batch ends and the next begins. NULLs come last in ascending order and first in descending order on every dialect:
+
+```
+Batch 2:  SELECT * FROM "order" WHERE ...
+            AND ("created_at" > ? OR ("created_at" = ? AND "id" > ?) OR "created_at" IS NULL)
+            ORDER BY ("created_at" IS NULL) ASC, "created_at" ASC, "id" ASC LIMIT 5000
+```
+
+Because of the `("created_at" IS NULL)` sort key, an index on `created_at` alone does not return these rows in order. The database sorts each batch's matching rows instead, so for a very large export, ordering by the primary key stays the fastest choice.
 
 ::: tip When to use keyset
 Use `keyset: true` when:
@@ -839,12 +869,20 @@ em.extend(rawPipelinePlugin());
 |-----------|------|---------|-------------|
 | `entity` | `ClazzType<T>` | *(required)* | The entity class (used for table name and column resolution) |
 | `options.where` | `WhereClause<T>` | — | Filter conditions (same syntax as `em.find()`) |
-| `options.orderBy` | `OrderByOption<T>` | — | Sort order (respects NamingStrategy) |
-| `options.select` | `string[]` | `*` | Specific columns to select (respects NamingStrategy) |
-| `options.batchSize` | `number` | `1000` | Rows per batch (minimum: 1) |
-| `options.keyset` | `boolean` | `false` | Use keyset pagination instead of LIMIT/OFFSET. Requires `orderBy`. |
+| `options.orderBy` | `IOrderBy<T>` | — | Sort order by property, `"ASC"` or `"DESC"` in either case (respects NamingStrategy) |
+| `options.select` | `(keyof T)[]` | `*` | Properties to select (respects NamingStrategy) |
+| `options.batchSize` | `number` | `1000` | Rows per batch, a positive integer |
+| `options.keyset` | `boolean` | `false` | Use keyset pagination instead of LIMIT/OFFSET. Requires exactly one `orderBy` property and a primary key. |
 
 Returns a `RawPipeline<T>`.
+
+`em.pipe()` throws `InvalidQueryError` when an option is unknown or malformed, or names a column the entity does not have. The `find()` options a pipeline does not apply are rejected with the reason:
+
+| Option | Why a pipeline rejects it |
+|--------|---------------------------|
+| `take`, `limit`, `skip` | A pipeline reads every row `where` matches. Narrow `where`, or stop iterating once you have enough rows. |
+| `withDeleted`, `onlyDeleted` | A pipeline does not filter soft-deleted rows, so it already reads them. Name the condition in `where`, e.g. `{ deletedAt: { isNull: true } }`. |
+| `relations`, `withCount` | A pipeline reads the raw rows of one table. Load relations with `find()`. |
 
 ### `RawPipeline<T>`
 
