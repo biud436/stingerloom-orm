@@ -101,6 +101,22 @@ export function makeBigintColumnRead(
 }
 
 /**
+ * True when `value` is an integer — a number, a BigInt or a decimal integer
+ * string — that a JS number cannot hold exactly (outside ±2^53). Everything
+ * else, including fractional values and non-numeric text, is `false`.
+ */
+export function isUnsafeInteger(value: unknown): boolean {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && !Number.isSafeInteger(value);
+  }
+  if (typeof value === "bigint") return value > MAX_SAFE || value < MIN_SAFE;
+  if (typeof value === "string" && INTEGER_STRING.test(value)) {
+    return !Number.isSafeInteger(Number(value));
+  }
+  return false;
+}
+
+/**
  * Coerces an aggregate result (`SUM` / `MIN` / `MAX` / `COUNT`) to a number
  * the way the aggregate APIs promise, but refuses to round an integer that
  * the driver delivered losslessly beyond ±2^53. Fractional results (`AVG`,

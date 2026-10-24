@@ -38,6 +38,7 @@ Raw SQL 표면은 의도적으로 계층화되어 있어요. 쿼리가 까다로
 | `raw(str)` (`sql-template-tag`) | 문자열을 SQL에 그대로 splice (quoting/binding 없음) | **X** | **X** | **사용자 입력을 `raw()`로 보간하지 마세요.** 이미 신뢰하는 식별자 문자열에만 사용. |
 | `em.query\`…\`` (tagged form) | 짧은 raw 쿼리용 shortcut: `${Entity}`는 `em.ref(Entity)`로 자동 해석, 그 외 `${value}`는 바인딩 | `${Entity}`만 O -- 템플릿 안의 컬럼명은 평문 | **O** -- Entity가 아닌 모든 `${value}`가 placeholder | 명시적 `ref()` 보일러플레이트 제거. 컬럼명 typo는 컴파일 시 잡히지 않음 -- 컬럼 안전성이 필요하면 `em.ref(Entity).column`으로 한 단 내려가세요. |
 | `em.query(sqlOrText, params?)` | 사전 빌드된 `Sql` 조각 또는 raw 문자열 + 위치 바인드 실행 | -- | `Sql` 객체 또는 `(text, params)` 튜플일 때 O | 드라이버의 raw 행 반환; NamingStrategy 역매핑이나 hydration 없음. |
+| `em.query(shape)\`…\`` / `em.query(shape, sqlOrText, params?)` | `defineRow()` shape로 결과 행을 읽음 | 태그드 / 일반 형태와 같음 | 태그드 / 일반 형태와 같음 | 행에 shape의 타입이 붙고, 선언한 컬럼은 타입대로 변환됩니다(SQLite의 `Date`, JSON 파싱, boolean, 숫자 문자열 → 숫자). 엔티티 매핑이나 등록은 필요 없습니다. [Raw 쿼리 결과에 타입 붙이기](./row-shapes.md) 참고. |
 
 #### 안전 계약(safety contract)
 
@@ -263,6 +264,16 @@ const rows = await em.query<{ count: string }>`
 ```
 
 tagged form은 의도적으로 4단계의 shortcut이에요 -- composable한 WHERE / JOIN / CTE 조립이 필요한 3단계의 `RawQueryBuilder`를 대체하지 않아요. NamingStrategy 역매핑과 결과 hydration도 여전히 적용되지 않아요(드라이버의 raw 행을 그대로 받아요).
+
+위 예제에서 `{ count: string }`으로 적은 건 일부러입니다. PostgreSQL은 `COUNT(*)`를 문자열로 돌려주거든요. 엔티티를 매핑하지 않고도 타입과 변환을 함께 받고 싶다면 타입 인자 대신 [row shape](./row-shapes.md)를 넘기면 됩니다.
+
+```typescript
+const Count = defineRow({ count: t.int() });
+const [{ count }] = await em.query(Count)`
+  SELECT COUNT(*) AS count FROM ${Issue} WHERE status = ${"open"}
+`;
+// 어느 드라이버에서든 count는 number
+```
 
 ## WHERE, JOIN, Subquery
 
@@ -533,6 +544,7 @@ qb.selectDistinctOn(['"department"'], ['"id"', '"name"', '"salary"'])
 
 ## Next Steps
 
+- [Raw 쿼리 결과에 타입 붙이기](./row-shapes.md) -- `defineRow()`로 raw SQL 결과에 타입과 변환 적용, 엔티티 불필요
 - [Query Builder](./query-builder.md) -- Type-safe SelectQueryBuilder with `keyof T` auto-complete
 - [EntityManager](./entity-manager.md) -- Basic CRUD with find(), save(), etc.
 - [API Reference](./api-reference.md) -- Quick reference for all method signatures

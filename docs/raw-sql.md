@@ -38,6 +38,7 @@ The rule of thumb: **start at rung 1 and climb only when the rung above genuinel
 | `raw(str)` (from `sql-template-tag`) | Splice a string literally into the SQL (no quoting, no binding) | **No** | **No** | **Never interpolate user input through `raw()`.** Reserve for known-safe identifier strings you already trust. |
 | `em.query\`…\`` (tagged form) | Shorthand for short raw queries: `${Entity}` auto-resolves to `em.ref(Entity)`, other `${value}` interpolations are bound | Yes for `${Entity}` only -- column names inside the template are plain text | **Yes** -- every non-Entity `${value}` becomes a placeholder | Skips the explicit `ref()` boilerplate. Column-name typos are not caught at compile time -- drop down to `em.ref(Entity).column` when column safety matters. |
 | `em.query(sqlOrText, params?)` | Execute a pre-built `Sql` fragment, or a raw string with positional binds | -- | Yes when passed an `Sql` object or `(text, params)` tuple | Returns the driver's raw rows; no NamingStrategy reverse-mapping or hydration. |
+| `em.query(shape)\`…\`` / `em.query(shape, sqlOrText, params?)` | Typed raw rows: the rows are read through a `defineRow()` shape | Same as the tagged / plain forms | Same as the tagged / plain forms | Rows are typed as the shape, and each declared column is converted per its type (`Date` on SQLite, parsed JSON, real booleans, numeric strings as numbers). No entity mapping or registration. See [Typed Raw Rows](./row-shapes.md). |
 
 #### The safety contract
 
@@ -263,6 +264,16 @@ const rows = await em.query<{ count: string }>`
 ```
 
 The tagged form is intentionally a shorthand for rung 4 -- it does not replace `RawQueryBuilder` at rung 3 when you need composable WHERE / JOIN / CTE assembly. NamingStrategy reverse-mapping and result hydration still do not apply (you receive raw driver rows).
+
+The `{ count: string }` above is deliberate: PostgreSQL returns `COUNT(*)` as a string. To have the rows typed **and** converted without mapping an entity, pass a [row shape](./row-shapes.md) instead of a type argument:
+
+```typescript
+const Count = defineRow({ count: t.int() });
+const [{ count }] = await em.query(Count)`
+  SELECT COUNT(*) AS count FROM ${Issue} WHERE status = ${"open"}
+`;
+// count: number on every driver
+```
 
 ## WHERE, JOIN, and Subqueries
 
@@ -533,6 +544,7 @@ In practice, start with `SelectQueryBuilder` for everyday queries. If you hit a 
 
 ## Next Steps
 
+- [Typed Raw Rows](./row-shapes.md) -- Typed, converted rows from raw SQL with `defineRow()`, no entity required
 - [Query Builder](./query-builder.md) -- Type-safe SelectQueryBuilder with `keyof T` auto-complete
 - [EntityManager](./entity-manager.md) -- Basic CRUD with find(), save(), etc.
 - [API Reference](./api-reference.md) -- Quick reference for all method signatures

@@ -6,6 +6,7 @@ import { ClazzType } from "../utils/types";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { EntitySchema } from "./EntitySchema";
+import { describeInvalidBuilder } from "./builderErrors";
 import {
   ColumnSchemaDef,
   EntitySchemaOptions,
@@ -159,24 +160,6 @@ function mintEntityClass(name: string): ClazzType {
     },
   };
   return holder[ident];
-}
-
-/** Names what an invalid field value actually is, for the defineEntity error. */
-function describeInvalidBuilder(value: unknown): string {
-  if (typeof value === "function") {
-    return (
-      "got an uncalled builder factory (a function). " +
-      "Did you forget the parentheses, e.g. t.varchar() instead of t.varchar?"
-    );
-  }
-  if (value === undefined) {
-    return (
-      "got undefined. Check the referenced variable — an import cycle can " +
-      "leave a builder undefined at definition time."
-    );
-  }
-  if (value === null) return "got null.";
-  return `got ${typeof value}.`;
 }
 
 /**

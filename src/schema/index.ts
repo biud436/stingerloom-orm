@@ -42,3 +42,13 @@ export {
   InferEntity,
   InferShape,
 } from "./defineEntity";
+export {
+  defineRow,
+  DefineRowOptions,
+  InferRow,
+  InferRowColumns,
+  isRowShape,
+  RowColumns,
+  RowQuery,
+  RowShape,
+} from "./defineRow";

@@ -119,6 +119,7 @@ for await (const batch of em.streamBatch(User, {}, 500)) {
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `query` | `<T>(sql: string \| Sql, params?: unknown[]): Promise<T[]>` | Execute arbitrary SQL |
+| `query` | `<Row>(shape: RowShape<Row>): RowQuery<Row>`<br>`<Row>(shape: RowShape<Row>, sql: string \| Sql, params?: unknown[]): Promise<Row[]>` | Typed raw rows read through a [`defineRow()` shape](./row-shapes.md) (tagged template runner, or `(shape, sql, params?)`) |
 | `explain` | `<T>(entity, option?): Promise<ExplainResult>` | EXPLAIN analysis |
 
 ### Query Builder
@@ -1344,6 +1345,26 @@ type RelationSchemaDef =
 ```
 
 > `relationColumn` carries explicit FK column metadata (`name`, `type`, `nullable`, `referencedColumn`) — the `@RelationColumn()` equivalent. See the [Decorator-Free Guide](./decorator-free.md#foreign-key-columns-relationcolumn).
+
+## defineRow (Typed Raw Rows)
+
+[Usage ->](./row-shapes.md)
+
+```typescript
+import { defineRow, t, InferRow, isRowShape } from "@stingerloom/orm";
+
+const shape = defineRow(columns: Record<string, ColumnBuilder<any>>, options?: { name?: string });
+type Row = InferRow<typeof shape>;
+const rows: Row[] = await em.query(shape)`SELECT ...`;
+```
+
+| Export | Description |
+|--------|-------------|
+| `defineRow(columns, options?)` | Builds a frozen `RowShape` from `t` column builders. Registers nothing; relation and computed builders throw `SCHEMA_ERROR` |
+| `InferRow<S>` | Row type of a shape |
+| `InferRowColumns<Cols>` | Row type of a column map |
+| `RowShape<Row>` / `RowColumns` / `RowQuery<Row>` / `DefineRowOptions` | Supporting types (`RowQuery` is the tagged runner `em.query(shape)` returns) |
+| `isRowShape(value)` | Type guard for a shape |
 
 ## Utilities
 

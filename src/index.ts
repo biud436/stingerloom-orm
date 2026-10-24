@@ -750,6 +750,16 @@ export {
   InferEntity,
   InferShape,
 } from "./schema/defineEntity";
+export {
+  defineRow,
+  DefineRowOptions,
+  InferRow,
+  InferRowColumns,
+  isRowShape,
+  RowColumns,
+  RowQuery,
+  RowShape,
+} from "./schema/defineRow";
 
 // Prisma import (requires optional @mrleebo/prisma-ast)
 export {
