@@ -7,6 +7,7 @@ import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 import { Entity } from "../../src/decorators/Entity";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
 import { Column } from "../../src/decorators/Column";
+import { defineRow, t } from "../../src/schema";
 
 @Entity({ name: "mtem_user" })
 class UserE {
@@ -343,5 +344,39 @@ describe("MultiTenantEntityManager", () => {
 
     expect(events.length).toBe(2);
     expect(events.map((e) => e.tenant).sort()).toEqual(["acme", "globex"]);
+  });
+
+  it("query(shape) reads an unmapped table on the active tenant's database", async () => {
+    const em = new MultiTenantEntityManager();
+    await em.register({
+      ...sqliteOpts(),
+      tenantDatabaseResolver: () => sqliteOpts(),
+    });
+    const Location = defineRow({
+      id: t.int(),
+      cachedAt: t.datetime().name("cached_at"),
+    });
+
+    for (const [tenant, id] of [["acme", 1], ["globex", 2]] as const) {
+      await MetadataContext.run(tenant, async () => {
+        await em.query("CREATE TABLE cached_location (id INTEGER, cached_at TEXT)");
+        await em.query("INSERT INTO cached_location VALUES (?, ?)", [
+          id,
+          "2026-10-24 09:30:00",
+        ]);
+      });
+    }
+
+    const acme = await MetadataContext.run("acme", () =>
+      em.query(Location)`SELECT * FROM cached_location`,
+    );
+    const globex = await MetadataContext.run("globex", () =>
+      em.query(Location, "SELECT * FROM cached_location WHERE id = ?", [2]),
+    );
+
+    expect(acme).toEqual([{ id: 1, cachedAt: new Date(2026, 9, 24, 9, 30, 0) }]);
+    expect(globex.map((row) => row.id)).toEqual([2]);
+    const _at: Date = globex[0].cachedAt;
+    void _at;
   });
 });

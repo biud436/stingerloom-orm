@@ -4,6 +4,8 @@ import { ClazzType } from "../../utils";
 import { ENTITY_TOKEN } from "../../decorators/Entity";
 import { isTemplateStringsArray } from "./internal-utils";
 import type { EntityManagerInternals } from "../EntityManagerInternals";
+import type { RowShape } from "../../schema/defineRow";
+import { readRowsWithShape } from "../RowShapeReader";
 
 /**
  * Raw-SQL execution engine extracted from EntityManager: the `em.query()`
@@ -40,6 +42,20 @@ export class RawQueryRunner {
       return this.runRawQuery<T>(parameterizedSql);
     }
     return this.runRawQuery<T>(sqlOrStrings);
+  }
+
+  /**
+   * `em.query(shape, …)` execution: runs the query exactly like `query()`
+   * (same overloads, entity interpolation and transaction path), then reads
+   * the raw rows through the shape.
+   */
+  async queryRows<Row>(
+    shape: RowShape<Row>,
+    sqlOrStrings: string | Sql | TemplateStringsArray,
+    rest: unknown[],
+  ): Promise<Row[]> {
+    const rows = await this.query<Record<string, unknown>>(sqlOrStrings, rest);
+    return readRowsWithShape(shape, rows);
   }
 
   private async runRawQuery<T>(sqlQuery: string | Sql): Promise<T[]> {

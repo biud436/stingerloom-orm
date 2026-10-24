@@ -19,20 +19,7 @@ import {
 import { ClazzType } from "../utils";
 import { ColumnMetadata } from "../scanner/ColumnScanner";
 import { resolveOneToOneJoinColumns } from "./RelationMetadataResolver";
-import { ColumnTypeRegistry } from "./ColumnTypeRegistry";
-import {
-  isJsonColumnType,
-  makeDefaultArrayColumnRead,
-  makeDefaultJsonColumnRead,
-} from "./JsonColumnTransformer";
-import {
-  isTemporalColumnType,
-  defaultTemporalColumnRead,
-} from "./TemporalColumnTransformer";
-import {
-  DEFAULT_BIGINT_MODE,
-  makeBigintColumnRead,
-} from "./BigintColumnTransformer";
+import { resolveColumnRead } from "./ColumnReadTransform";
 
 export type ForeignObject<T = any> = { [key: string]: T };
 
@@ -228,61 +215,21 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
 
   // Build transform list
   const transformColumns: Array<{ key: string; from: (raw: any) => any }> = [];
-  const registry = ColumnTypeRegistry.getInstance();
   const entityName = (entityClass as { name?: string }).name ?? "Entity";
   for (const col of columns) {
     const key = col.propertyKey ?? col.name;
     if (!key) continue;
-    if (col.transformer?.from) {
-      transformColumns.push({ key, from: col.transformer.from });
-    } else if (col.transform) {
-      transformColumns.push({ key, from: col.transform });
-    } else if (col.options?.type) {
-      // Fall back to registry transformer for custom types
-      const regTransformer = registry.getTransformer(col.options.type);
-      if (regTransformer?.from) {
-        transformColumns.push({ key, from: regTransformer.from });
-      } else if (isJsonColumnType(col.options.type)) {
-        // Default JSON round-trip: parse string payloads on read.
-        // mysql2 / better-sqlite3 surface JSON columns as strings, while pg
-        // jsonb already returns parsed values; the helper short-circuits the
-        // non-string branch so it is a no-op for pg.
-        transformColumns.push({
-          key,
-          from: makeDefaultJsonColumnRead(entityName, key),
-        });
-      } else if (col.options.type === "array") {
-        // MySQL/SQLite store `type: "array"` as JSON text; pg already returns
-        // a JS array for a native array column, which passes through.
-        transformColumns.push({
-          key,
-          from: makeDefaultArrayColumnRead(entityName, key),
-        });
-      } else if (col.options.type === "boolean") {
-        // MySQL/SQLite store booleans as 0/1 TINYINT; normalize to a real
-        // JS boolean on read. PostgreSQL returns true/false already, in
-        // which case Boolean() is the identity.
-        transformColumns.push({ key, from: (raw) => Boolean(raw) });
-      } else if (isTemporalColumnType(col.options.type)) {
-        // better-sqlite3 returns temporal columns as the stored TEXT while
-        // pg/mysql2 return Date; normalize on read so the entity's declared
-        // Date type holds on every driver. Date values pass through, so this
-        // is a cheap instanceof check on PostgreSQL/MySQL.
-        transformColumns.push({ key, from: defaultTemporalColumnRead });
-      } else if (col.options.type === "bigint") {
-        // Drivers deliver bigint losslessly but in different shapes (pg:
-        // string, mysql2 / better-sqlite3: number when safe, string beyond
-        // ±2^53). The column's bigintMode picks one entity-side type.
-        transformColumns.push({
-          key,
-          from: makeBigintColumnRead(
-            col.options.bigintMode ?? DEFAULT_BIGINT_MODE,
-            entityName,
-            key,
-          ),
-        });
-      }
-    }
+    const from = resolveColumnRead(
+      {
+        type: col.options?.type,
+        transformer: col.transformer,
+        transform: col.transform,
+        bigintMode: col.options?.bigintMode,
+      },
+      entityName,
+      key,
+    );
+    if (from) transformColumns.push({ key, from });
   }
 
   cached = {

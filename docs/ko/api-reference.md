@@ -119,6 +119,7 @@ for await (const batch of em.streamBatch(User, {}, 500)) {
 | Method | Signature | 설명 |
 |--------|-----------|------|
 | `query` | `<T>(sql: string \| Sql, params?: unknown[]): Promise<T[]>` | 임의의 SQL 실행 |
+| `query` | `<Row>(shape: RowShape<Row>): RowQuery<Row>`<br>`<Row>(shape: RowShape<Row>, sql: string \| Sql, params?: unknown[]): Promise<Row[]>` | [`defineRow()` shape](./row-shapes.md)로 읽은 타입 있는 raw 행 (태그드 템플릿 러너, 또는 `(shape, sql, params?)`) |
 | `explain` | `<T>(entity, option?): Promise<ExplainResult>` | EXPLAIN 분석 |
 
 ### Query Builder
@@ -1341,6 +1342,26 @@ type RelationSchemaDef =
 ```
 
 > `relationColumn`은 명시적 FK 컬럼 메타데이터(`name`, `type`, `nullable`, `referencedColumn`)를 담습니다 — `@RelationColumn()` 대응. [데코레이터 없이 사용하기](./decorator-free.md#외래-키-컬럼-relationcolumn)를 참고하세요.
+
+## defineRow (Raw 결과 타입)
+
+[사용법 ->](./row-shapes.md)
+
+```typescript
+import { defineRow, t, InferRow, isRowShape } from "@stingerloom/orm";
+
+const shape = defineRow(columns: Record<string, ColumnBuilder<any>>, options?: { name?: string });
+type Row = InferRow<typeof shape>;
+const rows: Row[] = await em.query(shape)`SELECT ...`;
+```
+
+| Export | 설명 |
+|--------|------|
+| `defineRow(columns, options?)` | `t` 컬럼 빌더로 얼린 `RowShape`를 만듭니다. 아무것도 등록하지 않으며, 관계·계산 컬럼 빌더는 `SCHEMA_ERROR`를 던집니다 |
+| `InferRow<S>` | shape의 행 타입 |
+| `InferRowColumns<Cols>` | 컬럼 맵의 행 타입 |
+| `RowShape<Row>` / `RowColumns` / `RowQuery<Row>` / `DefineRowOptions` | 보조 타입 (`RowQuery`는 `em.query(shape)`가 돌려주는 태그드 러너) |
+| `isRowShape(value)` | shape 타입 가드 |
 
 ## Utilities
 

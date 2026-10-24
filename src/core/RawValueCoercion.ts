@@ -14,6 +14,8 @@
 
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { isUnsafeInteger } from "./BigintColumnTransformer";
+import { defaultTemporalColumnRead } from "./TemporalColumnTransformer";
 
 /** Primitive type tag for a single coerced column. */
 export type CoerceType =
@@ -56,28 +58,44 @@ export interface RawResultOptions<T> {
  * preserved (a nullable aggregate stays nullable).
  *
  * - `number`  — `Number(v)`; handles `mysql2` BIGINT-as-string and
- *   `pg` DECIMAL/NUMERIC-as-string. Use `bigint` instead when the value
- *   can exceed `Number.MAX_SAFE_INTEGER`.
+ *   `pg` DECIMAL/NUMERIC-as-string. An integer outside ±2^53 throws
+ *   `BIGINT_PRECISION_LOSS` instead of rounding — use `bigint` (or
+ *   `string`) for those columns.
  * - `bigint`  — `BigInt(v)`; for integer columns wider than 53 bits.
  * - `string`  — `String(v)`.
- * - `date`    — wraps non-`Date` values in `new Date(v)`.
+ * - `date`    — strings parse the way entity temporal columns do (a
+ *   zone-less timestamp or a bare `YYYY-MM-DD` is local time, so a DATE
+ *   does not shift a day west of UTC); other non-`Date` values go through
+ *   `new Date(v)`.
  * - `json`    — `JSON.parse` when the value is a string, otherwise
  *   passes through (the `pg` driver already parses `json`/`jsonb`).
  * - `boolean` — normalizes `0/1`, `"0"/"1"`, `"true"/"false"` and real
  *   booleans (MySQL/SQLite store booleans as `TINYINT` 0/1).
  */
-function coerceValue(value: unknown, type: CoerceType): unknown {
+function coerceValue(value: unknown, type: CoerceType, key: string): unknown {
   if (value === null || value === undefined) return value;
 
   switch (type) {
     case "number":
+      if (isUnsafeInteger(value)) {
+        throw new OrmError(
+          OrmErrorCode.BIGINT_PRECISION_LOSS,
+          `getRawMany: column "${key}" holds ${String(value)}, which cannot ` +
+            `be represented exactly as a JS number (outside ±2^53).`,
+          `Coerce the column with "bigint" or "string" to read it losslessly.`,
+        );
+      }
       return typeof value === "number" ? value : Number(value);
     case "bigint":
       return typeof value === "bigint" ? value : BigInt(value as never);
     case "string":
       return typeof value === "string" ? value : String(value);
-    case "date":
-      return value instanceof Date ? value : new Date(value as never);
+    case "date": {
+      if (value instanceof Date) return value;
+      const parsed =
+        typeof value === "string" ? defaultTemporalColumnRead(value) : value;
+      return parsed instanceof Date ? parsed : new Date(value as never);
+    }
     case "json":
       return typeof value === "string" ? JSON.parse(value) : value;
     case "boolean":
@@ -107,8 +125,9 @@ export function coerceRow<T>(
     const type = coerce[key as keyof T];
     if (!type || !(key in out)) continue;
     try {
-      out[key] = coerceValue(out[key], type);
+      out[key] = coerceValue(out[key], type, key);
     } catch (err) {
+      if (err instanceof OrmError) throw err;
       throw new OrmError(
         OrmErrorCode.QUERY_ERROR,
         `getRawMany: failed to coerce column "${key}" to "${type}" ` +

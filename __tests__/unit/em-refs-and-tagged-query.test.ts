@@ -44,6 +44,8 @@ jest.mock("../../src/DatabaseClient", () => ({
 }));
 
 import { EntityManager } from "../../src/core/EntityManager";
+import { defineRow, t, type InferRow } from "../../src/schema";
+import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 
 @Entity()
 class Issue {
@@ -197,5 +199,121 @@ describe("EntityManager.query`...` — tagged-template overload", () => {
     const { text, values } = lastSqlPayload();
     expect(text).toBe(`SELECT * FROM issue WHERE id = ?`);
     expect(values).toEqual([5]);
+  });
+});
+
+describe("EntityManager.query(shape) — typed raw rows", () => {
+  let em: EntityManager;
+
+  const CachedLocation = defineRow(
+    {
+      id: t.int(),
+      x: t.double(),
+      hot: t.boolean(),
+      cachedAt: t.datetime().name("cached_at"),
+    },
+    { name: "CachedLocation" },
+  );
+
+  const driverRow = {
+    id: 16,
+    x: "1.25",
+    hot: 1,
+    cached_at: "2026-10-24 09:30:00",
+    zone: "z1",
+  };
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    em = await newPostgresEm();
+    mockQuery.mockResolvedValue({ results: [driverRow], fields: [] });
+  });
+
+  function lastSqlPayload(): { text: string; values: unknown[] } {
+    const arg = mockQuery.mock.calls.at(-1)![0];
+    if (typeof arg === "string") return { text: arg, values: [] };
+    return { text: arg.sql ?? arg.text, values: arg.values ?? [] };
+  }
+
+  function expectShaped(rows: unknown[]): void {
+    expect(rows).toEqual([
+      {
+        id: 16,
+        x: 1.25,
+        hot: true,
+        cachedAt: new Date(2026, 9, 24, 9, 30, 0),
+        zone: "z1",
+      },
+    ]);
+  }
+
+  test("tagged form binds values, interpolates entities and reads rows through the shape", async () => {
+    const rows = await em.query(CachedLocation)`
+      SELECT * FROM cached_location AS a JOIN ${Issue} ON true WHERE a.id = ${16}`;
+    const { text, values } = lastSqlPayload();
+    expect(text).toContain(`JOIN "issue" ON true WHERE a.id = ?`);
+    expect(values).toEqual([16]);
+    expectShaped(rows);
+  });
+
+  test("the runner returned by query(shape) can be reused", async () => {
+    const run = em.query(CachedLocation);
+    expectShaped(await run`SELECT * FROM cached_location WHERE id = ${16}`);
+    expectShaped(await run`SELECT * FROM cached_location WHERE id = ${17}`);
+    expect(lastSqlPayload().values).toEqual([17]);
+  });
+
+  test("query(shape, string, params) binds positional params", async () => {
+    const rows = await em.query(
+      CachedLocation,
+      "SELECT * FROM cached_location WHERE id = $1",
+      [16],
+    );
+    expect(lastSqlPayload()).toEqual({
+      text: "SELECT * FROM cached_location WHERE id = $1",
+      values: [16],
+    });
+    expectShaped(rows);
+  });
+
+  test("query(shape, Sql) runs a pre-built fragment", async () => {
+    const rows = await em.query(
+      CachedLocation,
+      sql`SELECT * FROM cached_location WHERE id = ${16}`,
+    );
+    expect(lastSqlPayload().values).toEqual([16]);
+    expectShaped(rows);
+  });
+
+  test("query(shape, string) without params runs the string as-is", async () => {
+    expectShaped(await em.query(CachedLocation, "SELECT * FROM cached_location"));
+    expect(lastSqlPayload()).toEqual({
+      text: "SELECT * FROM cached_location",
+      values: [],
+    });
+  });
+
+  test("a declared column missing from the result rejects with QUERY_ERROR", async () => {
+    mockQuery.mockResolvedValue({ results: [{ id: 16 }], fields: [] });
+    await expect(
+      em.query(CachedLocation)`SELECT id FROM cached_location`,
+    ).rejects.toMatchObject({
+      code: OrmErrorCode.QUERY_ERROR,
+      message: expect.stringContaining('no column "x"'),
+    });
+  });
+
+  test("rows are typed as the shape's row", async () => {
+    const rows = await em.query(CachedLocation)`SELECT * FROM cached_location`;
+    const typed: InferRow<typeof CachedLocation>[] = rows;
+    const _at: Date = rows[0].cachedAt;
+    const _hot: boolean = rows[0].hot;
+    // @ts-expect-error — undeclared columns are not part of the row type.
+    const _zone = rows[0].zone;
+    void [typed, _at, _hot, _zone];
+
+    const direct = await em.query(CachedLocation, "SELECT * FROM cached_location");
+    const _x: number = direct[0].x;
+    void _x;
   });
 });

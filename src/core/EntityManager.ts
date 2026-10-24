@@ -11,6 +11,7 @@ import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
 import { Sql, isSqlFragment } from "../utils/sqlTag";
+import { isRowShape, type RowQuery, type RowShape } from "../schema/defineRow";
 import { attachWhereValueTransform } from "./WhereValueTransform";
 import { BaseRepository } from "./BaseRepository";
 import { BaseEntityManager } from "./BaseEntityManager";
@@ -2710,20 +2711,52 @@ export class EntityManager implements BaseEntityManager {
    * to `em.ref(Entity).column` (which is type-checked against the
    * entity's properties).
    */
-  async query<T = Record<string, unknown>>(
+  query<T = Record<string, unknown>>(
     strings: TemplateStringsArray,
     ...values: unknown[]
   ): Promise<T[]>;
   /** Pre-built `Sql` fragment or raw string with optional positional binds. */
-  async query<T = Record<string, unknown>>(
+  query<T = Record<string, unknown>>(
     sqlQuery: string | Sql,
     params?: unknown[],
   ): Promise<T[]>;
-  async query<T = Record<string, unknown>>(
-    sqlOrStrings: string | Sql | TemplateStringsArray,
+  /**
+   * Typed raw rows: returns a tagged-template runner whose rows are read
+   * through a {@link defineRow} shape — typed as the shape's row, and each
+   * declared column converted per its type. The template follows the same
+   * interpolation rules as the tagged `em.query` form.
+   *
+   * @example
+   * ```ts
+   * const CachedLocation = defineRow({
+   *   id: t.int(),
+   *   cachedAt: t.datetime().name("cached_at"),
+   * });
+   * const rows = await em.query(CachedLocation)`
+   *   SELECT * FROM cached_location WHERE id = ${16}
+   * `;
+   * ```
+   */
+  query<Row>(shape: RowShape<Row>): RowQuery<Row>;
+  /** Typed raw rows from a pre-built `Sql` fragment or a raw string with positional binds. */
+  query<Row>(
+    shape: RowShape<Row>,
+    sqlQuery: string | Sql,
+    params?: unknown[],
+  ): Promise<Row[]>;
+  query(
+    first: string | Sql | TemplateStringsArray | RowShape<unknown>,
     ...rest: unknown[]
-  ): Promise<T[]> {
-    return this.rawQueryRunner.query<T>(sqlOrStrings, rest);
+  ): Promise<unknown[]> | RowQuery<unknown> {
+    if (isRowShape(first)) {
+      if (rest.length === 0) {
+        return (strings: TemplateStringsArray, ...values: unknown[]) =>
+          this.rawQueryRunner.queryRows(first, strings, values);
+      }
+      const [sqlQuery, params] = rest as [string | Sql, unknown[] | undefined];
+      return this.rawQueryRunner.queryRows(first, sqlQuery, [params]);
+    }
+    return this.rawQueryRunner.query(first, rest);
   }
 
   /**

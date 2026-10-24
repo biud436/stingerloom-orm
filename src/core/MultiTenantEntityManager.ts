@@ -20,6 +20,8 @@ import { EntitySubscriber } from "./EntitySubscriber";
 import { SelectQueryBuilder, EntityRef } from "./SelectQueryBuilder";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { InsertQueryBuilder } from "./InsertQueryBuilder";
+import type { Sql } from "../utils/sqlTag";
+import { isRowShape, type RowQuery, type RowShape } from "../schema/defineRow";
 
 /**
  * The subset of `DatabaseClientOptions` that controls multi-tenant routing.
@@ -490,11 +492,36 @@ export class MultiTenantEntityManager {
 
   // ── Raw query / repositories ────────────────────────────────────────
 
-  async query<T = Record<string, unknown>>(
+  query<T = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-  ): Promise<T[]> {
-    return (await this.pickEm()).query(sql, params);
+  ): Promise<T[]>;
+  /**
+   * Typed raw rows on the active tenant's EntityManager: returns a
+   * tagged-template runner whose rows are read through a `defineRow` shape.
+   */
+  query<Row>(shape: RowShape<Row>): RowQuery<Row>;
+  /** Typed raw rows from a SQL string (with positional binds) or `Sql` fragment. */
+  query<Row>(
+    shape: RowShape<Row>,
+    sql: string | Sql,
+    params?: unknown[],
+  ): Promise<Row[]>;
+  query(
+    first: string | RowShape<unknown>,
+    ...rest: unknown[]
+  ): Promise<unknown[]> | RowQuery<unknown> {
+    if (isRowShape(first)) {
+      if (rest.length === 0) {
+        return async (strings: TemplateStringsArray, ...values: unknown[]) =>
+          (await this.pickEm()).query(first)(strings, ...values);
+      }
+      const [sql, params] = rest as [string | Sql, unknown[] | undefined];
+      return this.pickEm().then((em) => em.query(first, sql, params));
+    }
+    return this.pickEm().then((em) =>
+      em.query(first, rest[0] as unknown[] | undefined),
+    );
   }
 
   /**

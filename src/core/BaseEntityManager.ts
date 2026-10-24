@@ -6,6 +6,7 @@ import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { DeleteResult } from "../types/DeleteResult";
 import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { Sql } from "../utils/sqlTag";
+import type { RowQuery, RowShape } from "../schema/defineRow";
 import {
   CursorPaginationOption,
   CursorPaginationResult,
@@ -197,6 +198,18 @@ export abstract class BaseEntityManager {
     sqlQuery: string | Sql,
     params?: unknown[],
   ): Promise<T[]>;
+  /**
+   * Typed raw rows: returns a tagged-template runner whose rows are read
+   * through a `defineRow` shape (typed, and each declared column converted
+   * per its type).
+   */
+  abstract query<Row>(shape: RowShape<Row>): RowQuery<Row>;
+  /** Typed raw rows from a SQL string (with positional binds) or `Sql` fragment. */
+  abstract query<Row>(
+    shape: RowShape<Row>,
+    sqlQuery: string | Sql,
+    params?: unknown[],
+  ): Promise<Row[]>;
 
   /**
    * Returns both the matching entities and their total count.

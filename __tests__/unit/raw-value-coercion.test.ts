@@ -5,6 +5,7 @@ import {
   coerceRows,
   type CoerceType,
 } from "../../src/core/RawValueCoercion";
+import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 
 /** Coerce a single value through the public coerceRow API. */
 function coerce(value: unknown, type: CoerceType): unknown {
@@ -33,6 +34,23 @@ describe("RawValueCoercion", () => {
 
     it("coerces an integer string", () => {
       expect(coerce("100", "number")).toBe(100);
+    });
+
+    it("throws BIGINT_PRECISION_LOSS instead of rounding an integer beyond ±2^53", () => {
+      // 2^53 + 1 rounds to 2^53 under Number(); the column is named.
+      for (const value of ["9007199254740993", 9007199254740993n, "-9007199254740993"]) {
+        expect(() => coerceRow({ total: value }, { total: "number" })).toThrow(
+          expect.objectContaining({
+            code: OrmErrorCode.BIGINT_PRECISION_LOSS,
+            message: expect.stringContaining('column "total"'),
+          }),
+        );
+      }
+    });
+
+    it("still converts the largest safe integer and fractional strings", () => {
+      expect(coerce("9007199254740991", "number")).toBe(Number.MAX_SAFE_INTEGER);
+      expect(coerce("12345678901234567.5", "number")).toBe(12345678901234568);
     });
   });
 
@@ -85,6 +103,26 @@ describe("RawValueCoercion", () => {
       const out = coerce(0, "date");
       expect(out).toBeInstanceOf(Date);
       expect((out as Date).getTime()).toBe(0);
+    });
+
+    it("reads a bare YYYY-MM-DD as local midnight, like an entity date column", () => {
+      // new Date("2026-05-21") is UTC midnight, which is the previous
+      // calendar day in any timezone west of UTC.
+      const out = coerce("2026-05-21", "date") as Date;
+      expect(out).toBeInstanceOf(Date);
+      expect([out.getFullYear(), out.getMonth(), out.getDate()]).toEqual([2026, 4, 21]);
+      expect([out.getHours(), out.getMinutes()]).toEqual([0, 0]);
+    });
+
+    it("reads a zone-less timestamp string as local wall time", () => {
+      const out = coerce("2026-05-21 13:04:05", "date") as Date;
+      expect(out.getTime()).toBe(new Date(2026, 4, 21, 13, 4, 5).getTime());
+    });
+
+    it("still yields an Invalid Date for an unparseable string", () => {
+      const out = coerce("not a date", "date") as Date;
+      expect(out).toBeInstanceOf(Date);
+      expect(Number.isNaN(out.getTime())).toBe(true);
     });
   });
 
