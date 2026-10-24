@@ -2,13 +2,32 @@
 import sql, { Sql, raw, join } from "../../../utils/sqlTag";
 import type { PluginContext } from "../PluginContext";
 import type { ClazzType } from "../../../utils/types";
-import type { FindOption, WhereClause } from "../../../dialects/FindOption";
+import type { WhereClause } from "../../../dialects/FindOption";
+import type { IOrderBy } from "../../../dialects/IOrderBy";
 import type { DriverQueryOptions } from "../../../types/DriverQueryOptions";
 import { ENTITY_TOKEN, type EntityMetadata } from "../../../decorators/Entity";
 import { COLUMN_TOKEN } from "../../../decorators/Column";
 import { resolveWhereClause, type WhereResolverOptions } from "../../WhereResolver";
 import type { ColumnMetadata } from "../../../scanner/ColumnScanner";
 import { attachWhereValueTransform } from "../../WhereValueTransform";
+import { buildPropertyToColumnMap } from "../../PropertyColumnMap";
+import { validateReadOptionShape } from "../../QueryOptionShape";
+import {
+  buildEntityColumnScope,
+  validateReadIdentifiers,
+  type ColumnNameScope,
+} from "../../ColumnNameValidator";
+import {
+  collectTableComputedColumns,
+  declaredComputedColumns,
+} from "../../generators/entityColumns";
+import {
+  buildKeysetOrderBy,
+  buildKeysetPredicate,
+  type KeysetPlan,
+} from "../../entity-manager/CursorKeyset";
+import type { DecodedCursorKey } from "../../CursorPagination";
+import { InvalidQueryError } from "../../../errors";
 import { MetadataContext } from "../../../metadata/MetadataContext";
 import { isValidPgIdentifier } from "../../../dialects/postgres/pgIdentifier";
 import { runInternalQuery } from "../../entity-manager/internal-query";
@@ -23,14 +42,23 @@ import {
 } from "../../TpcUnionSource";
 
 /**
- * Options for creating a RawPipeline.
+ * Options for creating a RawPipeline. `em.pipe()` rejects any other key,
+ * and checks the property names in `where`, `orderBy` and `select` the way
+ * `em.find()` does.
  */
-export interface RawPipelineOptions<T> extends FindOption<T> {
-  /** Number of rows per batch (default: 1000) */
+export interface RawPipelineOptions<T> {
+  /** Filter conditions, in the same syntax as `em.find()`. */
+  where?: WhereClause<T> | WhereClause<T>[];
+  /** Sort order by property, `"ASC"` or `"DESC"`. */
+  orderBy?: IOrderBy<Partial<T>>;
+  /** Properties to read. Default: every column. */
+  select?: (keyof T)[];
+  /** Number of rows per batch, a positive integer (default: 1000). */
   batchSize?: number;
   /**
    * Use keyset (cursor) pagination instead of LIMIT/OFFSET.
-   * Requires `orderBy` to be set with exactly one column.
+   * Requires `orderBy` with exactly one property, and a primary key, which
+   * breaks ties between rows with the same ordering value.
    * Much faster for large offsets because the DB can use an index seek.
    */
   keyset?: boolean;
@@ -109,26 +137,24 @@ const entityInfoCache = new WeakMap<Function, EntityInfo>();
 /** Reads inheritance metadata off the classes; holds no state of its own. */
 const inheritance = new InheritanceResolver();
 
+/** Reads relation metadata off the classes, for FK properties and sources. */
+const relations = new RelationMetadataResolver();
+
 /** The source and WHERE conditions every statement of one traversal shares. */
 interface PipelineScope {
   /** The table, or the derived table an inheritance hierarchy is read from. */
   from: Sql;
   where: Sql[];
-  /**
-   * A second keyset column for a source whose ordering column repeats: the
-   * discriminator of a TABLE_PER_CLASS root's UNION, whose tables number
-   * their keys independently.
-   */
-  tiebreak?: string;
 }
 
 /** Runs one statement of a traversal and returns its rows. */
 type BatchRunner = (query: Sql) => Promise<any[]>;
 
-/** Where a keyset traversal resumes: the last row's ordering values. */
-interface KeysetCursor {
-  value: unknown;
-  tie: unknown;
+/** One `orderBy` entry: the property, its DB column and its direction. */
+interface OrderKey {
+  property: string;
+  column: string;
+  direction: "ASC" | "DESC";
 }
 
 /**
@@ -162,15 +188,12 @@ function getEntityInfo(entity: ClazzType<any>): EntityInfo {
   const columns: ColumnMetadata[] =
     Reflect.getMetadata(COLUMN_TOKEN, entity.prototype ?? entity) ?? [];
 
-  const propToCol = new Map<string, string>();
-  let primaryKey: string | null = null;
-  for (const col of columns) {
-    const prop = col.propertyKey ?? col.name;
-    propToCol.set(prop, col.name);
-    if (col.options?.primary || col.options?.autoIncrement) {
-      primaryKey = col.name;
-    }
-  }
+  // The map find() resolves names with: @Column properties plus the FK
+  // properties of @ManyToOne / @OneToOne relations (`authorId` → `author_id`).
+  const propToCol = buildPropertyToColumnMap({ target: entity, columns }, relations);
+  const primaryKey =
+    (columns.find((col) => col.options?.primary) ??
+      columns.find((col) => col.options?.autoIncrement))?.name ?? null;
 
   attachWhereValueTransform(propToCol, columns);
   cached = { tableName, columns, propToCol, primaryKey };
@@ -206,26 +229,117 @@ function getEntityInfo(entity: ClazzType<any>): EntityInfo {
 export class RawPipeline<T> {
   private readonly batchSize: number;
   private readonly info: EntityInfo;
-  private readonly useKeyset: boolean;
+  /** The `orderBy` keys, in order, with DB column names. */
+  private readonly order: OrderKey[];
+  /** Everything a keyset traversal pages by except the cursor; null for LIMIT/OFFSET. */
+  private readonly keyset: Omit<KeysetPlan, "cursor"> | null;
   private readonly dialect: "mysql" | "postgres" | "sqlite" | undefined;
-  private relationResolver?: RelationMetadataResolver;
 
+  /**
+   * @throws InvalidQueryError when an option is unknown or malformed, when
+   *   `where`, `orderBy` or `select` names something the entity does not
+   *   have, or when `keyset` cannot page by the given `orderBy`.
+   */
   constructor(
     private readonly ctx: PluginContext,
     private readonly entity: ClazzType<T>,
     private readonly options: RawPipelineOptions<T>,
   ) {
-    this.batchSize = Math.max(options.batchSize ?? 1000, 1);
+    validateReadOptionShape(options, "pipe", entity.name, "pipe");
+    this.batchSize = options.batchSize ?? 1000;
     const info = getEntityInfo(entity);
     this.info = isTpcPolymorphicRoot(inheritance, entity)
       ? withSubclassColumns(entity, info)
       : info;
-    this.useKeyset = !!options.keyset && !!options.orderBy;
+    validateReadIdentifiers(
+      { where: options.where, orderBy: options.orderBy },
+      options.select as string[] | undefined,
+      this.columnScope(),
+    );
+    this.order = this.resolveOrder();
+    this.keyset = options.keyset ? this.planKeyset() : null;
 
     // Detect dialect once at construction time
     if (ctx.isMySqlFamily()) this.dialect = "mysql";
     else if (ctx.isPostgres()) this.dialect = "postgres";
     else if (ctx.isSqlite()) this.dialect = "sqlite";
+  }
+
+  /**
+   * The names a `find()` of the entity accepts: its columns and their
+   * properties, FK properties, computed columns and, in a hierarchy, the
+   * columns of the classes sharing its rows and the discriminator.
+   */
+  private columnScope(): ColumnNameScope {
+    const computed = collectTableComputedColumns(this.entity).map((c) => c.name);
+    if (isTpcPolymorphicRoot(inheritance, this.entity)) {
+      for (const subclass of inheritance.getConcreteEntities(this.entity)) {
+        computed.push(...declaredComputedColumns(subclass).map((c) => c.name));
+      }
+    }
+    return buildEntityColumnScope({
+      entity: this.entity,
+      metadata: { columns: this.info.columns },
+      propertyToColumn: this.info.propToCol,
+      computedColumns: computed,
+      inheritanceResolver: inheritance,
+    });
+  }
+
+  /**
+   * The `orderBy` keys with DB column names. A falsy direction leaves the
+   * property out, and a direction reads in either case, as in `find()`.
+   */
+  private resolveOrder(): OrderKey[] {
+    const keys: OrderKey[] = [];
+    for (const [prop, direction] of Object.entries(this.options.orderBy ?? {})) {
+      if (!direction) continue;
+      keys.push({
+        property: prop,
+        column: this.info.propToCol.get(prop) ?? prop,
+        direction: String(direction).toUpperCase() === "DESC" ? "DESC" : "ASC",
+      });
+    }
+    return keys;
+  }
+
+  /**
+   * How a keyset traversal pages, the way `findWithCursor` does: by the
+   * ordering column, then the primary key, so rows that share an ordering
+   * value are neither skipped nor repeated at a batch boundary, with NULLs
+   * kept together at the end (ASC) or the start (DESC) on every dialect. A
+   * table-per-class root adds its discriminator, since its tables number
+   * their keys independently.
+   */
+  private planKeyset(): Omit<KeysetPlan, "cursor"> {
+    if (this.order.length !== 1) {
+      throw new InvalidQueryError(
+        this.order.length === 0
+          ? `keyset: true needs an orderBy to page by, for entity "${this.entity.name}".`
+          : `keyset: true pages by one column, but the orderBy for entity "${this.entity.name}" names ${this.order.length} (${this.order.map((key) => key.property).join(", ")}).`,
+        this.order.length === 0
+          ? `Write { orderBy: { id: "ASC" }, keyset: true }.`
+          : `Order by one property, or drop keyset to sort by several (LIMIT/OFFSET batches).`,
+      );
+    }
+    const pkColumn = this.info.primaryKey;
+    if (!pkColumn) {
+      throw new InvalidQueryError(
+        `keyset: true needs a primary key on "${this.entity.name}" to tell apart rows with the same ordering value.`,
+        "Drop keyset to read in LIMIT/OFFSET batches.",
+      );
+    }
+    const [{ column, direction }] = this.order;
+    return {
+      orderColumn: column,
+      pkColumn,
+      isPkOrder: column === pkColumn,
+      subKeyColumn: isTpcPolymorphicRoot(inheritance, this.entity)
+        ? (inheritance.getDiscriminatorColumn(this.entity)?.name ?? "dtype")
+        : undefined,
+      direction,
+      pageSize: this.batchSize,
+    };
   }
 
   /**
@@ -286,9 +400,8 @@ export class RawPipeline<T> {
     run: BatchRunner,
     rowsByName: boolean,
   ): AsyncGenerator<any[], void, undefined> {
-    const [order] = Object.entries(this.options.orderBy ?? {});
-    return this.useKeyset && order && rowsByName
-      ? this.keysetBatches(scope, run, order)
+    return this.keyset && rowsByName
+      ? this.keysetBatches(scope, run, this.keyset)
       : this.offsetBatches(scope, run);
   }
 
@@ -312,27 +425,28 @@ export class RawPipeline<T> {
   }
 
   /**
-   * Keyset (cursor) pagination — uses WHERE col > lastValue instead of OFFSET,
-   * on the first `orderBy` column.
+   * Keyset (cursor) pagination — each batch starts after the previous
+   * batch's last row instead of at an OFFSET.
    */
   private async *keysetBatches(
     scope: PipelineScope,
     run: BatchRunner,
-    [orderProp, orderDir]: [string, unknown],
+    plan: Omit<KeysetPlan, "cursor">,
   ): AsyncGenerator<any[], void, undefined> {
-    const orderCol = this.info.propToCol.get(orderProp) ?? orderProp;
-    const isAsc = orderDir !== "DESC";
-
-    let cursor: KeysetCursor | null = null;
+    let cursor: DecodedCursorKey | null = null;
 
     while (true) {
-      const rows = await run(this.buildKeysetQuery(scope, orderCol, isAsc, cursor));
+      const rows = await run(this.buildKeysetQuery(scope, { ...plan, cursor }));
 
       if (!rows || rows.length === 0) break;
       yield rows;
 
-      // Update cursor from last row
-      cursor = this.cursorAfter(rows[rows.length - 1], scope, orderCol, orderProp);
+      const last = rows[rows.length - 1];
+      cursor = {
+        order: last[plan.orderColumn] ?? null,
+        pk: last[plan.pkColumn!],
+        subKey: plan.subKeyColumn ? last[plan.subKeyColumn] : undefined,
+      };
 
       if (rows.length < this.batchSize) break;
     }
@@ -416,55 +530,25 @@ export class RawPipeline<T> {
   /**
    * Build SELECT with keyset (cursor) pagination.
    */
-  private buildKeysetQuery(
-    scope: PipelineScope,
-    orderCol: string,
-    isAsc: boolean,
-    cursor: KeysetCursor | null,
-  ): Sql {
-    const columns = this.resolveColumns();
+  private buildKeysetQuery(scope: PipelineScope, plan: KeysetPlan): Sql {
+    const wrap = (n: string) => this.ctx.wrap(n);
     const whereClauses = [...scope.where];
-    const wrappedCol = this.ctx.wrap(orderCol);
-    const wrappedTie = scope.tiebreak ? this.ctx.wrap(scope.tiebreak) : null;
-    const op = raw(isAsc ? ">" : "<");
+    const after = buildKeysetPredicate(plan, wrap);
+    if (after) whereClauses.push(after);
 
-    // Add keyset condition
-    if (cursor && cursor.value !== null && cursor.value !== undefined) {
-      const value = cursor.value as any;
-      whereClauses.push(
-        wrappedTie
-          ? sql`(${raw(wrappedCol)} ${op} ${value} OR (${raw(wrappedCol)} = ${value} AND ${raw(wrappedTie)} ${op} ${cursor.tie as any}))`
-          : sql`${raw(wrappedCol)} ${op} ${value}`,
-      );
-    }
-
-    const dir = isAsc ? "ASC" : "DESC";
-    const parts: Sql[] = [sql`SELECT ${raw(columns)} FROM ${scope.from}`];
+    const parts: Sql[] = [sql`SELECT ${raw(this.resolveColumns())} FROM ${scope.from}`];
 
     if (whereClauses.length > 0) {
       parts.push(sql`WHERE ${join(whereClauses, " AND ")}`);
     }
 
-    const order = wrappedTie
-      ? `${wrappedCol} ${dir}, ${wrappedTie} ${dir}`
-      : `${wrappedCol} ${dir}`;
+    const order = buildKeysetOrderBy(plan, wrap)
+      .map((key) => `${key.column} ${key.direction}`)
+      .join(", ");
     parts.push(sql`ORDER BY ${raw(order)}`);
     parts.push(sql`LIMIT ${this.batchSize}`);
 
     return join(parts, " ");
-  }
-
-  /** The cursor the next keyset batch resumes after. */
-  private cursorAfter(
-    lastRow: Record<string, unknown>,
-    scope: PipelineScope,
-    orderCol: string,
-    orderProp: string,
-  ): KeysetCursor {
-    return {
-      value: lastRow[orderCol] ?? lastRow[orderProp],
-      tie: scope.tiebreak ? lastRow[scope.tiebreak] : undefined,
-    };
   }
 
   /**
@@ -480,7 +564,6 @@ export class RawPipeline<T> {
       return {
         from: buildTpcFromSource(this.sourceContext(wrapTable), this.entity),
         where,
-        tiebreak: inheritance.getDiscriminatorColumn(this.entity)?.name ?? "dtype",
       };
     }
     const joined = isJoinedChild(inheritance, this.entity)
@@ -491,10 +574,9 @@ export class RawPipeline<T> {
 
   /** What the shared inheritance source builders read metadata and names through. */
   private sourceContext(wrapTable: (name: string) => string): TpcSourceContext {
-    this.relationResolver ??= new RelationMetadataResolver();
     return {
       inheritanceResolver: inheritance,
-      resolver: this.relationResolver,
+      resolver: relations,
       wrap: (n) => this.ctx.wrap(n),
       wrapTable,
       typedNullPadding: this.dialect === "postgres",
@@ -558,27 +640,28 @@ export class RawPipeline<T> {
     return clauses;
   }
 
+  /**
+   * The SELECT list. A keyset traversal also reads the columns it pages by
+   * when `select` leaves them out: it resumes from the last row's values.
+   */
   private resolveColumns(): string {
-    if (this.options.select && Array.isArray(this.options.select)) {
-      return (this.options.select as string[])
-        .map((prop) => {
-          const dbCol = this.info.propToCol.get(prop) ?? prop;
-          return this.ctx.wrap(dbCol);
-        })
-        .join(", ");
+    if (!this.options.select) return "*";
+    const columns = (this.options.select as string[]).map(
+      (prop) => this.info.propToCol.get(prop) ?? prop,
+    );
+    if (this.keyset) {
+      const { orderColumn, pkColumn, subKeyColumn } = this.keyset;
+      for (const key of [orderColumn, pkColumn, subKeyColumn]) {
+        if (key && !columns.includes(key)) columns.push(key);
+      }
     }
-    return "*";
+    return columns.map((column) => this.ctx.wrap(column)).join(", ");
   }
 
   private resolveOrderBy(): string | null {
-    if (!this.options.orderBy) return null;
-
-    const parts: string[] = [];
-    for (const [key, dir] of Object.entries(this.options.orderBy)) {
-      const dbCol = this.info.propToCol.get(key) ?? key;
-      const safeDir = dir === "DESC" ? "DESC" : "ASC";
-      parts.push(`${this.ctx.wrap(dbCol)} ${safeDir}`);
-    }
-    return parts.length > 0 ? parts.join(", ") : null;
+    if (this.order.length === 0) return null;
+    return this.order
+      .map((key) => `${this.ctx.wrap(key.column)} ${key.direction}`)
+      .join(", ");
   }
 }

@@ -500,24 +500,14 @@ describe("RawPipeline Plugin", () => {
   // ── Edge cases ──────────────────────────────────────────
 
   describe("Edge cases", () => {
-    it("should enforce minimum batchSize of 1", async () => {
-      const rows = [{ id: 1 }];
-      const queryMock = jest.fn()
-        .mockResolvedValueOnce(rows)
-        .mockResolvedValueOnce([]);
-
+    it("should reject a batchSize that is not a positive integer", () => {
       em.extend(rawPipelinePlugin());
-      (em as any).query = queryMock;
 
-      const pipeline = em.pipe(TestUser, { batchSize: 0 });
-
-      const batches: any[][] = [];
-      for await (const batch of pipeline.raw()) {
-        batches.push(batch);
+      for (const batchSize of [0, -5, 2.5, NaN, "100"]) {
+        expect(() => em.pipe(TestUser, { batchSize: batchSize as any })).toThrow(
+          /'batchSize' must be a positive integer/,
+        );
       }
-
-      // batchSize should be clamped to 1
-      expect(batches).toHaveLength(1);
     });
 
     it("should handle select option for specific columns", async () => {

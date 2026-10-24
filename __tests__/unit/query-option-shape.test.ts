@@ -182,6 +182,49 @@ describe("validateReadOptionShape", () => {
       expect(() => normalizePage("2" as any)).toThrow(`'page' must be a number, got "2".`);
     });
   });
+
+  describe("pipe", () => {
+    it("names the reason for each find() option a pipeline does not apply", () => {
+      const error = errorOf(() =>
+        validateReadOptionShape(
+          { take: 10, withDeleted: true, relations: ["author"], cache: true },
+          "pipe",
+          "Post",
+          "pipe",
+        ),
+      );
+
+      expect(error.message).toContain("'take' is not a pipe() option: a pipeline reads every row 'where' matches.");
+      expect(error.message).toContain("'withDeleted' is not a pipe() option: a pipeline does not filter soft-deleted rows");
+      expect(error.message).toContain("'relations' is not a pipe() option: a pipeline reads the raw rows of one table.");
+      expect(error.message).toContain("Unknown option 'cache'.");
+      expect(error.suggestion).toBe("pipe() takes: where, orderBy, select, batchSize, keyset.");
+    });
+
+    it("takes a select list, a positive batchSize and a boolean keyset", () => {
+      const error = errorOf(() =>
+        validateReadOptionShape(
+          { select: { title: true }, batchSize: 0, keyset: "yes", orderBy: { id: "up" } },
+          "pipe",
+          "Post",
+          "pipe",
+        ),
+      );
+
+      expect(error.message).toContain("'select' must be an array of property names");
+      expect(error.message).toContain("'batchSize' must be a positive integer, got 0.");
+      expect(error.message).toContain(`'keyset' must be a boolean, got "yes".`);
+      expect(error.message).toContain(`'orderBy.id' must be "ASC" or "DESC", got "up".`);
+      expect(() =>
+        validateReadOptionShape(
+          { where: [{ id: 1 }], orderBy: { id: "desc" }, select: ["id"], batchSize: 500, keyset: true },
+          "pipe",
+          "Post",
+          "pipe",
+        ),
+      ).not.toThrow();
+    });
+  });
 });
 
 describe("assertWhereArgument", () => {

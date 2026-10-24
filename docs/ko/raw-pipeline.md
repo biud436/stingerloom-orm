@@ -149,6 +149,20 @@ em.pipe(Post, { where: { content: { search: "typescript orm" } } })
 
 중요한 점은 파이프라인이 코어 `WhereResolver`에 위임한다는 것입니다. `em.find()`와의 동작 차이가 전혀 없습니다.
 
+이름 검사도 `find()`와 같은 방식으로, 파이프라인을 만드는 시점에 합니다. 컬럼이나 연산자 이름을 잘못 쓰면 드라이버마다 다른 에러로 터지는 대신 `find()`와 같은 메시지로 거부됩니다:
+
+```typescript
+em.pipe(User, { where: { nmae: "Alice" } });
+// InvalidQueryError: Unknown column "nmae" in "where" for entity "User".
+// Suggestion: Valid columns: id, name, email, ...
+
+em.pipe(User, { where: { email: { isNotNull: true } } });
+// InvalidQueryError: Invalid where for entity "User":
+//   unknown operator "isNotNull" on "email" (where.email). Did you mean "isNull"?
+```
+
+`orderBy`와 `select`도 같은 방식으로 검사합니다.
+
 ### NamingStrategy 지원
 
 `NamingStrategy`(예: `SnakeNamingStrategy`)를 사용하면, 파이프라인이 프로퍼티 이름을 데이터베이스 컬럼 이름으로 자동 매핑합니다:
@@ -164,6 +178,8 @@ em.pipe(User, {
   orderBy: { firstName: "ASC" },       // → ORDER BY "first_name" ASC
 })
 ```
+
+`@ManyToOne` / `@OneToOne` 관계의 FK 프로퍼티도 `find()`처럼 조인 컬럼으로 바뀝니다. `where: { authorId: 1 }`은 `author_id`로 거릅니다.
 
 ### 멀티테넌시
 
@@ -197,7 +213,7 @@ await MetadataContext.run("acme", async () => {
 
 `JOINED` 루트는 자기 테이블을 읽으므로 계층의 모든 행이 나오지만, 컬럼은 루트 것만 있습니다.
 
-`TABLE_PER_CLASS` 루트를 keyset으로 페이지할 때는 지정한 컬럼 다음에 판별자로도 정렬합니다. 구체 테이블마다 키를 따로 매기기 때문에 같은 `id`가 여러 테이블에 나오거든요.
+`TABLE_PER_CLASS` 루트를 keyset으로 페이지할 때는 기본 키 다음에 판별자로도 정렬합니다. 구체 테이블마다 키를 따로 매기기 때문에 같은 `id`가 여러 테이블에 나오거든요.
 
 ### 트랜잭션 안에서
 
@@ -258,6 +274,20 @@ for await (const batch of em.pipe(User, {
 ```
 
 파이프라인이 각 배치의 마지막 값을 자동으로 추적하고 다음 쿼리의 WHERE 조건으로 주입합니다. 커서를 직접 관리할 필요가 없습니다.
+
+`keyset: true`에는 `orderBy` 프로퍼티가 정확히 하나 있어야 하고, 엔티티에 기본 키가 있어야 합니다. 조건이 맞지 않으면 LIMIT/OFFSET으로 슬쩍 바꾸지 않고 파이프라인을 만드는 시점에 거부합니다. 각 배치는 앞 배치의 마지막 행 값에서 이어 읽기 때문에, `select`에서 정렬 컬럼이나 기본 키를 빼도 파이프라인이 함께 읽습니다. 이때는 반환되는 행에도 그 컬럼이 들어 있어요.
+
+#### 값이 겹치는 컬럼으로 정렬할 때
+
+Keyset 배치는 [`findWithCursor()`](./pagination.md#cursor-based-pagination)와 같은 방식으로 페이지를 넘깁니다. 위 예시처럼 기본 키로 정렬하면 컬럼 하나로 끝납니다. 다른 컬럼으로 정렬하면 그 컬럼 다음에 기본 키로 정렬합니다. 그래서 같은 값을 가진 행들이 배치 경계에 걸려도 빠지거나 두 번 읽히지 않습니다. NULL은 어느 방언에서든 오름차순이면 맨 뒤, 내림차순이면 맨 앞에 모입니다:
+
+```
+Batch 2:  SELECT * FROM "order" WHERE ...
+            AND ("created_at" > ? OR ("created_at" = ? AND "id" > ?) OR "created_at" IS NULL)
+            ORDER BY ("created_at" IS NULL) ASC, "created_at" ASC, "id" ASC LIMIT 5000
+```
+
+`("created_at" IS NULL)` 정렬 키 때문에 `created_at` 단독 인덱스로는 이 순서대로 행을 꺼낼 수 없습니다. 데이터베이스가 배치마다 조건에 맞는 행을 정렬하므로, 아주 큰 테이블을 내보낼 때는 여전히 기본 키 정렬이 가장 빠릅니다.
 
 ::: tip Keyset을 쓸 때
 다음 경우에 `keyset: true`를 사용하세요:
@@ -839,12 +869,20 @@ em.extend(rawPipelinePlugin());
 |---------|------|--------|------|
 | `entity` | `ClazzType<T>` | *(필수)* | Entity 클래스 (테이블 이름 및 컬럼 해석에 사용) |
 | `options.where` | `WhereClause<T>` | — | 필터 조건 (`em.find()`와 동일한 문법) |
-| `options.orderBy` | `OrderByOption<T>` | — | 정렬 순서 (NamingStrategy 적용) |
-| `options.select` | `string[]` | `*` | 선택할 컬럼 (NamingStrategy 적용) |
-| `options.batchSize` | `number` | `1000` | 배치당 행 수 (최소: 1) |
-| `options.keyset` | `boolean` | `false` | LIMIT/OFFSET 대신 keyset 페이지네이션 사용. `orderBy` 필요. |
+| `options.orderBy` | `IOrderBy<T>` | — | 프로퍼티별 정렬 순서. `"ASC"`/`"DESC"`, 대소문자 무관 (NamingStrategy 적용) |
+| `options.select` | `(keyof T)[]` | `*` | 선택할 프로퍼티 (NamingStrategy 적용) |
+| `options.batchSize` | `number` | `1000` | 배치당 행 수. 양의 정수 |
+| `options.keyset` | `boolean` | `false` | LIMIT/OFFSET 대신 keyset 페이지네이션 사용. `orderBy` 프로퍼티 정확히 하나와 기본 키 필요. |
 
 `RawPipeline<T>`을 반환합니다.
+
+모르는 옵션이나 형식이 틀린 옵션, 엔티티에 없는 컬럼을 넘기면 `em.pipe()`가 `InvalidQueryError`를 던집니다. `find()` 옵션 중 파이프라인이 적용하지 않는 것은 이유와 함께 거부합니다:
+
+| 옵션 | 거부하는 이유 |
+|------|---------------|
+| `take`, `limit`, `skip` | 파이프라인은 `where`에 맞는 행을 전부 읽습니다. `where`를 좁히거나, 필요한 만큼 읽었으면 순회를 멈추세요. |
+| `withDeleted`, `onlyDeleted` | 파이프라인은 soft delete된 행을 거르지 않으므로 이미 함께 읽습니다. 조건은 `where`에 직접 적습니다. 예: `{ deletedAt: { isNull: true } }` |
+| `relations`, `withCount` | 파이프라인은 테이블 하나의 raw 행을 읽습니다. 관계는 `find()`로 불러오세요. |
 
 ### `RawPipeline<T>`
 

@@ -8,6 +8,7 @@ import {
   isNonNegativeNumber,
   isObjectOf,
   isOneOf,
+  isPositiveInteger,
   isString,
   showValue,
   type ObjectShape,
@@ -26,8 +27,11 @@ import {
  * @internal Package-internal — not a public API.
  */
 
-/** Which read the options belong to: each takes a different key set. */
-export type ReadOptionKind = "find" | "cursor" | "page";
+/**
+ * Which read the options belong to: each takes a different key set. `pipe`
+ * is the raw pipeline (`em.pipe()`).
+ */
+export type ReadOptionKind = "find" | "cursor" | "page" | "pipe";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
@@ -110,6 +114,19 @@ const isSelect: OptionRule = (value, path, problems) => {
       `'${path}' must be an array of property names or an object keyed by property, got ${showValue(value)}.`,
     );
   }
+};
+
+/** The raw pipeline selects by column only: no object form, no relations. */
+const isPropertyNameArray: OptionRule = (value, path, problems) => {
+  if (!Array.isArray(value)) {
+    problems.push(`'${path}' must be an array of property names, got ${showValue(value)}.`);
+    return;
+  }
+  value.forEach((item, i) => {
+    if (typeof item !== "string") {
+      problems.push(`'${path}[${i}]' must be a property name, got ${showValue(item)}.`);
+    }
+  });
 };
 
 const isGroupBy: OptionRule = (value, path, problems) => {
@@ -221,6 +238,37 @@ const OPTION_RULES: Record<ReadOptionKind, ObjectShape> = {
     page: isPage,
     pageSize: isPageSize,
   },
+  pipe: {
+    where: isWhereObjectOrArray,
+    orderBy: isOrderByObject,
+    select: isPropertyNameArray,
+    batchSize: isPositiveInteger,
+    keyset: isBoolean,
+  },
+};
+
+const PIPE_READS_EVERY_ROW =
+  "a pipeline reads every row 'where' matches. Narrow 'where', or stop iterating once you have enough rows.";
+const PIPE_KEEPS_DELETED_ROWS =
+  "a pipeline does not filter soft-deleted rows, so it already reads them. " +
+  "Name the condition in 'where' instead, e.g. { deletedAt: { isNull: true } }.";
+const PIPE_READS_ONE_TABLE = "a pipeline reads the raw rows of one table. Load relations with find().";
+
+/**
+ * `find()` options a kind does not take, with the reason. Without a reason
+ * the key is reported as unknown. The raw pipeline's options used to extend
+ * `FindOption`, so these keys type-checked and were ignored.
+ */
+const UNSUPPORTED_OPTIONS: Partial<Record<ReadOptionKind, Record<string, string>>> = {
+  pipe: {
+    limit: PIPE_READS_EVERY_ROW,
+    take: PIPE_READS_EVERY_ROW,
+    skip: PIPE_READS_EVERY_ROW,
+    withDeleted: PIPE_KEEPS_DELETED_ROWS,
+    onlyDeleted: PIPE_KEEPS_DELETED_ROWS,
+    relations: PIPE_READS_ONE_TABLE,
+    withCount: PIPE_READS_ONE_TABLE,
+  },
 };
 
 /**
@@ -244,7 +292,7 @@ export function validateReadOptionShape(
   if (option === undefined && !required) return;
   if (typeof option !== "object" || option === null || Array.isArray(option)) {
     const example =
-      kind === "find"
+      kind === "find" || kind === "pipe"
         ? `${method}(${entityName}, { where: { id: 1 } })`
         : `${method}(${entityName}, { ${kind === "cursor" ? "take: 20" : "page: 1, pageSize: 20"} })`;
     throw new InvalidQueryError(
@@ -261,6 +309,11 @@ export function validateReadOptionShape(
     if (!rule) {
       if (value === undefined) continue;
       unknownKey = true;
+      const reason = UNSUPPORTED_OPTIONS[kind]?.[key];
+      if (reason) {
+        problems.push(`'${key}' is not a ${method}() option: ${reason}`);
+        continue;
+      }
       const suggestion = closestIdentifier(key, Object.keys(rules));
       problems.push(`Unknown option '${key}'.` + (suggestion ? ` Did you mean '${suggestion}'?` : ""));
       continue;
