@@ -381,12 +381,14 @@ const user = await em.findOne(User, {
 console.log(user.posts); // Post[]
 ```
 
-또는 관계를 eager로 표시할 수 있습니다:
+또는 ManyToOne이나 OneToOne 관계라면 eager로 표시할 수 있습니다:
 
 ```typescript
-@OneToMany(() => Post, (post) => post.author, { eager: true })
-posts!: Post[];
+@ManyToOne(() => User, (user) => user.posts, { eager: true })
+author!: User;
 ```
+
+OneToMany와 ManyToMany 컬렉션에는 `eager` 옵션이 없으니 `relations`에 이름을 적어 주세요.
 
 ### `select`와 함께 쓰면 관계가 `[]`(또는 `null`)로 돌아올 때
 
@@ -490,10 +492,10 @@ OrmError: Invalid relation mapping (connection "default"):
 
 ```typescript
 // 순환 임포트 문제를 피하려면 () => Entity 사용
-@ManyToOne(() => Author)
+@ManyToOne(() => Author, (author) => author.posts)
 author!: Author;
 
-@OneToMany(() => Post, (post) => post.author)
+@OneToMany(() => Post, { mappedBy: "author" })
 posts!: Post[];
 ```
 

@@ -383,12 +383,14 @@ const user = await em.findOne(User, {
 console.log(user.posts); // Post[]
 ```
 
-Or mark the relation as eager:
+Or, for a ManyToOne or OneToOne relation, mark it as eager:
 
 ```typescript
-@OneToMany(() => Post, (post) => post.author, { eager: true })
-posts!: Post[];
+@ManyToOne(() => User, (user) => user.posts, { eager: true })
+author!: User;
 ```
+
+A OneToMany or ManyToMany collection has no `eager` option; name it in `relations`.
 
 ### Relation comes back `[]` (or `null`) under `select`
 
@@ -492,10 +494,10 @@ When two entities reference each other, use lazy function references:
 
 ```typescript
 // Use () => Entity to avoid circular import issues
-@ManyToOne(() => Author)
+@ManyToOne(() => Author, (author) => author.posts)
 author!: Author;
 
-@OneToMany(() => Post, (post) => post.author)
+@OneToMany(() => Post, { mappedBy: "author" })
 posts!: Post[];
 ```
 

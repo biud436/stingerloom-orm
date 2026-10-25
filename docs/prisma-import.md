@@ -326,15 +326,16 @@ The generated entities are ready to use with Stingerloom ORM. Review the output 
 
 1. **Verify relations** — Complex or ambiguous relations may need manual tweaking
 2. **Add lifecycle hooks** — `@BeforeInsert`, `@BeforeUpdate` if needed
-3. **Add validation** — `@Validation` decorators for business rules
-4. **Register entities** — Pass them to `DatabaseClient` or `StingerloomOrmModule.forRoot()`
+3. **Add validation** — validation decorators (`@NotNull()`, `@MaxLength()`, ...) for business rules
+4. **Register entities** — Pass them to `em.register()` or `StingerloomOrmModule.forRoot()`
 
 ```typescript
-import { DatabaseClient } from "@stingerloom/orm";
+import { EntityManager } from "@stingerloom/orm";
 import { User, Post, Tag } from "./entities";
 
-const client = new DatabaseClient({
-  type: "postgresql",
+const em = new EntityManager();
+await em.register({
+  type: "postgres",
   host: "localhost",
   port: 5432,
   database: "mydb",

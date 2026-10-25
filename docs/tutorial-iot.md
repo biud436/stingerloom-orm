@@ -988,7 +988,8 @@ When a single thermometer sends one reading, we use `save()`:
 ```typescript
 // src/readings/readings.service.ts
 import { Injectable } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
+import { BaseRepository } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
 
 @Injectable()
@@ -1207,7 +1208,8 @@ All the methods below live in their respective services, which inject repositori
 ```typescript
 // src/devices/devices.service.ts
 import { Injectable } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
+import { BaseRepository } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Device } from "../entities/device.entity";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
 
@@ -1406,17 +1408,19 @@ for (const device of devices) {
 // With 100 devices -> 101 queries (1 for devices + 100 for readings)
 ```
 
-Stingerloom ORM's `QueryTracker` detects this pattern automatically:
+Stingerloom ORM's `QueryTracker` detects this pattern. Turn it on with the `logging` option of the ORM config (usually in development or staging):
 
 ```typescript
-// Enable query tracking (usually in development or staging)
-em.enableQueryTracker({ warnThreshold: 5, slowQueryMs: 500 });
+StingerloomOrmModule.forRoot({
+  // ...connection options from Step 1
+  logging: { nPlusOne: true, slowQueryMs: 500 },
+}),
 ```
 
-When the tracker detects more than 5 similar queries in a short window, it logs a warning:
+When the same entity is queried 10 or more times within 100 ms, the tracker logs a warning:
 
 ```
-[QueryTracker] N+1 detected: 100 queries to "temperature_readings" in 1.2s
+[QueryTracker] [N+1 WARNING] Entity "TemperatureReading" queried 10+ times in 100ms. Consider using eager loading or relations option.
 ```
 
 **The fix**: use `relations` to eager-load, or restructure as a single query:
@@ -1471,8 +1475,8 @@ Instead of scanning raw data on every request, we pre-compute daily summaries. L
 ```typescript
 // src/stats/stats.service.ts
 import { Injectable, Inject } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
-import { EntityManager } from "@stingerloom/orm";
+import { BaseRepository, EntityManager } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { DailyStats } from "../entities/daily-stats.entity";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
 import sql from "sql-template-tag";
@@ -1624,8 +1628,8 @@ Loading 28.8 million rows into memory would crash your Node.js process. `em.stre
 ```typescript
 // src/stats/aggregation.processor.ts
 import { Inject, Injectable } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
-import { EntityManager } from "@stingerloom/orm";
+import { BaseRepository, EntityManager } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Device } from "../entities/device.entity";
 import { StatsService } from "./stats.service";
 
@@ -1762,8 +1766,8 @@ Mobile App requests GET /devices/1/stats/weekly
 // src/stats/cached-stats.service.ts
 import { Injectable } from "@nestjs/common";
 import { InjectRedis } from "@nestjs-modules/ioredis";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
-import { MetadataContext } from "@stingerloom/orm";
+import { BaseRepository, MetadataContext } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { DailyStats } from "../entities/daily-stats.entity";
 import Redis from "ioredis";
 
@@ -1876,8 +1880,8 @@ These two operations must succeed or fail together. If the alert is created but 
 ```typescript
 // src/alerts/alerts.service.ts
 import { Injectable } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
-import { Transactional } from "@stingerloom/orm";
+import { BaseRepository, Transactional } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Alert } from "../entities/alert.entity";
 import { AlertRule } from "../entities/alert-rule.entity";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
@@ -1981,7 +1985,7 @@ Since repositories are injected via `@InjectRepository`, you can mock them in te
 // src/readings/readings.service.spec.ts
 import { Test, TestingModule } from "@nestjs/testing";
 import { ReadingsService } from "./readings.service";
-import { getRepositoryToken } from "@stingerloom/orm/nestjs";
+import { makeInjectRepositoryToken } from "@stingerloom/orm/nestjs";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
 
 describe("ReadingsService", () => {
@@ -1998,7 +2002,7 @@ describe("ReadingsService", () => {
       providers: [
         ReadingsService,
         {
-          provide: getRepositoryToken(TemperatureReading),
+          provide: makeInjectRepositoryToken(TemperatureReading),
           useValue: mockRepo,
         },
       ],
@@ -2047,13 +2051,16 @@ describe("Multi-Tenant Isolation", () => {
 
   beforeAll(async () => {
     // Connect to a test database
-    em = new EntityManager({
+    em = new EntityManager();
+    await em.register({
       type: "postgres",
       host: "localhost",
       port: 5432,
       database: "smart_thermo_test",
       username: "postgres",
       password: "postgres",
+      entities: [Device],
+      synchronize: true,
     });
   });
 
@@ -2123,7 +2130,7 @@ Before deploying to production, verify these critical points:
 | `synchronize: false` in production config | Required | Use migrations instead — synchronize can drop columns |
 | Connection pooling configured | Required | Set `pool: { min: 2, max: 10 }` in ORM config |
 | Query timeout set | Recommended | `timeout: 30000` (30s) prevents runaway queries |
-| N+1 detection enabled in staging | Recommended | `em.enableQueryTracker({ warnThreshold: 5 })` |
+| N+1 detection enabled in staging | Recommended | `logging: { nPlusOne: true }` in the ORM config |
 | Redis connection error handling | Required | ioredis auto-reconnects, but log failures |
 | Tenant schema migration strategy | Required | Run `TenantMigrationRunner.syncTenantSchemas()` on deploy |
 | JWT public key rotation | Important | jwks-rsa caches keys — set `cache: true, rateLimit: true` |

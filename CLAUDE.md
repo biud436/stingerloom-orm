@@ -180,19 +180,19 @@ synchronize: {
 @ComputedColumn(expr)        // 계산 컬럼
 @PrimaryGeneratedColumn()    // auto-increment 또는 "uuid" (UUIDv7)
 @PrimaryColumn()             // 복합 PK
-@ManyToOne(() => Entity, { joinColumn: "fk_column" })
-@OneToMany(() => Entity, entity => entity.fk)
+@ManyToOne(() => Entity, (e) => e.inverse, { joinColumn: "fk_column" })
+@OneToMany(() => Entity, { mappedBy: "owner" })
 @ManyToMany(() => Entity)
 @OneToOne(() => Entity)
 @Index()
-@UniqueIndex()
-@FullTextIndex()
+@UniqueIndex(["a", "b"])
+@FullTextIndex(["body"])
 @Version()                   // 낙관적 잠금
 @CreateTimestamp()            // INSERT 시 자동 시각 설정
 @UpdateTimestamp()            // INSERT/UPDATE 시 자동 시각 설정
 @DeletedAt()                 // Soft Delete
-@Hooks()                     // 생명주기 훅
-@Validation()                // 유효성 검사
+@BeforeInsert() 등            // 생명주기 훅 (Before/After Insert·Update·Delete)
+@NotNull() / @MaxLength(n) 등 // 유효성 검사
 @Transactional()             // 트랜잭션 데코레이터
 @InjectRepository(Entity)    // NestJS 리포지토리 주입
 @InjectEntityManager()       // NestJS EntityManager 주입

@@ -59,7 +59,7 @@ Raw SQL 표면은 의도적으로 계층화되어 있어요. 쿼리가 까다로
 const users = await em
   .createQueryBuilder(User, "u")
   .where({ isActive: true })
-  .orderBy("u.name", "ASC")
+  .orderBy({ name: "ASC" })
   .limit(50)
   .getMany();
 ```
@@ -69,21 +69,25 @@ const users = await em
 같은 목록을 `role`로 그룹화하고, 행마다 발행된 게시글 수를 붙여요. 엔티티 인지는 여전히 유지 -- 조인된 관계와 집계 모두 엔티티 컬럼으로 표현돼요.
 
 ```typescript
-import { Expressions as E } from "@stingerloom/orm";
+import { qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+const p = qAlias(Post, "p");
+const postCount = p.id.count();
 
 const rows = await em
   .createQueryBuilder(User, "u")
-  .leftJoin("u.posts", "p", { isPublished: true })
-  .selectFragments([
-    "u.role",
-    E.count("p.id").as("postCount"),
-  ])
-  .where({ isActive: true })
-  .groupBy("u.role")
+  .leftJoin(Post, "p", (join) =>
+    join.on(p.col("authorId"), "=", u.col("id")).onVal(p.col("isPublished"), "=", true),
+  )
+  .select(["role"])
+  .addSelect(postCount.as("postCount"))
+  .where(u.isActive.eq(true))
+  .groupBy(["u.role"])
   .getRawMany<{ role: string; postCount: number }>();
 ```
 
-`Expressions.count`는 dialect별 SQL을 렌더링하면서 엔티티 프로퍼티 경로를 유지해요 -- `p.id`는 `@Column` / NamingStrategy를 통해 자동으로 해석돼서 `"p"."id"`를 직접 쓸 필요가 없어요.
+`p.id.count()` 같은 집계는 dialect별 SQL을 렌더링하면서 엔티티 프로퍼티 경로를 유지해요 -- `p.id`는 `@Column` / NamingStrategy를 통해 자동으로 해석돼서 `"p"."id"`를 직접 쓸 필요가 없어요.
 
 #### 3단계 -- `sql` 템플릿 + `em.ref()`
 
@@ -171,11 +175,11 @@ import sql from "sql-template-tag";
 
 const U = em.ref(User, "u");
 
-const query = em.createQueryBuilder()
-  .selectFragments([U.id, U.email])
-  .from(U)
-  .where([sql`${U.isActive} = ${true}`])
-  .build();
+const rows = await em.query(sql`
+  SELECT ${U.id}, ${U.email}
+  FROM ${U}
+  WHERE ${U.isActive} = ${true}
+`);
 // PostgreSQL: SELECT u."id", u."email" FROM "user" AS u WHERE u."is_active" = ?
 // MySQL:      SELECT u.`id`, u.`email` FROM `user` AS u WHERE u.`is_active` = ?
 ```

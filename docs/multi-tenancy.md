@@ -910,10 +910,10 @@ Three modes are supported:
 
 ```typescript
 import { Module, Injectable } from "@nestjs/common";
+import { MultiTenantEntityManager } from "@stingerloom/orm";
 import {
   StingerloomOrmModule,
   InjectMultiTenantEntityManager,
-  MultiTenantEntityManager,
 } from "@stingerloom/orm/nestjs";
 
 @Module({
@@ -959,38 +959,18 @@ Because isolation is enforced at the connection level, `em.query("SELECT * FROM 
 
 ---
 
-## Direct Use of Layered Metadata
+## How Layered Metadata Isolates Tenants
 
-In most applications, `MetadataContext.run()` combined with schema-based isolation is all you need. But the layered metadata system is a lower-level primitive that you can use directly for advanced scenarios — like giving one tenant a different table name or column configuration.
+The tenant strategies above rest on a layered metadata store, the same overlay idea as Docker's OverlayFS. Every `@Entity`/`@Column`/`@ManyToOne` decorator writes to the `"public"` layer. A tenant context can hold a layer of its own on top of it, and a lookup reads the tenant layer first and falls back to the public layer.
 
-The decorator-time registry is `MetadataLayerRegistry` (`src/scanner/MetadataScanner.ts`). It is a singleton: every `@Entity`/`@Column`/`@ManyToOne` decorator writes to the `"public"` layer of this registry, and every read goes through it. To override metadata for a specific tenant, add a layer to that singleton and switch contexts via `MetadataContext.run()`.
-
-```typescript
-import { MetadataLayerRegistry, MetadataContext } from "@stingerloom/orm";
-
-const registry = MetadataLayerRegistry.getInstance();
-
-// Create a tenant layer (writable)
-registry.addLayer("enterprise", false);
-
-// Override metadata for this specific tenant within a request scope
-await MetadataContext.run("enterprise", async () => {
-  registry.getCurrentLayer().set("entities/User", {
-    tableName: "enterprise_users", // this tenant uses a different table name
-  });
-});
-```
-
-When the ORM looks up the table name for `User`:
-- In the "enterprise" context → finds `"enterprise_users"` in the tenant layer
-- In any other context → falls back to the public layer → `"user"` (the default)
+The store is internal: the package does not export it, so per-tenant metadata overrides (a different table name for one tenant, say) are not part of the public API. What the public API gives you is the context switch, `MetadataContext.run()`, and the strategies built on it.
 
 ### Isolation guarantee
 
-`MetadataLayerRegistry.resolveAll()` merges only the **public layer** and the **currently active context** layer. It never includes data from other tenant layers. This prevents cross-tenant metadata leakage even if multiple tenants are active simultaneously.
+A lookup inside `MetadataContext.run("acme_corp", ...)` merges only the **public layer** and the **`acme_corp` layer**. It never includes another tenant's layer, so one tenant's metadata cannot leak into another's, even with several tenants active at once.
 
 ```
-resolveAll() under MetadataContext.run("acme_corp", ...)
+lookup inside MetadataContext.run("acme_corp", ...)
   → public layer + acme_corp layer  (included)
   → globex layer                    (excluded)
   → initech layer                   (excluded)

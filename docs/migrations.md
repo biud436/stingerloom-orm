@@ -726,10 +726,12 @@ interface MigrationHooks {
 
 ### Example: Slack notification on failure
 
-```typescript
-import { MigrationRunner } from "@stingerloom/orm";
+`MigrationRunner` is abstract: construct the runner for your dialect -- `MySqlMigrationRunner`, `PostgresMigrationRunner` or `SqliteMigrationRunner`. It takes the migrations, the driver and a query runner (any object with a `query(sql)` method), then the options.
 
-const runner = new MigrationRunner(driver, migrations, {
+```typescript
+import { PostgresMigrationRunner } from "@stingerloom/orm";
+
+const runner = new PostgresMigrationRunner(migrations, em.getDriver()!, queryRunner, {
   hooks: {
     beforeAll(ctx) {
       console.log("Starting migrations...");

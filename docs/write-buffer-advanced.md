@@ -621,16 +621,18 @@ All options can be passed to `bufferPlugin()` (global defaults) or `em.buffer()`
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `retainAfterFlush` | `boolean` | `true` | Re-snapshot tracked entities after flush, enabling accumulate-flush cycles |
-| `cascade` | `boolean` | `true` | Propagate persist/remove/merge/detach through relation metadata |
+| `cascade` | `boolean \| BufferCascadeOptions` | `true` | Propagate persist/remove/merge/detach through relation metadata; an object (`{ persist, merge, remove, refresh }`) turns each operation on or off |
 | `orphanRemoval` | `boolean` | `false` | Auto-delete O2M children removed from collection arrays |
 | `manyToManySync` | `boolean` | `true` | Auto-sync M2M pivot table rows on collection changes |
-| `flushMode` | `FlushMode` | `MANUAL` | When to auto-flush before queries |
+| `flushMode` | `FlushMode` | `MANUAL` | When to auto-flush before queries: `MANUAL`, `AUTO` or `ALWAYS` (see [Flush Modes](#flush-modes)) |
 | `autoFlush` | `boolean` | `false` | Shorthand for `FlushMode.AUTO` |
 | `changeTracking` | `ChangeTrackingPolicy` | `DEFERRED_IMPLICIT` | When to dirty-check entities |
 | `batchInsert` | `boolean` | `false` | Combine multiple INSERTs of the same entity type into one multi-row statement |
 | `batchUpdate` | `boolean` | `false` | Combine multiple UPDATEs of the same entity type into one CASE WHEN statement |
 | `onFlush` | `(result) => void` | — | Callback after successful flush |
 | `logging` | `boolean` | `false` | Verbose lifecycle logging for debugging |
+| `maxIdentityMapSize` | `number` | unlimited | Cap the Identity Map; past it, the least recently used clean entries are evicted (dirty, new and removed entities never are) |
+| `validateBeforeFlush` | `boolean` | `false` | Run the validation decorators on every dirty or persisted entity before flushing; a failure aborts the flush with a `ValidationError` |
 
 ---
 

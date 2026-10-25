@@ -111,7 +111,7 @@ class UserSubscriber implements EntitySubscriber<User> {
   }
 
   afterDelete(event: DeleteEvent<User>) {
-    console.log("User deleted:", event.entity);
+    console.log("Users deleted where:", event.criteria);
   }
 }
 ```
@@ -321,7 +321,8 @@ In NestJS, inject repositories into services with `@InjectRepository()`:
 
 ```typescript
 import { Injectable } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
+import { BaseRepository } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { User } from "./user.entity";
 
 @Injectable()

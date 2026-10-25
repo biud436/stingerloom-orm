@@ -919,7 +919,7 @@ qb.where(a.body.matchAgainst("spam").not());
 - **MySQL**: `MATCH(col) AGAINST(query IN BOOLEAN|NATURAL LANGUAGE MODE)` (`options.mode`, 기본 `"boolean"`) — 컬럼에 `FULLTEXT` 인덱스 필요.
 - **SQLite**: `OrmError(UNSUPPORTED_DATABASE)`를 던집니다. FTS5 가상 테이블 + `em.query()`를 사용하세요.
 
-`options.language`는 PostgreSQL 전용, `options.mode`는 MySQL 전용이라 각 dialect는 상대 옵션을 무시합니다. 다중 컬럼 매칭은 `Conditions.fullTextSearch([c1, c2], query, options)`를 쓰세요. `.and()` / `.or()` / `.not()`로 합성됩니다.
+`options.language`는 PostgreSQL 전용, `options.mode`는 MySQL 전용이라 각 dialect는 상대 옵션을 무시합니다. 다중 컬럼 매칭은 `Conditions.fullTextSearch([c1, c2], query, dialect, options)`를 쓰세요. `.and()` / `.or()` / `.not()`로 합성됩니다.
 
 ## 배열 연산자 (PostgreSQL) — `.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`
 

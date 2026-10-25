@@ -430,8 +430,8 @@ const cards = await em.find(CreditCardPayment, { relations: ["store", "issuer"] 
 ```typescript
 @Entity()
 export class Store {
-  @OneToMany(() => Payment, (p) => p.store) payments!: Payment[];                         // 모든 서브타입, 각자의 클래스로
-  @OneToMany(() => CreditCardPayment, (p) => p.store) cardPayments!: CreditCardPayment[]; // credit_card 행만
+  @OneToMany(() => Payment, { mappedBy: "store" }) payments!: Payment[];                         // 모든 서브타입, 각자의 클래스로
+  @OneToMany(() => CreditCardPayment, { mappedBy: "store" }) cardPayments!: CreditCardPayment[]; // credit_card 행만
 }
 ```
 

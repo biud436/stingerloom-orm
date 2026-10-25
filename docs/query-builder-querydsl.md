@@ -176,8 +176,8 @@ sort with `col IS NULL` ordering — you get the same result without
 having to remember the workaround.
 
 `orderBy(expr)` replaces the existing ORDER BY list; `addOrderBy(expr)`
-appends. Both also still accept the legacy `{ column: "ASC" | "DESC" }`
-map and the `(column, direction)` overload.
+appends. `orderBy()` also accepts the `{ column: "ASC" | "DESC" }` map,
+and `addOrderBy()` the `(column, direction)` pair.
 
 ## Aggregates — SELECT and HAVING in one expression
 
@@ -1048,7 +1048,7 @@ qb.where(a.body.matchAgainst("spam").not());
 
 `options.language` is PostgreSQL-only and `options.mode` is MySQL-only —
 each dialect ignores the other's option. For multi-column matching use
-`Conditions.fullTextSearch([c1, c2], query, options)`. Compose with
+`Conditions.fullTextSearch([c1, c2], query, dialect, options)`. Compose with
 `.and()` / `.or()` / `.not()` like any other condition.
 
 ## Array operators (PostgreSQL) — `.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`
