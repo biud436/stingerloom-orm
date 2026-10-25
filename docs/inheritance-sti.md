@@ -411,8 +411,8 @@ A relation of another entity can point at the root or at one subtype. One pointi
 ```typescript
 @Entity()
 export class Store {
-  @OneToMany(() => Payment, (p) => p.store) payments!: Payment[];                         // every subtype, each as its class
-  @OneToMany(() => CreditCardPayment, (p) => p.store) cardPayments!: CreditCardPayment[]; // credit_card rows only
+  @OneToMany(() => Payment, { mappedBy: "store" }) payments!: Payment[];                         // every subtype, each as its class
+  @OneToMany(() => CreditCardPayment, { mappedBy: "store" }) cardPayments!: CreditCardPayment[]; // credit_card rows only
 }
 ```
 

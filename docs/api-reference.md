@@ -20,7 +20,7 @@ const em = new EntityManager();
 | `register` | `(options: DatabaseClientOptions, connectionName?: string): Promise<void>` | Connect to DB + register entities |
 | `getConnectionName` | `(): string` | Connection name (default: `"default"`) |
 | `getDriver` | `(): ISqlDriver \| undefined` | SQL driver |
-| `propagateShutdown` | `(): Promise<void>` | Clean up internal resources |
+| `propagateShutdown` | `(options?: { gracefulTimeoutMs?: number; closeConnections?: boolean }): Promise<boolean>` | Clean up internal resources; `false` when queries were still running at the timeout. [Usage ->](./entity-manager-advanced.md#shutdown-propagateshutdown) |
 
 ### CRUD
 
@@ -72,12 +72,12 @@ These helpers build or prepare entity instances without a hidden unit of work �
 
 ### Relation Batch Writes
 
-Dialect-portable `@ManyToMany` join-table writes covering both owning and `mappedBy` sides. Mirrored on `BaseRepository.relation(name)` as `.add(child)` / `.remove(child)`.
+Dialect-portable `@ManyToMany` join-table writes covering both owning and `mappedBy` sides. Both take primary key values, not entity instances. Mirrored on `BaseRepository.relation(ownerId, propertyKey)` as `.add(relatedId)` / `.remove(relatedId)`.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `attachRelation` | `<T, U>(parent: T, relation: keyof T & string, child: U): Promise<void>` | Insert a row into the join table (idempotent via `insertIgnore`) |
-| `detachRelation` | `<T, U>(parent: T, relation: keyof T & string, child: U): Promise<void>` | Remove a row from the join table |
+| `attachRelation` | `<T>(entity, ownerId: unknown, propertyKey: keyof T & string, relatedId: unknown, options?: { ignoreExisting?: boolean }): Promise<{ affected: number }>` | Insert the (owner, related) row into the join table. With `ignoreExisting` (default `true`) an existing pair is a 0-row no-op instead of a duplicate-key error |
+| `detachRelation` | `<T>(entity, ownerId: unknown, propertyKey: keyof T & string, relatedId: unknown): Promise<{ affected: number }>` | Remove the (owner, related) row; 0 when the pair was absent |
 
 ### Aggregation
 
@@ -172,7 +172,7 @@ const userRepo = BaseRepository.of(User, em);
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `relation` | `(name: keyof T & string)` returns `{ add(child), remove(child) }` | Sugar over `attachRelation` / `detachRelation` for `@ManyToMany` join-table writes |
+| `relation` | `(ownerId: unknown, propertyKey: keyof T & string): RelationHandle<T>` | `{ add(relatedId, options?), remove(relatedId) }` over `attachRelation` / `detachRelation` for one owner's `@ManyToMany` join-table rows |
 
 Protected fields available for subclasses: `entity` (the entity class) and `em` (the EntityManager instance).
 
@@ -198,8 +198,8 @@ Protected fields available for subclasses: `entity` (the entity class) and `em` 
 
 | Decorator | Description |
 |-----------|-------------|
-| `@ManyToOne(getEntity, getProperty?, option?)` | Many-to-one (FK owner side) |
-| `@OneToMany(getEntity, option)` | One-to-many (inverse side) |
+| `@ManyToOne(getEntity, getProperty, option?)` | Many-to-one (FK owner side). `getProperty` names the inverse property (`(user) => user.posts`) |
+| `@OneToMany(getEntity, option)` | One-to-many (inverse side). `option.mappedBy` names the ManyToOne property |
 | `@OneToOne(getEntity, option?)` | One-to-one |
 | `@ManyToMany(getEntity, option?)` | Many-to-many |
 | `@RelationColumn(option?)` | FK column declaration for @ManyToOne/@OneToOne |
@@ -208,12 +208,12 @@ Protected fields available for subclasses: `entity` (the entity class) and `em` 
 
 | Decorator | Timing |
 |-----------|--------|
-| `@BeforeInsert` | Just before INSERT |
-| `@AfterInsert` | After INSERT |
-| `@BeforeUpdate` | Just before UPDATE |
-| `@AfterUpdate` | After UPDATE |
-| `@BeforeDelete` | Just before DELETE |
-| `@AfterDelete` | After DELETE |
+| `@BeforeInsert()` | Just before INSERT |
+| `@AfterInsert()` | After INSERT |
+| `@BeforeUpdate()` | Just before UPDATE |
+| `@AfterUpdate()` | After UPDATE |
+| `@BeforeDelete()` | Just before DELETE |
+| `@AfterDelete()` | After DELETE |
 
 ### Validation
 
@@ -851,31 +851,41 @@ interface MigrationContext {
 
 ```typescript
 interface SchemaDiffResult {
-  addedTables: string[];
-  droppedTables: string[];
-  modifiedTables: ModifiedTable[];
-  renamedColumns?: RenamedColumn[];       // Heuristic-detected column renames
+  addTables: string[];
+  dropTables: string[];
+  addColumns: ColumnChange[];
+  dropColumns: ColumnChange[];
+  alterColumns: ColumnChange[];
+  renamedColumns?: RenamedColumn[];        // From @Column({ renamedFrom }) or a matching name
+  renameCandidates?: RenameCandidate[];    // Possible renames, applied as drop + add and only reported
   addTableEntityMap?: Record<string, ClazzType<any>>;
-}
-
-interface ModifiedTable {
-  tableName: string;
-  addedColumns: ColumnChange[];
-  droppedColumns: ColumnChange[];
+  enumChanges?: EnumChange[];              // PostgreSQL ENUM types to create or alter
+  addComputedColumns?: ComputedColumnChange[];
 }
 
 interface ColumnChange {
+  tableName: string;
+  schema?: string;              // PostgreSQL schema pinned with @Entity({ schema })
   columnName: string;
   columnType?: string;
+  currentType?: string;         // The column's type in the database (alterColumns)
   nullable?: boolean;
+  currentNullable?: boolean;    // The column's nullability in the database (alterColumns)
+  renamedFrom?: string;         // @Column({ renamedFrom }) on an added column
+  // ...plus length, precision, scale and enum details
 }
 
 interface RenamedColumn {
   tableName: string;
+  schema?: string;
   oldColumnName: string;
   newColumnName: string;
+  columnType: string;
+  reason?: "hint" | "similar-name";
 }
 ```
+
+`SchemaDiff#diff(entities, queryRunner, dialect)` returns it; [Migrations](./migrations.md#using-the-programmatic-api) walks through the programmatic flow.
 
 ### MigrationHooks
 
@@ -1376,6 +1386,5 @@ const rows: Row[] = await em.query(shape)`SELECT ...`;
 | `Relation<T>` | Identity wrapper for single-valued relation properties — erases `design:type` to `Object` so mutually-referencing entities load under ESM (see [Relations](./relations.md)) |
 | `WhereClause<T>` | Typed WHERE conditions — column equality plus operators (`gt`, `in`, `like`, …) and `AND` / `OR` / `NOT` |
 | `RawQueryBuilderFactory` | Query builder factory |
-| `MetadataLayerRegistry` | Decorator-time canonical layered-metadata registry (singleton) |
 | `MetadataContext` | AsyncLocalStorage-based tenant context |
 | `Logger` | Internal logging utility |

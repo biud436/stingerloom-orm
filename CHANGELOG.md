@@ -242,6 +242,12 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 - **A raw `sql` fragment in a batch INSERT value is no longer run through the column's write transformer.** `insertMany()` / `saveMany()` applied the transformer to every cell, so a fragment like ``sql`NOW()` `` on a `json`/`jsonb` column (or any column with a transformer) had the fragment object itself serialized instead of being spliced as an expression.
 
+### Documentation
+
+- **Samples that did not compile, or called APIs that do not exist, are corrected in English and Korean.** The docs are never compiled, and they had drifted from the source. The README quick start declared `@OneToMany(() => Post, p => p.author)`, which `OneToManyOption` rejects. `api-reference.md` gave `attachRelation()`, `detachRelation()` and `repo.relation()` an entity-instance shape instead of the primary key values they take, gave `propagateShutdown()` no options and a `Promise<void>` result, and listed `SchemaDiffResult` fields (`addedTables`, `modifiedTables`) it has never had. `production-guide.md` called a `SchemaDiff.compare()` that does not exist, the migration hooks example constructed the abstract `MigrationRunner`, the NestJS samples imported `BaseRepository` and `MultiTenantEntityManager` from `@stingerloom/orm/nestjs`, which exports neither, and `multi-tenancy.md` taught a `MetadataLayerRegistry` the package does not export. The write buffer's configuration table now lists `maxIdentityMapSize` and `validateBeforeFlush`, and the troubleshooting page no longer offers an `eager` option on a OneToMany relation, which has none.
+
+- **`pnpm docs:check` checks the code samples against `src/`.** `scripts/check-docs-api.js` reads the public API with the TypeScript compiler and reports a sample whose import, method name, argument count, option key, string option value or restated interface does not match it, and an `api-reference.md` row whose required parameters differ from the source. It runs in the CI docs job, so a renamed method or a moved export now fails the pull request that leaves a sample behind.
+
 ---
 
 ## [2.0.0] — 2026-09-01

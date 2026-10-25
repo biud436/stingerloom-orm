@@ -910,10 +910,10 @@ const counts = await em.forEachTenant(async (tenantEm, tenantId) => ({
 
 ```typescript
 import { Module, Injectable } from "@nestjs/common";
+import { MultiTenantEntityManager } from "@stingerloom/orm";
 import {
   StingerloomOrmModule,
   InjectMultiTenantEntityManager,
-  MultiTenantEntityManager,
 } from "@stingerloom/orm/nestjs";
 
 @Module({
@@ -959,38 +959,18 @@ class UserService {
 
 ---
 
-## LayeredMetadata 직접 사용
+## 레이어드 메타데이터가 테넌트를 격리하는 방식
 
-대부분의 애플리케이션에서는 `MetadataContext.run()`과 스키마 기반 격리만으로 충분합니다. 하지만 레이어드 메타데이터 시스템은 더 저수준의 프리미티브로, 특정 테넌트에 다른 테이블 이름이나 컬럼 설정을 주는 것 같은 고급 시나리오에 직접 사용할 수 있어요.
+위의 테넌트 전략들은 레이어드 메타데이터 저장소 위에서 동작합니다. Docker OverlayFS와 같은 오버레이 방식이에요. 모든 `@Entity`/`@Column`/`@ManyToOne` 데코레이터는 `"public"` 레이어에 기록합니다. 테넌트 컨텍스트는 그 위에 자기 레이어를 가질 수 있고, 조회는 테넌트 레이어를 먼저 읽은 뒤 값이 없으면 public 레이어로 폴백합니다.
 
-데코레이터 시점의 레지스트리는 `MetadataLayerRegistry`(`src/scanner/MetadataScanner.ts`)이며 싱글턴입니다. 모든 `@Entity`/`@Column`/`@ManyToOne` 데코레이터는 이 싱글턴의 `"public"` 레이어에 메타데이터를 기록하고, 모든 읽기도 이 싱글턴을 거칩니다. 특정 테넌트에 메타데이터를 덮어쓰려면 이 싱글턴에 레이어를 추가하고 `MetadataContext.run()`으로 컨텍스트를 전환하세요.
-
-```typescript
-import { MetadataLayerRegistry, MetadataContext } from "@stingerloom/orm";
-
-const registry = MetadataLayerRegistry.getInstance();
-
-// 테넌트 레이어 생성 (쓰기 가능)
-registry.addLayer("enterprise", false);
-
-// 요청 스코프 안에서 이 테넌트의 메타데이터를 덮어쓰기
-await MetadataContext.run("enterprise", async () => {
-  registry.getCurrentLayer().set("entities/User", {
-    tableName: "enterprise_users", // 이 테넌트는 다른 테이블명을 사용
-  });
-});
-```
-
-ORM이 `User`의 테이블 이름을 조회할 때:
-- "enterprise" 컨텍스트에서 → 테넌트 레이어에서 `"enterprise_users"` 발견
-- 다른 컨텍스트에서 → public 레이어로 폴백 → `"user"` (기본값)
+이 저장소는 내부 구현이라 패키지가 export하지 않습니다. 따라서 테넌트별 메타데이터 덮어쓰기(특정 테넌트만 다른 테이블 이름을 쓰는 것 등)는 공개 API가 아니에요. 공개 API가 제공하는 것은 컨텍스트 전환인 `MetadataContext.run()`과 그 위에 만든 테넌트 전략들입니다.
 
 ### 격리 보장
 
-`MetadataLayerRegistry.resolveAll()`은 **public 레이어**와 **현재 활성 컨텍스트**의 레이어만 병합합니다. 다른 테넌트 레이어의 데이터는 절대 포함하지 않습니다. 여러 테넌트가 동시에 활성화되어 있어도 크로스 테넌트 메타데이터 유출이 방지됩니다.
+`MetadataContext.run("acme_corp", ...)` 안에서의 조회는 **public 레이어**와 **`acme_corp` 레이어**만 병합합니다. 다른 테넌트의 레이어는 절대 포함하지 않으므로, 여러 테넌트가 동시에 활성화되어 있어도 한 테넌트의 메타데이터가 다른 테넌트로 새지 않습니다.
 
 ```
-MetadataContext.run("acme_corp", ...) 안에서 resolveAll() 호출 시
+MetadataContext.run("acme_corp", ...) 안에서 조회할 때
   → public layer + acme_corp layer  (포함)
   → globex layer                    (제외)
   → initech layer                   (제외)

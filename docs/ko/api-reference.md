@@ -20,7 +20,7 @@ const em = new EntityManager();
 | `register` | `(options: DatabaseClientOptions, connectionName?: string): Promise<void>` | DB 연결 및 엔티티 등록 |
 | `getConnectionName` | `(): string` | 커넥션 이름 (기본값: `"default"`) |
 | `getDriver` | `(): ISqlDriver \| undefined` | SQL 드라이버 반환 |
-| `propagateShutdown` | `(): Promise<void>` | 내부 리소스 정리 |
+| `propagateShutdown` | `(options?: { gracefulTimeoutMs?: number; closeConnections?: boolean }): Promise<boolean>` | 내부 리소스 정리. 제한 시간이 지났는데 아직 실행 중인 쿼리가 있었으면 `false`를 반환합니다. [사용법 ->](./entity-manager-advanced.md#종료-propagateshutdown) |
 
 ### CRUD
 
@@ -72,12 +72,12 @@ const em = new EntityManager();
 
 ### Relation Batch Writes
 
-`@ManyToMany` 조인 테이블에 대한 방언-호환 쓰기. owning 측과 `mappedBy` 측을 모두 커버해요. `BaseRepository.relation(name).add(child)` / `.remove(child)`로도 동일하게 호출할 수 있어요.
+`@ManyToMany` 조인 테이블에 대한 방언-호환 쓰기. owning 측과 `mappedBy` 측을 모두 커버해요. 엔티티 인스턴스가 아니라 기본 키 값을 받습니다. `BaseRepository.relation(ownerId, propertyKey).add(relatedId)` / `.remove(relatedId)`로도 동일하게 호출할 수 있어요.
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
-| `attachRelation` | `<T, U>(parent: T, relation: keyof T & string, child: U): Promise<void>` | 조인 테이블에 행 추가 (내부적으로 `insertIgnore` 사용) |
-| `detachRelation` | `<T, U>(parent: T, relation: keyof T & string, child: U): Promise<void>` | 조인 테이블에서 행 제거 |
+| `attachRelation` | `<T>(entity, ownerId: unknown, propertyKey: keyof T & string, relatedId: unknown, options?: { ignoreExisting?: boolean }): Promise<{ affected: number }>` | 조인 테이블에 (owner, related) 행을 추가합니다. `ignoreExisting`(기본값 `true`)이면 이미 있는 쌍은 중복 키 에러 대신 0행 no-op이 돼요 |
+| `detachRelation` | `<T>(entity, ownerId: unknown, propertyKey: keyof T & string, relatedId: unknown): Promise<{ affected: number }>` | 조인 테이블에서 (owner, related) 행을 제거합니다. 쌍이 없으면 0 |
 
 ### Aggregation
 
@@ -172,7 +172,7 @@ const userRepo = BaseRepository.of(User, em);
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
-| `relation` | `(name: keyof T & string)` → `{ add(child), remove(child) }` | `@ManyToMany` 조인 테이블에 대한 `attachRelation` / `detachRelation` 슈가 |
+| `relation` | `(ownerId: unknown, propertyKey: keyof T & string): RelationHandle<T>` | owner 하나의 `@ManyToMany` 조인 테이블 행을 다루는 `{ add(relatedId, options?), remove(relatedId) }`. `attachRelation` / `detachRelation` 슈가 |
 
 서브클래스에서 사용 가능한 protected 필드: `entity` (엔티티 클래스)와 `em` (EntityManager 인스턴스).
 
@@ -198,8 +198,8 @@ const userRepo = BaseRepository.of(User, em);
 
 | Decorator | 설명 |
 |-----------|------|
-| `@ManyToOne(getEntity, getProperty?, option?)` | Many-to-one (FK 소유 측) |
-| `@OneToMany(getEntity, option)` | One-to-many (역방향) |
+| `@ManyToOne(getEntity, getProperty, option?)` | Many-to-one (FK 소유 측). `getProperty`는 역방향 프로퍼티를 가리켜요(`(user) => user.posts`) |
+| `@OneToMany(getEntity, option)` | One-to-many (역방향). `option.mappedBy`가 ManyToOne 프로퍼티 이름입니다 |
 | `@OneToOne(getEntity, option?)` | One-to-one |
 | `@ManyToMany(getEntity, option?)` | Many-to-many |
 | `@RelationColumn(option?)` | @ManyToOne/@OneToOne의 FK 컬럼 선언 |
@@ -208,12 +208,12 @@ const userRepo = BaseRepository.of(User, em);
 
 | Decorator | 시점 |
 |-----------|------|
-| `@BeforeInsert` | INSERT 직전 |
-| `@AfterInsert` | INSERT 직후 |
-| `@BeforeUpdate` | UPDATE 직전 |
-| `@AfterUpdate` | UPDATE 직후 |
-| `@BeforeDelete` | DELETE 직전 |
-| `@AfterDelete` | DELETE 직후 |
+| `@BeforeInsert()` | INSERT 직전 |
+| `@AfterInsert()` | INSERT 직후 |
+| `@BeforeUpdate()` | UPDATE 직전 |
+| `@AfterUpdate()` | UPDATE 직후 |
+| `@BeforeDelete()` | DELETE 직전 |
+| `@AfterDelete()` | DELETE 직후 |
 
 ### Validation
 
@@ -851,31 +851,41 @@ interface MigrationContext {
 
 ```typescript
 interface SchemaDiffResult {
-  addedTables: string[];
-  droppedTables: string[];
-  modifiedTables: ModifiedTable[];
-  renamedColumns?: RenamedColumn[];       // Heuristic-detected column renames
+  addTables: string[];
+  dropTables: string[];
+  addColumns: ColumnChange[];
+  dropColumns: ColumnChange[];
+  alterColumns: ColumnChange[];
+  renamedColumns?: RenamedColumn[];        // @Column({ renamedFrom }) 또는 이름이 맞는 리네임
+  renameCandidates?: RenameCandidate[];    // 리네임일 수도 있는 쌍. drop + add로 적용하고 보고만 함
   addTableEntityMap?: Record<string, ClazzType<any>>;
-}
-
-interface ModifiedTable {
-  tableName: string;
-  addedColumns: ColumnChange[];
-  droppedColumns: ColumnChange[];
+  enumChanges?: EnumChange[];              // 만들거나 바꿀 PostgreSQL ENUM 타입
+  addComputedColumns?: ComputedColumnChange[];
 }
 
 interface ColumnChange {
+  tableName: string;
+  schema?: string;              // @Entity({ schema })로 고정한 PostgreSQL 스키마
   columnName: string;
   columnType?: string;
+  currentType?: string;         // 데이터베이스에 있는 컬럼 타입 (alterColumns)
   nullable?: boolean;
+  currentNullable?: boolean;    // 데이터베이스에 있는 컬럼의 NULL 허용 여부 (alterColumns)
+  renamedFrom?: string;         // 추가 컬럼의 @Column({ renamedFrom })
+  // ...그 밖에 길이, 정밀도, 스케일, enum 정보
 }
 
 interface RenamedColumn {
   tableName: string;
+  schema?: string;
   oldColumnName: string;
   newColumnName: string;
+  columnType: string;
+  reason?: "hint" | "similar-name";
 }
 ```
+
+`SchemaDiff#diff(entities, queryRunner, dialect)`가 이 값을 반환합니다. 프로그래밍 방식 흐름은 [마이그레이션](./migrations.md#프로그래밍-방식-api)에서 다룹니다.
 
 ### MigrationHooks
 
@@ -1373,6 +1383,5 @@ const rows: Row[] = await em.query(shape)`SELECT ...`;
 | `Relation<T>` | 단수 관계 프로퍼티용 identity 래퍼 — `design:type`을 `Object`로 지워 상호 참조 엔티티가 ESM에서 로드되게 합니다 ([관계](./relations.md) 참고) |
 | `WhereClause<T>` | 타입 안전한 WHERE 조건 -- 컬럼 동등 비교에 더해 연산자(`gt`, `in`, `like`, …)와 `AND` / `OR` / `NOT` 지원 |
 | `RawQueryBuilderFactory` | Query builder 팩토리 |
-| `MetadataLayerRegistry` | 데코레이터 시점의 canonical 레이어드 메타데이터 레지스트리 (싱글턴) |
 | `MetadataContext` | AsyncLocalStorage 기반 테넌트 컨텍스트 |
 | `Logger` | 내부 로깅 유틸리티 |

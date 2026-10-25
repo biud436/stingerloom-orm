@@ -50,7 +50,7 @@ Decorator-based, `defineEntity`-based, and `EntitySchema`-based entities all pro
 | `@DeletedAt()` | property | `columns: { x: { deletedAt: true } }` |
 | `@BeforeInsert()` … `@AfterDelete()` | method | `hooks: { beforeInsert: "methodName" }` |
 | `@NotNull()`, `@MinLength()`, … | property | `columns: { x: { validation: [...] } }` |
-| `@Inheritance(strategy)` | class | `inheritance: { strategy }` |
+| `@Inheritance({ strategy })` | class | `inheritance: { strategy }` |
 | `@DiscriminatorColumn(opts)` | class | `discriminatorColumn: opts` |
 | `@DiscriminatorValue(v)` | class | `discriminatorValue: v` |
 | `@TenantColumn(opts)` | property | `columns: { x: { tenant: true, … } }` |

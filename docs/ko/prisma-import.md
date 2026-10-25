@@ -326,15 +326,16 @@ src/entities/
 
 1. **관계 검증** — 복잡하거나 모호한 관계는 수동 조정이 필요할 수 있습니다
 2. **생명주기 훅 추가** — 필요하다면 `@BeforeInsert`, `@BeforeUpdate`
-3. **유효성 검사 추가** — 비즈니스 규칙을 위한 `@Validation` 데코레이터
-4. **엔티티 등록** — `DatabaseClient`나 `StingerloomOrmModule.forRoot()`에 전달
+3. **유효성 검사 추가** — 비즈니스 규칙을 위한 유효성 검사 데코레이터(`@NotNull()`, `@MaxLength()` 등)
+4. **엔티티 등록** — `em.register()`나 `StingerloomOrmModule.forRoot()`에 전달
 
 ```typescript
-import { DatabaseClient } from "@stingerloom/orm";
+import { EntityManager } from "@stingerloom/orm";
 import { User, Post, Tag } from "./entities";
 
-const client = new DatabaseClient({
-  type: "postgresql",
+const em = new EntityManager();
+await em.register({
+  type: "postgres",
   host: "localhost",
   port: 5432,
   database: "mydb",

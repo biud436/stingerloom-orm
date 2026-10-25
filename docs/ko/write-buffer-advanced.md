@@ -621,16 +621,18 @@ try {
 | Option | Type | Default | 설명 |
 |--------|------|---------|------|
 | `retainAfterFlush` | `boolean` | `true` | Flush 후 추적 엔티티의 snapshot을 갱신해서, 축적-flush 사이클을 사용할 수 있게 해요 |
-| `cascade` | `boolean` | `true` | 관계 메타데이터를 통해 persist/remove/merge/detach를 전파해요 |
+| `cascade` | `boolean \| BufferCascadeOptions` | `true` | 관계 메타데이터를 통해 persist/remove/merge/detach를 전파해요. 객체(`{ persist, merge, remove, refresh }`)로 주면 작업별로 켜고 끌 수 있습니다 |
 | `orphanRemoval` | `boolean` | `false` | 컬렉션 배열에서 제거된 O2M 자식을 자동 삭제해요 |
 | `manyToManySync` | `boolean` | `true` | 컬렉션 변경 시 M2M pivot 테이블 행을 자동 동기화해요 |
-| `flushMode` | `FlushMode` | `MANUAL` | 쿼리 전 자동 flush 시점 |
+| `flushMode` | `FlushMode` | `MANUAL` | 쿼리 전 자동 flush 시점: `MANUAL`, `AUTO`, `ALWAYS` ([Flush Modes](#flush-modes) 참고) |
 | `autoFlush` | `boolean` | `false` | `FlushMode.AUTO`의 단축 옵션 |
 | `changeTracking` | `ChangeTrackingPolicy` | `DEFERRED_IMPLICIT` | 엔티티 dirty check 시점 |
 | `batchInsert` | `boolean` | `false` | 같은 엔티티 타입의 INSERT 여러 개를 하나의 multi-row 구문으로 합쳐요 |
 | `batchUpdate` | `boolean` | `false` | 같은 엔티티 타입의 UPDATE 여러 개를 하나의 CASE WHEN 구문으로 합쳐요 |
 | `onFlush` | `(result) => void` | — | Flush 성공 후 콜백 |
 | `logging` | `boolean` | `false` | 디버깅용 상세 라이프사이클 로그 |
+| `maxIdentityMapSize` | `number` | 무제한 | Identity Map 크기 상한. 넘으면 가장 오래 쓰지 않은 clean 엔트리부터 제거합니다(dirty, new, removed 엔티티는 제거하지 않아요) |
+| `validateBeforeFlush` | `boolean` | `false` | flush 전에 dirty하거나 persist된 모든 엔티티에 유효성 검사 데코레이터를 실행합니다. 실패하면 `ValidationError`로 flush를 중단해요 |
 
 ---
 

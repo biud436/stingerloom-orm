@@ -50,7 +50,7 @@ Stingerloom은 데코레이터와 **완전히 동일한 메타데이터**를 등
 | `@DeletedAt()` | property | `columns: { x: { deletedAt: true } }` |
 | `@BeforeInsert()` … `@AfterDelete()` | method | `hooks: { beforeInsert: "메서드명" }` |
 | `@NotNull()`, `@MinLength()`, … | property | `columns: { x: { validation: [...] } }` |
-| `@Inheritance(strategy)` | class | `inheritance: { strategy }` |
+| `@Inheritance({ strategy })` | class | `inheritance: { strategy }` |
 | `@DiscriminatorColumn(opts)` | class | `discriminatorColumn: opts` |
 | `@DiscriminatorValue(v)` | class | `discriminatorValue: v` |
 | `@TenantColumn(opts)` | property | `columns: { x: { tenant: true, … } }` |

@@ -84,6 +84,8 @@ jobs:
       # Builds the site (previously only done post-merge by deploy-docs.yml) and
       # validates every internal link against the emitted heading ids. VitePress
       # runs with ignoreDeadLinks, so without this a stale anchor ships silently.
+      # It then checks the code samples against the public API in src/
+      # (scripts/check-docs-api.js), since the docs are never compiled.
       - run: pnpm docs:check
 
   build-check:

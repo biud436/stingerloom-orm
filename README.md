@@ -87,7 +87,7 @@ import {
 class Author {
   @PrimaryGeneratedColumn() id!: number;
   @Column() name!: string;
-  @OneToMany(() => Post, p => p.author) posts!: Post[];
+  @OneToMany(() => Post, { mappedBy: "author" }) posts!: Post[];
 }
 
 @Entity()

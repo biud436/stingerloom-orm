@@ -558,7 +558,7 @@ But this would be rejected by the database:
 You can also specify the index name directly.
 
 ```typescript
-@UniqueIndex(["categoryId", "slug"], { name: "uq_post_category_slug" })
+@UniqueIndex(["categoryId", "slug"], "uq_post_category_slug")
 ```
 
 > **Hint** `@UniqueIndex` and `@Index(columns)` are both **class-level** decorators. Property-level `@Index()` (no arguments) is placed on individual properties.
@@ -807,8 +807,11 @@ profile!: UserProfile;
 QueryDSL's JSON operators compile to the same path expression your index was built on, so the planner can use it:
 
 ```typescript
-const users = await qb
-  .qWhere((u) => u.profile.tags.contains("typescript"))
+const u = qAlias(User, "u");
+
+const users = await em
+  .createQueryBuilder(User, "u")
+  .where(u.profile.tags.contains("typescript"))
   .getMany();
 // PostgreSQL: WHERE profile -> 'tags' @> '"typescript"'::jsonb
 // Uses: idx_user_profile_tags_gin

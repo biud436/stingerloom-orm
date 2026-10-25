@@ -579,7 +579,7 @@ CREATE UNIQUE INDEX "UQ_post_categoryId_slug" ON "post" ("categoryId", "slug");
 인덱스 이름을 직접 지정할 수도 있어요.
 
 ```typescript
-@UniqueIndex(["categoryId", "slug"], { name: "uq_post_category_slug" })
+@UniqueIndex(["categoryId", "slug"], "uq_post_category_slug")
 ```
 
 > **힌트** `@UniqueIndex`와 `@Index(columns)`는 둘 다 **클래스 수준** 데코레이터예요. 프로퍼티 수준 `@Index()`(인수 없음)는 개별 프로퍼티에 배치해요.
@@ -828,8 +828,11 @@ profile!: UserProfile;
 QueryDSL의 JSON 연산자는 인덱스를 빌드한 경로 표현식과 동일한 SQL로 컴파일되어 플래너가 인덱스를 사용할 수 있어요:
 
 ```typescript
-const users = await qb
-  .qWhere((u) => u.profile.tags.contains("typescript"))
+const u = qAlias(User, "u");
+
+const users = await em
+  .createQueryBuilder(User, "u")
+  .where(u.profile.tags.contains("typescript"))
   .getMany();
 // PostgreSQL: WHERE profile -> 'tags' @> '"typescript"'::jsonb
 // 사용 인덱스: idx_user_profile_tags_gin

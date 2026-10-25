@@ -109,7 +109,7 @@ class UserSubscriber implements EntitySubscriber<User> {
   }
 
   afterDelete(event: DeleteEvent<User>) {
-    console.log("User deleted:", event.entity);
+    console.log("Users deleted where:", event.criteria);
   }
 }
 ```
@@ -319,7 +319,8 @@ NestJS에서는 `@InjectRepository()`로 서비스에 리포지토리를 주입�
 
 ```typescript
 import { Injectable } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
+import { BaseRepository } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { User } from "./user.entity";
 
 @Injectable()

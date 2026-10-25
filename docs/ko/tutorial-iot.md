@@ -988,7 +988,8 @@ export class ReadingsModule {}
 ```typescript
 // src/readings/readings.service.ts
 import { Injectable } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
+import { BaseRepository } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
 
 @Injectable()
@@ -1207,7 +1208,8 @@ export class ReadingsController {
 ```typescript
 // src/devices/devices.service.ts
 import { Injectable } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
+import { BaseRepository } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Device } from "../entities/device.entity";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
 
@@ -1406,17 +1408,19 @@ for (const device of devices) {
 // With 100 devices -> 101 queries (1 for devices + 100 for readings)
 ```
 
-Stingerloom ORM의 `QueryTracker`가 이 패턴을 자동으로 감지해요:
+Stingerloom ORM의 `QueryTracker`가 이 패턴을 감지합니다. ORM 설정의 `logging` 옵션으로 켜요(보통 개발이나 스테이징 환경에서):
 
 ```typescript
-// Enable query tracking (usually in development or staging)
-em.enableQueryTracker({ warnThreshold: 5, slowQueryMs: 500 });
+StingerloomOrmModule.forRoot({
+  // ...Step 1의 연결 옵션
+  logging: { nPlusOne: true, slowQueryMs: 500 },
+}),
 ```
 
-tracker가 짧은 시간 내에 5개 이상의 유사한 쿼리를 감지하면 경고를 로깅해요:
+같은 엔티티를 100ms 안에 10번 이상 조회하면 tracker가 경고를 로깅합니다:
 
 ```
-[QueryTracker] N+1 detected: 100 queries to "temperature_readings" in 1.2s
+[QueryTracker] [N+1 WARNING] Entity "TemperatureReading" queried 10+ times in 100ms. Consider using eager loading or relations option.
 ```
 
 **해결법**: `relations`를 사용해서 eager-load하거나, 단일 쿼리로 재구성하세요:
@@ -1471,8 +1475,8 @@ WHERE "device_id" = $1 AND "recordedAt" >= $2;
 ```typescript
 // src/stats/stats.service.ts
 import { Injectable, Inject } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
-import { EntityManager } from "@stingerloom/orm";
+import { BaseRepository, EntityManager } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { DailyStats } from "../entities/daily-stats.entity";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
 import sql from "sql-template-tag";
@@ -1624,8 +1628,8 @@ ORDER BY "date" ASC
 ```typescript
 // src/stats/aggregation.processor.ts
 import { Inject, Injectable } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
-import { EntityManager } from "@stingerloom/orm";
+import { BaseRepository, EntityManager } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Device } from "../entities/device.entity";
 import { StatsService } from "./stats.service";
 
@@ -1762,8 +1766,8 @@ Mobile App requests GET /devices/1/stats/weekly
 // src/stats/cached-stats.service.ts
 import { Injectable } from "@nestjs/common";
 import { InjectRedis } from "@nestjs-modules/ioredis";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
-import { MetadataContext } from "@stingerloom/orm";
+import { BaseRepository, MetadataContext } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { DailyStats } from "../entities/daily-stats.entity";
 import Redis from "ioredis";
 
@@ -1876,8 +1880,8 @@ export class StatsModule implements OnModuleInit {
 ```typescript
 // src/alerts/alerts.service.ts
 import { Injectable } from "@nestjs/common";
-import { InjectRepository, BaseRepository } from "@stingerloom/orm/nestjs";
-import { Transactional } from "@stingerloom/orm";
+import { BaseRepository, Transactional } from "@stingerloom/orm";
+import { InjectRepository } from "@stingerloom/orm/nestjs";
 import { Alert } from "../entities/alert.entity";
 import { AlertRule } from "../entities/alert-rule.entity";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
@@ -1981,7 +1985,7 @@ LIMIT 50
 // src/readings/readings.service.spec.ts
 import { Test, TestingModule } from "@nestjs/testing";
 import { ReadingsService } from "./readings.service";
-import { getRepositoryToken } from "@stingerloom/orm/nestjs";
+import { makeInjectRepositoryToken } from "@stingerloom/orm/nestjs";
 import { TemperatureReading } from "../entities/temperature-reading.entity";
 
 describe("ReadingsService", () => {
@@ -1998,7 +2002,7 @@ describe("ReadingsService", () => {
       providers: [
         ReadingsService,
         {
-          provide: getRepositoryToken(TemperatureReading),
+          provide: makeInjectRepositoryToken(TemperatureReading),
           useValue: mockRepo,
         },
       ],
@@ -2047,13 +2051,16 @@ describe("Multi-Tenant Isolation", () => {
 
   beforeAll(async () => {
     // Connect to a test database
-    em = new EntityManager({
+    em = new EntityManager();
+    await em.register({
       type: "postgres",
       host: "localhost",
       port: 5432,
       database: "smart_thermo_test",
       username: "postgres",
       password: "postgres",
+      entities: [Device],
+      synchronize: true,
     });
   });
 
@@ -2123,7 +2130,7 @@ ORM은 TypeScript 객체와 PostgreSQL 사이의 모든 것을 처리해요. Red
 | 프로덕션 설정에서 `synchronize: false` | 필수 | synchronize는 컬럼을 드롭할 수 있으므로 마이그레이션 사용 |
 | 커넥션 풀링 설정 | 필수 | ORM 설정에서 `pool: { min: 2, max: 10 }` 설정 |
 | 쿼리 타임아웃 설정 | 권장 | `timeout: 30000` (30초)으로 폭주 쿼리 방지 |
-| 스테이징에서 N+1 감지 활성화 | 권장 | `em.enableQueryTracker({ warnThreshold: 5 })` |
+| 스테이징에서 N+1 감지 활성화 | 권장 | ORM 설정의 `logging: { nPlusOne: true }` |
 | Redis 연결 에러 처리 | 필수 | ioredis가 자동 재연결하지만 실패를 로깅하세요 |
 | 테넌트 스키마 마이그레이션 전략 | 필수 | 배포 시 `TenantMigrationRunner.syncTenantSchemas()` 실행 |
 | JWT 공개 키 로테이션 | 중요 | jwks-rsa가 키를 캐시해요 -- `cache: true, rateLimit: true` 설정 |

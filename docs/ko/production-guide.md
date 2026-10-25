@@ -171,11 +171,13 @@ const slowQueries = em.getQueryLog().filter(
 ```typescript
 import { SchemaDiff } from "@stingerloom/orm";
 
-const diff = await SchemaDiff.compare(em, [User, Post, Comment]);
+// EntityManager를 쿼리 러너로 씁니다. query(sql)이 있는 객체면 무엇이든 됩니다.
+const diff = await new SchemaDiff().diff([User, Post, Comment], em, "postgres");
 
-console.log("Tables to add:", diff.addedTables);
-console.log("Tables to drop:", diff.droppedTables);
-console.log("Tables to modify:", diff.modifiedTables);
+console.log("Tables to add:", diff.addTables);
+console.log("Columns to add:", diff.addColumns);
+console.log("Columns to change:", diff.alterColumns);
+console.log("Columns to drop:", diff.dropColumns);
 ```
 
 **Step 2: Migration 자동 생성**
@@ -183,11 +185,12 @@ console.log("Tables to modify:", diff.modifiedTables);
 ```typescript
 import { SchemaDiff, SchemaDiffMigrationGenerator } from "@stingerloom/orm";
 
-const diff = await SchemaDiff.compare(em, [User, Post]);
+const diff = await new SchemaDiff().diff([User, Post], em, "postgres");
 const generator = new SchemaDiffMigrationGenerator();
-const migrations = generator.generate(diff);
+const content = generator.generate(diff, "postgres");
+const file = await generator.save(content, "./migrations");
 
-console.log(`${migrations.length} migrations generated`);
+console.log(`Migration written to ${file}`);
 ```
 
 **Step 3: Migration CLI 설정**

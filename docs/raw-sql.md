@@ -59,7 +59,7 @@ List active users sorted by name. Everything `keyof T`-typed, no SQL written.
 const users = await em
   .createQueryBuilder(User, "u")
   .where({ isActive: true })
-  .orderBy("u.name", "ASC")
+  .orderBy({ name: "ASC" })
   .limit(50)
   .getMany();
 ```
@@ -69,21 +69,25 @@ const users = await em
 Same listing, now grouped by `role` with a published-post count per row. Still entity-aware -- the joined relation and the aggregate are both expressed against entity columns.
 
 ```typescript
-import { Expressions as E } from "@stingerloom/orm";
+import { qAlias } from "@stingerloom/orm";
+
+const u = qAlias(User, "u");
+const p = qAlias(Post, "p");
+const postCount = p.id.count();
 
 const rows = await em
   .createQueryBuilder(User, "u")
-  .leftJoin("u.posts", "p", { isPublished: true })
-  .selectFragments([
-    "u.role",
-    E.count("p.id").as("postCount"),
-  ])
-  .where({ isActive: true })
-  .groupBy("u.role")
+  .leftJoin(Post, "p", (join) =>
+    join.on(p.col("authorId"), "=", u.col("id")).onVal(p.col("isPublished"), "=", true),
+  )
+  .select(["role"])
+  .addSelect(postCount.as("postCount"))
+  .where(u.isActive.eq(true))
+  .groupBy(["u.role"])
   .getRawMany<{ role: string; postCount: number }>();
 ```
 
-`Expressions.count` and friends render per-dialect SQL while keeping the entity property path -- `p.id` resolves through `@Column` / NamingStrategy without you spelling out `"p"."id"`.
+`p.id.count()` and the other aggregates render per-dialect SQL while keeping the entity property path -- `p.id` resolves through `@Column` / NamingStrategy without you spelling out `"p"."id"`.
 
 #### Rung 3 -- `sql` template + `em.ref()`
 
@@ -171,11 +175,11 @@ import sql from "sql-template-tag";
 
 const U = em.ref(User, "u");
 
-const query = em.createQueryBuilder()
-  .selectFragments([U.id, U.email])
-  .from(U)
-  .where([sql`${U.isActive} = ${true}`])
-  .build();
+const rows = await em.query(sql`
+  SELECT ${U.id}, ${U.email}
+  FROM ${U}
+  WHERE ${U.isActive} = ${true}
+`);
 // PostgreSQL: SELECT u."id", u."email" FROM "user" AS u WHERE u."is_active" = ?
 // MySQL:      SELECT u.`id`, u.`email` FROM `user` AS u WHERE u.`is_active` = ?
 ```

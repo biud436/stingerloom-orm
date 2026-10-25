@@ -726,10 +726,12 @@ interface MigrationHooks {
 
 ### 예제: 실패 시 Slack 알림
 
-```typescript
-import { MigrationRunner } from "@stingerloom/orm";
+`MigrationRunner`는 추상 클래스입니다. 방언에 맞는 러너(`MySqlMigrationRunner`, `PostgresMigrationRunner`, `SqliteMigrationRunner`)를 생성하세요. 마이그레이션 목록, 드라이버, 쿼리 러너(`query(sql)` 메서드가 있는 아무 객체)를 받고, 그다음에 옵션을 받아요.
 
-const runner = new MigrationRunner(driver, migrations, {
+```typescript
+import { PostgresMigrationRunner } from "@stingerloom/orm";
+
+const runner = new PostgresMigrationRunner(migrations, em.getDriver()!, queryRunner, {
   hooks: {
     beforeAll(ctx) {
       console.log("Starting migrations...");
