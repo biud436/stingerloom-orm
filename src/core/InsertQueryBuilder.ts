@@ -337,6 +337,41 @@ export class InsertQueryBuilder<T> {
   }
 
   /**
+   * Execute the INSERT and return the rows it wrote, as entity instances —
+   * the inserted rows and the rows the conflict action updated, with
+   * generated keys, database defaults and the values the conflict action
+   * computed. A row the statement skipped (`doNothing()`, a failed
+   * `doUpdateWhere()`, another tenant's row) is not returned. Relations are
+   * not loaded.
+   *
+   * PostgreSQL and SQLite use `RETURNING *`; so does MariaDB 10.5+ for an
+   * INSERT without a conflict action.
+   *
+   * MySQL has no `RETURNING`, so there this writes **one row per call** and
+   * reads it back by key — the auto-increment primary key (reported through
+   * `LAST_INSERT_ID()`), else the `onConflict()` columns for an update, else
+   * the primary key. More than one row throws `UNSUPPORTED_OPERATION` before
+   * anything is sent. MariaDB takes the same path whenever a conflict action
+   * is set.
+   *
+   * @example Accumulate and get the new totals back
+   * ```ts
+   * const [marker] = await em.createInsertBuilder(SyncMarker)
+   *   .values(row)
+   *   .onConflict(["mac", "bucketStart"])
+   *   .doUpdate((t, ex) => ({ records: t.records.add(ex.records) }))
+   *   .executeAndReturn();
+   * marker.records; // the stored total after this write
+   * ```
+   */
+  async executeAndReturn(): Promise<T[]> {
+    return (this.em as any).executeBuilderInsertAndReturn(
+      this.entity,
+      this.spec(),
+    );
+  }
+
+  /**
    * Build the SQL without executing — useful for tests and inspection.
    * Tenant scoping is **not** applied here (it is added at execute time).
    */

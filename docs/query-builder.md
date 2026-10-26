@@ -442,8 +442,9 @@ are ordinary `qAlias` proxies, so everything on the
 [QueryDSL Expressions](./query-builder-querydsl.md) page composes.
 
 The builder also covers `doNothing()`, `doUpdateWhere()` (PostgreSQL /
-SQLite), partial unique indexes via `onConflict(cols, { where })`, and
-PostgreSQL's `onConflictConstraint()`. Full reference, dialect matrix
+SQLite), partial unique indexes via `onConflict(cols, { where })`,
+PostgreSQL's `onConflictConstraint()`, and `executeAndReturn()`, which
+returns the rows the statement wrote. Full reference, dialect matrix
 and behavior notes:
 [EntityManager — Writes](./entity-manager-writes.md#expression-based-upsert-createinsertbuilder).
 

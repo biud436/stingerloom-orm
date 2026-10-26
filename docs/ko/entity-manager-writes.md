@@ -910,6 +910,34 @@ import { iff } from "@stingerloom/orm";
 
 `{ where }`는 어떤 **인덱스**가 충돌을 판정할지를 좁힙니다(유니크 인덱스 자체가 부분 인덱스일 때 필요해요). `doUpdateWhere()`는 충돌한 **행** 중 무엇을 갱신할지를 좁히고요. 서로 다른 절이라 함께 쓸 수 있습니다.
 
+### 쓴 행 돌려받기 — executeAndReturn()
+
+`execute()`는 영향받은 행 수만 알려 줍니다. `executeAndReturn()`은 같은 문장을 실행하고, 그 문장이 쓴 행을 엔티티 인스턴스로 돌려줍니다. 생성된 키, DB 기본값, 충돌 절이 계산한 값이 모두 담겨 있어요.
+
+```typescript
+const [marker] = await em.createInsertBuilder(SyncMarker)
+  .values({ mac, bucketStart, records: 3, lastTime })
+  .onConflict(["mac", "bucketStart"])
+  .doUpdate((t, ex) => ({ records: t.records.add(ex.records) }))
+  .executeAndReturn();
+
+marker.records; // 이번 쓰기 이후 저장된 누적값
+```
+
+누적값을 `find()`로 따로 읽으면 그사이 다른 쓰기의 결과까지 섞일 수 있습니다. 돌려받은 행은 이 문장이 쓴 바로 그 행입니다.
+
+돌려받는 행은 다음과 같습니다.
+
+- 삽입된 행과 충돌 절이 갱신한 행 전부입니다. 문장이 건너뛴 행(`doNothing()`, 조건을 통과하지 못한 `doUpdateWhere()`, `tenant_column` 전략에서 다른 테넌트의 행)은 들어 있지 않습니다.
+- 엔티티를 읽을 때와 같은 방식으로 만들어집니다. 컬럼 이름이 프로퍼티로 매핑되고 읽기 트랜스포머가 적용돼요. 관계는 로드하지 않습니다.
+
+PostgreSQL과 SQLite에서는 `RETURNING *`을 쓰므로 여러 행짜리 문장도 모든 행을 돌려줍니다. MySQL에는 `RETURNING`이 없어서, `executeAndReturn()`은 **호출당 한 행만** 쓰고 같은 트랜잭션에서 다시 읽습니다.
+
+- auto-increment 기본 키는 `LAST_INSERT_ID()`로 받아 옵니다. 갱신 경로에서는 충돌 절에 `id = LAST_INSERT_ID(id)`를 함께 넣는데, 키 값은 바뀌지 않습니다.
+- 그 밖에는 `onConflict()` 컬럼(갱신일 때)이나 기본 키로 다시 읽습니다. 그래서 행에 그 값이 들어 있어야 하고, 그 컬럼들이 유니크 키를 이뤄야 합니다.
+
+두 행 이상을 넘기면 아무것도 보내기 전에 `UNSUPPORTED_OPERATION`을 던집니다. MariaDB 10.5+는 충돌 절이 없는 INSERT라면 `RETURNING`으로 행을 돌려줍니다. 충돌 절이 있으면 MySQL과 같은 경로를 타는데, `ON DUPLICATE KEY UPDATE`나 `INSERT IGNORE` 행에 대해 MariaDB의 `RETURNING`이 무엇을 보고하는지 정해져 있지 않기 때문이에요.
+
 ### SQL 확인
 
 `build()`는 `Sql` 조각을, `toSql()`은 텍스트와 바인딩 값을 실행 없이 돌려줍니다.
@@ -942,6 +970,7 @@ const { text, values } = em.createInsertBuilder(SyncMarker)
 | `onConflictConstraint()` | 지원 | 예외 | 예외 |
 | `doNothing()` | `DO NOTHING` | `INSERT IGNORE` | `DO NOTHING` |
 | `doUpdateWhere()` | 지원 | 예외 | 지원 |
+| `executeAndReturn()` | `RETURNING *` | 호출당 한 행, 키로 다시 읽음 (MariaDB 10.5+의 충돌 절 없는 INSERT는 `RETURNING *`) | `RETURNING *` |
 
 MySQL은 모든 유니크 키를 한꺼번에 대상으로 삼기 때문에 지정할 충돌 대상 자체가 없습니다. 그래도 `.onConflict([...])`를 붙여 두는 편이 좋아요. 같은 호출을 PostgreSQL로 그대로 옮길 수 있으니까요.
 

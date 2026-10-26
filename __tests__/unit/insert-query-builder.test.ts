@@ -475,4 +475,185 @@ describe("InsertQueryBuilder", () => {
       expect(statement.text).toContain("ON CONFLICT");
     });
   });
+
+  describe("executeAndReturn", () => {
+    const counterMetadata = {
+      name: "counters",
+      target: SyncMarker,
+      columns: [
+        { name: "id", propertyKey: "id", options: { primary: true, autoIncrement: true } },
+        { name: "slug", propertyKey: "slug", options: {} },
+        { name: "hits", propertyKey: "hits", options: {} },
+      ],
+    };
+
+    function mockQuery() {
+      return jest.requireMock("../../src/dialects/TransactionSessionManager")
+        .__mockQuery as jest.Mock;
+    }
+
+    function useCounterMetadata(em: EntityManager) {
+      (em as any).resolver.resolveEntityMetadata.mockReturnValue(counterMetadata);
+    }
+
+    const counterUpsert = (em: EntityManager) =>
+      em
+        .createInsertBuilder(SyncMarker as any)
+        .values({ slug: "a", hits: 1 } as any)
+        .onConflict(["slug"] as any)
+        .doUpdate((t: any, ex: any) => ({ hits: t.hits.add(ex.hits) }));
+
+    it("PostgreSQL: appends RETURNING * and hydrates the returned rows", async () => {
+      const em = createTestEntityManager("postgres");
+      (em as any).driver.supportsReturning = () => true;
+      mockQuery().mockResolvedValue({
+        results: [{ mac: "aa:bb", bucket_start: 1, records: 19, last_time: 2, synced_at: null }],
+        fields: [],
+      });
+
+      const rows = await accumulatingUpsert(em).executeAndReturn();
+
+      expect(mockQuery()).toHaveBeenCalledTimes(1);
+      const [statement] = mockQuery().mock.calls[0];
+      expect(statement.text).toMatch(/DO UPDATE SET .* RETURNING \*$/);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toBeInstanceOf(SyncMarker);
+    });
+
+    it("throws where the dialect has no RETURNING and is not MySQL", async () => {
+      const em = createTestEntityManager("sqlite");
+      (em as any).driver.supportsReturning = () => false;
+
+      await expect(accumulatingUpsert(em).executeAndReturn()).rejects.toMatchObject({
+        code: OrmErrorCode.UNSUPPORTED_DATABASE,
+      });
+      expect(mockQuery()).not.toHaveBeenCalled();
+    });
+
+    it("MySQL: rejects more than one row before sending anything", async () => {
+      const em = createTestEntityManager("mysql");
+
+      await expect(accumulatingUpsert(em).executeAndReturn()).rejects.toMatchObject({
+        code: OrmErrorCode.UNSUPPORTED_OPERATION,
+        message: expect.stringContaining("one row per call, and got 2"),
+      });
+      expect(mockQuery()).not.toHaveBeenCalled();
+    });
+
+    it("MySQL: reports the auto-increment key through LAST_INSERT_ID() and reads the row back by it", async () => {
+      const em = createTestEntityManager("mysql");
+      useCounterMetadata(em);
+      mockQuery()
+        .mockResolvedValueOnce({ results: { affectedRows: 2, insertId: 7 }, fields: [] })
+        .mockResolvedValueOnce({ results: [{ id: 7, slug: "a", hits: 6 }], fields: [] });
+
+      const rows = await counterUpsert(em).executeAndReturn();
+
+      const [[insert], [select]] = mockQuery().mock.calls;
+      expect(insert.text).toContain(
+        "ON DUPLICATE KEY UPDATE `hits` = (`counters`.`hits` + VALUES(`hits`)), `id` = LAST_INSERT_ID(`counters`.`id`)",
+      );
+      expect(select.sql).toBe("SELECT * FROM `counters` WHERE `id` = ?");
+      expect(select.values).toEqual([7]);
+      expect(rows).toEqual([expect.objectContaining({ id: 7, slug: "a", hits: 6 })]);
+    });
+
+    it("MySQL: returns nothing when no key was reported", async () => {
+      const em = createTestEntityManager("mysql");
+      useCounterMetadata(em);
+      mockQuery().mockResolvedValueOnce({ results: { affectedRows: 0, insertId: 0 }, fields: [] });
+
+      expect(await counterUpsert(em).executeAndReturn()).toEqual([]);
+      expect(mockQuery()).toHaveBeenCalledTimes(1);
+    });
+
+    it("MySQL: returns nothing for a row INSERT IGNORE skipped", async () => {
+      const em = createTestEntityManager("mysql");
+      useCounterMetadata(em);
+      mockQuery().mockResolvedValueOnce({ results: { affectedRows: 0, insertId: 0 }, fields: [] });
+
+      const rows = await em
+        .createInsertBuilder(SyncMarker as any)
+        .values({ slug: "a", hits: 1 } as any)
+        .doNothing()
+        .executeAndReturn();
+
+      expect(rows).toEqual([]);
+      expect(mockQuery()).toHaveBeenCalledTimes(1);
+    });
+
+    it("MySQL: refuses a doUpdate() that assigns the auto-increment key", async () => {
+      const em = createTestEntityManager("mysql");
+      useCounterMetadata(em);
+
+      await expect(
+        em
+          .createInsertBuilder(SyncMarker as any)
+          .values({ slug: "a", hits: 1 } as any)
+          .doUpdate({ id: 9 } as any)
+          .executeAndReturn(),
+      ).rejects.toThrow(/assigns the auto-increment key 'id'/);
+      expect(mockQuery()).not.toHaveBeenCalled();
+    });
+
+    it("MySQL: reads a stated key back by the onConflict() columns", async () => {
+      const em = createTestEntityManager("mysql");
+      mockQuery()
+        .mockResolvedValueOnce({ results: { affectedRows: 2, insertId: 0 }, fields: [] })
+        .mockResolvedValueOnce({
+          results: [{ mac: "aa:bb", bucket_start: 1, records: 19, last_time: 2, synced_at: null }],
+          fields: [],
+        });
+
+      const rows = await em
+        .createInsertBuilder(SyncMarker as any)
+        .values(ROWS[0] as any)
+        .onConflict(["mac", "bucketStart"] as any)
+        .doUpdate((t: any, ex: any) => ({ records: t.records.add(ex.records) }))
+        .executeAndReturn();
+
+      const [, [select]] = mockQuery().mock.calls;
+      expect(select.sql).toBe(
+        "SELECT * FROM `ble_sensor_sync_markers` WHERE `mac` = ? AND `bucket_start` = ?",
+      );
+      expect(select.values).toEqual([ROWS[0].mac, ROWS[0].bucketStart]);
+      expect(rows).toEqual([expect.objectContaining({ mac: "aa:bb", records: 19 })]);
+    });
+
+    it("MySQL: refuses a key the row states only as raw SQL", async () => {
+      const em = createTestEntityManager("mysql");
+
+      await expect(
+        em
+          .createInsertBuilder(SyncMarker as any)
+          .values({ ...ROWS[0], bucketStart: sql`NOW()` } as any)
+          .onConflict(["mac", "bucketStart"] as any)
+          .doUpdate(["records"] as any)
+          .executeAndReturn(),
+      ).rejects.toThrow(/must state 'bucketStart' as a value/);
+      expect(mockQuery()).not.toHaveBeenCalled();
+    });
+
+    it("MySQL: rejects a read-back that matches more than one row", async () => {
+      const em = createTestEntityManager("mysql");
+      mockQuery()
+        .mockResolvedValueOnce({ results: { affectedRows: 1, insertId: 0 }, fields: [] })
+        .mockResolvedValueOnce({
+          results: [
+            { mac: "aa:bb", bucket_start: 1, records: 1, last_time: 2, synced_at: null },
+            { mac: "aa:bb", bucket_start: 2, records: 1, last_time: 2, synced_at: null },
+          ],
+          fields: [],
+        });
+
+      await expect(
+        em
+          .createInsertBuilder(SyncMarker as any)
+          .values(ROWS[0] as any)
+          .onConflict(["mac"] as any)
+          .doUpdate(["records"] as any)
+          .executeAndReturn(),
+      ).rejects.toThrow(/read back 2 rows by \(mac\)/);
+    });
+  });
 });

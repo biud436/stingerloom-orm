@@ -18,6 +18,8 @@ import "reflect-metadata";
 import { Entity } from "../../src/decorators/Entity";
 import { Column } from "../../src/decorators/Column";
 import { PrimaryColumn } from "../../src/decorators/PrimaryColumn";
+import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
+import { UniqueIndex } from "../../src/decorators/UniqueIndex";
 import { EntityManager } from "../../src/core/EntityManager";
 import { qAlias } from "../../src/core/query-builder/alias/qAlias";
 import { qExcluded } from "../../src/core/query-builder/alias/qExcluded";
@@ -40,6 +42,7 @@ const drivers = INTEGRATION ? getTestDrivers() : [];
 const TABLES = {
   marker: "iqb_marker",
   partial: "iqb_partial",
+  counter: "iqb_counter",
 } as const;
 
 type Marker = {
@@ -47,6 +50,11 @@ type Marker = {
   bucketStart: number;
   records: number;
   lastTs: number;
+};
+type Counter = {
+  id: number;
+  slug: string;
+  hits: number;
 };
 type Partial_ = {
   id: number;
@@ -62,6 +70,7 @@ describe.each(drivers)(
     let em: EntityManager;
     let MarkerE: new () => Marker;
     let PartialE: new () => Partial_;
+    let CounterE: new () => Counter;
 
     const q = (name: string) => (type === "mysql" ? `\`${name}\`` : `"${name}"`);
 
@@ -85,9 +94,18 @@ describe.each(drivers)(
             @Column({ type: "datetime", nullable: true }) archivedAt!: Date | null;
           }
 
+          @Entity({ name: TABLES.counter })
+          @UniqueIndex(["slug"])
+          class CounterEntity {
+            @PrimaryGeneratedColumn() id!: number;
+            @Column({ type: "varchar", length: 32 }) slug!: string;
+            @Column({ type: "int" }) hits!: number;
+          }
+
           MarkerE = MarkerEntity;
           PartialE = PartialEntity;
-          return { entities: [MarkerEntity, PartialEntity] };
+          CounterE = CounterEntity;
+          return { entities: [MarkerEntity, PartialEntity, CounterEntity] };
         },
       );
       em = conn.em;
@@ -102,7 +120,7 @@ describe.each(drivers)(
     }, 60000);
 
     afterAll(async () => {
-      for (const t of [TABLES.marker, TABLES.partial]) {
+      for (const t of [TABLES.marker, TABLES.partial, TABLES.counter]) {
         try {
           await dropTestTable(t);
         } catch {
@@ -113,7 +131,7 @@ describe.each(drivers)(
     });
 
     beforeEach(async () => {
-      for (const t of [TABLES.marker, TABLES.partial]) {
+      for (const t of [TABLES.marker, TABLES.partial, TABLES.counter]) {
         await rawQuery(`DELETE FROM ${q(t)}`);
       }
     });
@@ -267,5 +285,118 @@ describe.each(drivers)(
         expect(await readAll()).toEqual([]);
       });
     }
+
+    describe("executeAndReturn()", () => {
+      const bump = (slug: string, hits: number) =>
+        em
+          .createInsertBuilder(CounterE)
+          .values({ slug, hits } as any)
+          .onConflict(["slug"] as any)
+          .doUpdate((t: any, ex: any) => ({ hits: t.hits.add(ex.hits) }))
+          .executeAndReturn();
+
+      it("returns the inserted row, then the same row with the accumulated value", async () => {
+        const [inserted] = await bump("a", 2);
+        const [updated] = await bump("a", 3);
+
+        expect(inserted).toBeInstanceOf(CounterE);
+        expect(inserted).toMatchObject({ slug: "a", hits: 2 });
+        expect(updated).toMatchObject({ id: inserted.id, slug: "a", hits: 5 });
+      });
+
+      it("reads a stated composite key back with the values the conflict action computed", async () => {
+        const write = (row: Partial<Marker>) =>
+          em
+            .createInsertBuilder(MarkerE)
+            .values(row as any)
+            .onConflict(["mac", "bucketStart"] as any)
+            .doUpdate((t: any, ex: any) => ({
+              records: t.records.add(ex.records),
+              lastTs: greatest(t.lastTs, ex.lastTs),
+            }))
+            .executeAndReturn();
+
+        await write({ mac: "aa", bucketStart: 100, records: 5, lastTs: 150 });
+        const rows = await write({ mac: "aa", bucketStart: 100, records: 7, lastTs: 120 });
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ mac: "aa", bucketStart: 100, records: 12, lastTs: 150 });
+      });
+
+      it("returns nothing for a row doNothing() skipped", async () => {
+        await bump("a", 1);
+
+        const rows = await em
+          .createInsertBuilder(CounterE)
+          .values({ slug: "a", hits: 50 } as any)
+          .onConflict(["slug"] as any)
+          .doNothing()
+          .executeAndReturn();
+
+        expect(rows).toEqual([]);
+        const [stored] = await em.find(CounterE, { where: { slug: "a" } } as any);
+        expect(stored.hits).toBe(1);
+      });
+
+      if (type === "postgres") {
+        it("returns every row a multi-row upsert wrote", async () => {
+          await bump("a", 1);
+
+          const rows = await em
+            .createInsertBuilder(CounterE)
+            .values([
+              { slug: "a", hits: 2 },
+              { slug: "b", hits: 3 },
+            ] as any)
+            .onConflict(["slug"] as any)
+            .doUpdate((t: any, ex: any) => ({ hits: t.hits.add(ex.hits) }))
+            .executeAndReturn();
+
+          expect(rows.map((r) => [r.slug, r.hits]).sort()).toEqual([
+            ["a", 3],
+            ["b", 3],
+          ]);
+        });
+      }
+
+      if (type === "mysql") {
+        it("refuses a multi-row upsert before sending anything", async () => {
+          await expect(
+            em
+              .createInsertBuilder(CounterE)
+              .values([
+                { slug: "a", hits: 1 },
+                { slug: "b", hits: 1 },
+              ] as any)
+              .onConflict(["slug"] as any)
+              .doUpdate(["hits"] as any)
+              .executeAndReturn(),
+          ).rejects.toThrow(/one row per call/);
+          expect(await em.find(CounterE)).toEqual([]);
+        });
+
+        it("returns a multi-row plain INSERT only where the server has INSERT ... RETURNING", async () => {
+          const insert = () =>
+            em
+              .createInsertBuilder(CounterE)
+              .values([
+                { slug: "a", hits: 1 },
+                { slug: "b", hits: 2 },
+              ] as any)
+              .executeAndReturn();
+
+          if (em.getDriver()!.supportsInsertReturning?.()) {
+            // MariaDB 10.5+
+            const rows = await insert();
+            expect(rows.map((r) => [r.slug, r.hits])).toEqual([
+              ["a", 1],
+              ["b", 2],
+            ]);
+          } else {
+            await expect(insert()).rejects.toThrow(/one row per call/);
+          }
+        });
+      }
+    });
   },
 );

@@ -57,6 +57,7 @@ import {
 import type {
   ConflictAction,
   InsertBuilderSpec,
+  InsertValues,
 } from "../InsertQueryBuilder";
 import {
   isDeadlockError,
@@ -194,6 +195,19 @@ export interface UpsertConflictGuard {
   predicate: Sql;
   /** Wrapped bare table name (never schema-qualified). */
   tableRef: string;
+}
+
+/**
+ * How a MySQL-family `executeAndReturn()` finds its row again — see
+ * `planBuilderReadBack()`.
+ */
+interface BuilderReadBack<T> {
+  /** The spec to execute: the caller's, plus the `LAST_INSERT_ID()` probe. */
+  spec: InsertBuilderSpec<T>;
+  /** The auto-increment key reported as the insert id, or null. */
+  autoPk: ColumnMetadata | null;
+  /** The properties the row is read back by, for diagnostics. */
+  keyProperties: string[];
 }
 
 /** The tenant part of an {@link UpsertConflictGuard}. */
@@ -2534,16 +2548,7 @@ export class WriteExecutor {
       throw new EntityMetadataNotFoundError(entity.name);
     }
     const { combined } = this.buildUpsertGuards(entity, metadata, false);
-    const prepared = this.prepareBuilderInsert(entity, metadata, spec, combined);
-    return this.dmlSqlBuilder.buildInsertOnConflictSql({
-      tableName: this.ctx.wrapTable(metadata.name),
-      columns: prepared.columns,
-      valueRows: prepared.valueRows,
-      conflictColumns: prepared.conflictColumns,
-      constraintName: spec.target?.constraintName,
-      indexPredicate: spec.target?.indexPredicate,
-      action: prepared.action,
-    });
+    return this.builderInsertStatement(entity, metadata, spec, combined);
   }
 
   /**
@@ -2562,47 +2567,297 @@ export class WriteExecutor {
       return { affected: 0 };
     }
 
+    const metadata = this.builderInsertMetadata(entity, spec);
+    const { combined } = this.buildUpsertGuards(entity, metadata);
+
+    return this.ctx.executeInTransaction(async (session) => {
+      const statement = this.builderInsertStatement(entity, metadata, spec, combined);
+      const queryResult = await this.runTracked(entity, session, statement);
+      return { affected: this.affectedCount(queryResult, spec.items.length) };
+    });
+  }
+
+  /**
+   * @internal Backs `InsertQueryBuilder.executeAndReturn()`: the rows the
+   * statement wrote — inserted, or updated by the conflict action — in the
+   * shape a read of `entity` gives them. Relations are not loaded.
+   *
+   * PostgreSQL and SQLite append `RETURNING *`, which reports exactly the
+   * rows written: a row skipped by `doNothing()`, `doUpdateWhere()` or the
+   * tenant / subtype guard is absent. MariaDB 10.5+ does the same for a
+   * plain INSERT. MySQL has no RETURNING, and what MariaDB's reports for an
+   * `ON DUPLICATE KEY UPDATE` or `INSERT IGNORE` row is not specified, so
+   * the MySQL family writes a single row and reads it back by key — see
+   * {@link planBuilderReadBack}.
+   */
+  async executeBuilderInsertAndReturn<T>(
+    entity: ClazzType<T>,
+    spec: InsertBuilderSpec<T>,
+  ): Promise<InstanceType<ClazzType<T>>[]> {
+    if (spec.items.length === 0) {
+      return [];
+    }
+    if (!this.driver) {
+      throw new OrmError(
+        OrmErrorCode.NOT_CONNECTED,
+        "Driver is not initialized. Call connect() first.",
+      );
+    }
+
+    const mysqlFamily = this.ctx.isMySqlFamily();
+    const useReturning =
+      this.supportsInsertReturning() &&
+      (!mysqlFamily || spec.action.kind === "none");
+    if (!useReturning && !mysqlFamily) {
+      const dialect = this.ctx.getDbType() ?? "this database";
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_DATABASE,
+        `executeAndReturn() requires INSERT ... RETURNING, unsupported by ${dialect}. ` +
+          `Use execute() and read the rows back.`,
+      );
+    }
+    if (!useReturning && spec.items.length > 1) {
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `executeAndReturn() on MySQL writes one row per call, and got ${spec.items.length}. ` +
+          `MySQL cannot return the rows of a multi-row INSERT or upsert, so each is read back by its key. ` +
+          `Call it once per row, or use execute() and read the rows back.`,
+      );
+    }
+
+    const metadata = this.builderInsertMetadata(entity, spec);
+    const readBack = useReturning
+      ? null
+      : this.planBuilderReadBack(entity, metadata, spec);
+    const { combined } = this.buildUpsertGuards(entity, metadata);
+
+    return this.ctx.executeInTransaction(async (session) => {
+      if (!readBack) {
+        const statement = this.builderInsertStatement(entity, metadata, spec, combined);
+        const queryResult = await this.runTracked(
+          entity,
+          session,
+          sql`${statement} RETURNING *`,
+        );
+        return this.hydrateWrittenRows(entity, resultRows(queryResult));
+      }
+
+      const statement = this.builderInsertStatement(
+        entity,
+        metadata,
+        readBack.spec,
+        combined,
+      );
+      // After the statement is built: the defaults it applies (generated
+      // UUID keys) are part of the key.
+      const key = this.builderReadBackKey(entity, metadata, readBack, spec.items[0]);
+      const queryResult = await this.runTracked(entity, session, statement);
+
+      if (spec.action.kind === "nothing" && this.affectedCount(queryResult) === 0) {
+        return [];
+      }
+      let keyWhere: Sql[];
+      if (readBack.autoPk) {
+        // 0 when the conflict action left the row alone because the tenant /
+        // subtype guard failed: LAST_INSERT_ID() was never evaluated.
+        const insertId = okPacket(queryResult)?.insertId;
+        if (insertId === undefined || insertId === null || String(insertId) === "0") {
+          return [];
+        }
+        keyWhere = [Conditions.equals(this.ctx.wrap(readBack.autoPk.name), insertId)];
+      } else {
+        keyWhere = key;
+      }
+
+      const where = [
+        ...keyWhere,
+        this.stiDiscriminatorClause(entity),
+        this.ctx.buildTenantWhereClause(entity),
+      ].filter((clause): clause is Sql => clause !== null);
+      const rows = resultRows(
+        await this.runTracked(
+          entity,
+          session,
+          sql`SELECT * FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(where, " AND ")}`,
+        ),
+      );
+      if (rows.length > 1) {
+        throw new OrmError(
+          OrmErrorCode.QUERY_ERROR,
+          `executeAndReturn() on ${entity.name} read back ${rows.length} rows by (${readBack.keyProperties.join(", ")}). ` +
+            `On MySQL the written row is read back by the onConflict() columns, so they must form a unique key.`,
+        );
+      }
+      return this.hydrateWrittenRows(entity, rows);
+    });
+  }
+
+  /**
+   * The metadata a builder INSERT writes against, with the tenant column
+   * stamped on its rows.
+   */
+  private builderInsertMetadata<T>(
+    entity: ClazzType<T>,
+    spec: InsertBuilderSpec<T>,
+  ): EntityScannerMetadata {
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
       throw new EntityMetadataNotFoundError(entity.name);
     }
-
     if (this.ctx.getTenantColumnConfig()) {
       for (const item of spec.items as Partial<T>[]) {
         this.ctx.applyTenantColumnOnInsert(entity, item);
       }
     }
+    return metadata;
+  }
 
-    const { combined } = this.buildUpsertGuards(entity, metadata);
-
-    return this.ctx.executeInTransaction(async (session) => {
-      const prepared = this.prepareBuilderInsert(
-        entity,
-        metadata,
-        spec,
-        combined,
-      );
-      const insertSql = this.dmlSqlBuilder.buildInsertOnConflictSql({
-        tableName: this.ctx.wrapTable(metadata.name),
-        columns: prepared.columns,
-        valueRows: prepared.valueRows,
-        conflictColumns: prepared.conflictColumns,
-        constraintName: spec.target?.constraintName,
-        indexPredicate: spec.target?.indexPredicate,
-        action: prepared.action,
-      });
-
-      const queryStart = Date.now();
-      this.ctx.beginTrackQuery();
-      const queryResult = (await session.query(insertSql)) as DriverExecResult;
-      this.ctx.trackQuery(
-        entity.name,
-        insertSql.text ?? String(insertSql),
-        Date.now() - queryStart,
-      );
-
-      return { affected: this.affectedCount(queryResult, spec.items.length) };
+  /** The builder's INSERT, with the tenant / subtype guard folded in. */
+  private builderInsertStatement<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    spec: InsertBuilderSpec<T>,
+    guard: UpsertConflictGuard | null,
+  ): Sql {
+    const prepared = this.prepareBuilderInsert(entity, metadata, spec, guard);
+    return this.dmlSqlBuilder.buildInsertOnConflictSql({
+      tableName: this.ctx.wrapTable(metadata.name),
+      columns: prepared.columns,
+      valueRows: prepared.valueRows,
+      conflictColumns: prepared.conflictColumns,
+      constraintName: spec.target?.constraintName,
+      indexPredicate: spec.target?.indexPredicate,
+      action: prepared.action,
     });
+  }
+
+  /**
+   * How a MySQL-family `executeAndReturn()` finds the one row it wrote.
+   *
+   * - An auto-increment key comes back as the insert id. The update path
+   *   reports none, so the conflict action also assigns
+   *   `pk = LAST_INSERT_ID(pk)`, which leaves the key as it is and reports
+   *   it as the insert id.
+   * - Any other key is taken from the row itself: the `onConflict()` columns
+   *   when an update arbitrates on them, else the primary key. MySQL checks
+   *   every unique key, so a conflict on a key the caller did not name is
+   *   read back by the named one.
+   */
+  private planBuilderReadBack<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    spec: InsertBuilderSpec<T>,
+  ): BuilderReadBack<T> {
+    const pkColumns = metadata.columns.filter(
+      (col: ColumnMetadata) => col.options?.primary,
+    );
+    if (pkColumns.length === 0) {
+      throw new PrimaryKeyNotFoundError(entity.name);
+    }
+
+    const autoPk =
+      pkColumns.length === 1 && pkColumns[0].options?.autoIncrement
+        ? pkColumns[0]
+        : null;
+    if (autoPk) {
+      if (spec.action.kind !== "update") {
+        return { spec, autoPk, keyProperties: [this.ctx.propKey(autoPk)] };
+      }
+      const pkProperty = this.ctx.propKey(autoPk);
+      if (spec.action.set.some((entry) => entry.property === pkProperty)) {
+        throw new OrmError(
+          OrmErrorCode.UNSUPPORTED_OPERATION,
+          `executeAndReturn() on MySQL cannot read back a row whose doUpdate() assigns the auto-increment key '${pkProperty}'. ` +
+            `Leave the key out of doUpdate(), or use execute().`,
+        );
+      }
+      const storedKey = raw(
+        `${this.ctx.wrap(metadata.name)}.${this.ctx.wrap(autoPk.name)}`,
+      );
+      return {
+        spec: {
+          ...spec,
+          action: {
+            ...spec.action,
+            set: [
+              ...spec.action.set,
+              {
+                kind: "expression",
+                property: pkProperty,
+                value: sql`LAST_INSERT_ID(${storedKey})`,
+              },
+            ],
+          },
+        },
+        autoPk,
+        keyProperties: [pkProperty],
+      };
+    }
+
+    const conflictProperties = spec.target?.properties ?? [];
+    const keyProperties =
+      spec.action.kind === "update" && conflictProperties.length > 0
+        ? conflictProperties
+        : pkColumns.map((col: ColumnMetadata) => this.ctx.propKey(col));
+    return { spec, autoPk: null, keyProperties };
+  }
+
+  /**
+   * The `col = value` conditions that find a MySQL-family builder row again
+   * by a key it states. Empty for an auto-increment key, which comes back
+   * as the insert id instead.
+   */
+  private builderReadBackKey<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    readBack: BuilderReadBack<T>,
+    row: InsertValues<T>,
+  ): Sql[] {
+    if (readBack.autoPk) return [];
+    const values = fieldsOf(row);
+    return readBack.keyProperties.map((property) => {
+      const columnName = this.columnNameForProperty(metadata, property);
+      const value = values[property];
+      if (value === undefined || value === null || isSqlFragment(value)) {
+        throw new OrmError(
+          OrmErrorCode.UNSUPPORTED_OPERATION,
+          `executeAndReturn() on MySQL reads the written ${entity.name} row back by (${readBack.keyProperties.join(", ")}), ` +
+            `so the row must state '${property}' as a value.`,
+        );
+      }
+      return Conditions.equals(
+        this.ctx.wrap(columnName),
+        this.transformedValue(metadata, columnName, value),
+      );
+    });
+  }
+
+  /** Raw rows of `entity`'s table, hydrated the way a read hydrates them. */
+  private hydrateWrittenRows<T>(
+    entity: ClazzType<T>,
+    rows: DriverRow[],
+  ): InstanceType<ClazzType<T>>[] {
+    return ResultTransformerFactory.create().toEntities(entity, {
+      results: this.returnedRows(entity, rows),
+      fields: [],
+    }) as InstanceType<ClazzType<T>>[];
+  }
+
+  /** Runs one statement on the session, tracked like every other write. */
+  private async runTracked<T>(
+    entity: ClazzType<T>,
+    session: TransactionSessionManager,
+    statement: Sql,
+  ): Promise<DriverExecResult> {
+    const start = Date.now();
+    this.ctx.beginTrackQuery();
+    const queryResult = (await session.query(statement)) as DriverExecResult;
+    this.ctx.trackQuery(
+      entity.name,
+      statement.text ?? String(statement),
+      Date.now() - start,
+    );
+    return queryResult;
   }
 
   async insertMany<T>(
