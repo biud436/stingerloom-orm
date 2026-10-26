@@ -910,6 +910,34 @@ Every column falls back to its stored value when the guard fails, which is the s
 
 `{ where }` narrows which **index** arbitrates the conflict (needed when the unique index itself is partial). `doUpdateWhere()` narrows which conflicting **rows** get updated. They are different clauses and can be used together.
 
+### Getting the written rows back -- executeAndReturn()
+
+`execute()` reports a count. `executeAndReturn()` runs the same statement and returns the rows it wrote as entity instances -- with generated keys, database defaults and whatever the conflict action computed:
+
+```typescript
+const [marker] = await em.createInsertBuilder(SyncMarker)
+  .values({ mac, bucketStart, records: 3, lastTime })
+  .onConflict(["mac", "bucketStart"])
+  .doUpdate((t, ex) => ({ records: t.records.add(ex.records) }))
+  .executeAndReturn();
+
+marker.records; // the stored total after this write
+```
+
+Reading the total back with a separate `find()` could pick up the next writer's update as well; the returned row is the one this statement wrote.
+
+What comes back:
+
+- Every inserted row and every row the conflict action updated. A row the statement skipped -- `doNothing()`, a failed `doUpdateWhere()`, another tenant's row under `tenant_column` -- is not in the list.
+- Rows are hydrated like a read of the entity: column names map back to properties and read transformers apply. Relations are not loaded.
+
+On PostgreSQL and SQLite this is `RETURNING *`, and a multi-row statement returns all of its rows. MySQL has no `RETURNING`, so there `executeAndReturn()` writes **one row per call** and reads it back in the same transaction:
+
+- An auto-increment primary key comes back through `LAST_INSERT_ID()`. On the update path the conflict action also assigns `id = LAST_INSERT_ID(id)`, which leaves the key unchanged.
+- Any other row is read back by the `onConflict()` columns (for an update) or by the primary key, so the row must state those values and the columns must form a unique key.
+
+More than one row throws `UNSUPPORTED_OPERATION` before anything is sent. MariaDB 10.5+ returns the rows of a plain INSERT through `RETURNING`; with a conflict action it takes the MySQL path, because what MariaDB's `RETURNING` reports for an `ON DUPLICATE KEY UPDATE` or `INSERT IGNORE` row is not specified.
+
 ### Inspecting the SQL
 
 `build()` returns the `Sql` fragment and `toSql()` its text plus bound values, without executing:
@@ -942,6 +970,7 @@ Tenant scoping is applied at execute time, so it does not appear in `build()` ou
 | `onConflictConstraint()` | yes | throws | throws |
 | `doNothing()` | `DO NOTHING` | `INSERT IGNORE` | `DO NOTHING` |
 | `doUpdateWhere()` | yes | throws | yes |
+| `executeAndReturn()` | `RETURNING *` | one row per call, read back by key (MariaDB 10.5+ plain INSERT: `RETURNING *`) | `RETURNING *` |
 
 MySQL arbitrates on every unique key at once, so it has no conflict target to name. Passing `.onConflict([...])` there is still worth doing -- it keeps the same call portable to PostgreSQL.
 

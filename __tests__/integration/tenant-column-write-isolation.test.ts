@@ -265,6 +265,22 @@ describe.each(drivers)(
       expect(rows[0]).toMatchObject({ amount: 100, tenant_id: "globex" });
     });
 
+    it("createInsertBuilder().executeAndReturn() does not return another tenant's row", async () => {
+      const returned = await MetadataContext.run("acme", () =>
+        em
+          .createInsertBuilder(OrderE)
+          .values({ slug: "g1", amount: 1234 } as any)
+          .onConflict(["slug"] as any)
+          .doUpdate(["amount"] as any)
+          .executeAndReturn(),
+      );
+
+      expect(returned).toEqual([]);
+      const rows = await allRows(TABLES.order);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ amount: 100, tenant_id: "globex" });
+    });
+
     it("insertIgnore() still skips a conflicting foreign row", async () => {
       const result = await MetadataContext.run("acme", () =>
         em.insertIgnore(OrderE, { slug: "g1", amount: 780 }, ["slug"]),

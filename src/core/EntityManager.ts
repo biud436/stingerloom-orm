@@ -1645,6 +1645,20 @@ export class EntityManager implements BaseEntityManager {
     return this.finishWrite(entity, this.writeExecutor.executeBuilderInsert(entity, spec));
   }
 
+  /**
+   * @internal Used by `InsertQueryBuilder.executeAndReturn()` — runs the
+   * INSERT like {@link executeBuilderInsert} and returns the rows it wrote.
+   */
+  async executeBuilderInsertAndReturn<T>(
+    entity: ClazzType<T>,
+    spec: InsertBuilderSpec<T>,
+  ): Promise<InstanceType<ClazzType<T>>[]> {
+    return this.finishWrite(
+      entity,
+      this.writeExecutor.executeBuilderInsertAndReturn(entity, spec),
+    );
+  }
+
   async softDelete<T>(
     entity: ClazzType<T>,
     criteria: WhereClause<T>,

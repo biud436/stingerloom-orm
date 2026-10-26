@@ -351,7 +351,7 @@ await em.createInsertBuilder(SyncMarker)
 
 `t`는 저장된 행을, `ex`는 이 INSERT가 제안한 행을 가리킵니다. 둘 다 평범한 `qAlias` 프록시라 [QueryDSL 표현식](./query-builder-querydsl.md) 장의 모든 것이 그대로 조합돼요.
 
-`doNothing()`, `doUpdateWhere()`(PostgreSQL / SQLite), `onConflict(cols, { where })`로 지정하는 부분 유니크 인덱스, PostgreSQL의 `onConflictConstraint()`도 함께 지원합니다. 전체 레퍼런스와 드라이버 지원표는 [EntityManager — 쓰기](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder)에 있습니다.
+`doNothing()`, `doUpdateWhere()`(PostgreSQL / SQLite), `onConflict(cols, { where })`로 지정하는 부분 유니크 인덱스, PostgreSQL의 `onConflictConstraint()`, 쓴 행을 돌려받는 `executeAndReturn()`도 함께 지원합니다. 전체 레퍼런스와 드라이버 지원표는 [EntityManager — 쓰기](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder)에 있습니다.
 
 ---
 
