@@ -156,12 +156,22 @@ export class Counter {
 export function createInsertBuilderFor<T>(
   entity: new () => T,
   dialect: DialectName,
+  {
+    rowAlias = false,
+  }: {
+    /**
+     * Stand in for a MySQL 8.0.19+ server, which reads the proposed row
+     * through `INSERT … AS new` instead of `VALUES()`.
+     */
+    rowAlias?: boolean;
+  } = {},
 ): InsertQueryBuilder<T> {
   const em = new EntityManager();
   const quote = dialect === "mysql" ? "`" : '"';
   (em as unknown as { driver: unknown }).driver = {
     wrap: (identifier: string) =>
       `${quote}${identifier.split(quote).join(quote + quote)}${quote}`,
+    ...(rowAlias ? { supportsInsertRowAlias: () => true } : {}),
   };
   // Note this is the golden `DialectName` verbatim, not `ctxDialect()`:
   // `EntityManager._ctx.getDialect()` returns a `SchemaDialect`

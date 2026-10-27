@@ -85,7 +85,17 @@ export interface ConflictTarget {
 export type ConflictAction =
   | { kind: "none" }
   | { kind: "nothing" }
-  | { kind: "update"; set: ResolvedSetEntry[]; where?: Sql };
+  | {
+      kind: "update";
+      set: ResolvedSetEntry[];
+      where?: Sql;
+      /**
+       * The DB columns `set` reads from the proposed row. MySQL 8.0.19+
+       * reads them through a row alias, which holds only the columns the
+       * INSERT lists, so the write path lists any missing one with DEFAULT.
+       */
+      proposedColumns?: string[];
+    };
 
 /** @internal Everything {@link InsertQueryBuilder} hands to the write path. */
 export interface InsertBuilderSpec<T> {
@@ -156,6 +166,11 @@ export class InsertQueryBuilder<T> {
   private rows: InsertValues<T>[] = [];
   private conflictTarget: ConflictTarget | undefined;
   private action: ConflictAction = { kind: "none" };
+  /**
+   * The DB columns the `doUpdate()` being rendered reads from the proposed
+   * row, collected by the column resolver; undefined outside that call.
+   */
+  private proposedReads: Set<string> | undefined;
 
   constructor(
     private readonly em: EntityManager,
@@ -269,16 +284,23 @@ export class InsertQueryBuilder<T> {
   doUpdate(
     spec: Array<keyof T & string> | ConflictSet<T> | ConflictSetFactory<T>,
   ): this {
-    const set = Array.isArray(spec)
-      ? this.setFromColumnList(spec)
-      : typeof spec === "function"
-        ? this.resolveSet(
-            spec(
-              qAlias(this.entity, this.aliasName),
-              qExcluded(this.entity),
-            ),
-          )
-        : this.resolveSet(spec);
+    const proposedReads = new Set<string>();
+    this.proposedReads = proposedReads;
+    let set: ResolvedSetEntry[];
+    try {
+      set = Array.isArray(spec)
+        ? this.setFromColumnList(spec)
+        : typeof spec === "function"
+          ? this.resolveSet(
+              spec(
+                qAlias(this.entity, this.aliasName),
+                qExcluded(this.entity),
+              ),
+            )
+          : this.resolveSet(spec);
+    } finally {
+      this.proposedReads = undefined;
+    }
 
     if (set.length === 0) {
       throw new OrmError(
@@ -288,7 +310,12 @@ export class InsertQueryBuilder<T> {
     }
     const existingWhere =
       this.action.kind === "update" ? this.action.where : undefined;
-    this.action = { kind: "update", set, where: existingWhere };
+    this.action = {
+      kind: "update",
+      set,
+      where: existingWhere,
+      proposedColumns: [...proposedReads],
+    };
     return this;
   }
 
@@ -488,7 +515,11 @@ export class InsertQueryBuilder<T> {
     const dbCol = this.propertyToColumnMap.get(property) ?? property;
     const wrapped = this.em.wrap(dbCol);
     if (isExcluded) {
-      return (this.em as any).renderExcludedColumn(wrapped);
+      this.proposedReads?.add(dbCol);
+      return (this.em as any).renderExcludedColumn(
+        wrapped,
+        this.storedRowRef ?? "",
+      );
     }
     return this.storedRowRef ? `${this.storedRowRef}.${wrapped}` : wrapped;
   };

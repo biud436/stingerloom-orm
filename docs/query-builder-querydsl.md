@@ -420,7 +420,9 @@ outside the callback:
 ```
 
 The reference renders as `EXCLUDED."col"` on PostgreSQL,
-`excluded."col"` on SQLite and `` VALUES(`col`) `` on MySQL/MariaDB. It
+`excluded."col"` on SQLite, `` `new`.`__col` `` on MySQL 8.0.19+ (through
+a [row alias](./entity-manager-writes.md#mysql-8-0-19-the-proposed-row-through-a-row-alias))
+and `` VALUES(`col`) `` on MariaDB and older MySQL. It
 is only meaningful inside `createInsertBuilder()` — see
 [EntityManager — Writes](./entity-manager-writes.md#expression-based-upsert-createinsertbuilder)
 for the full builder.
@@ -1090,7 +1092,7 @@ to the JSON-path expression instead.
 | SELECT alias          | `.as("name")` on columns, JSON path extracts, and aggregates — produces `AliasedExpression` |
 | Null handling         | `coalesce(…)`, `nullif(a, b)`, `col.coalesce(…)`, `Expressions.coalesce`, `Expressions.nullif` |
 | Row-wise min / max    | `greatest(a, b, …)`, `least(a, b, …)`, `col.greatest(…)`, `col.least(…)`, `Expressions.greatest`, `Expressions.least` — `GREATEST`/`LEAST` (PG, MySQL), `MAX`/`MIN` (SQLite) |
-| Upsert proposed row   | `qExcluded(Entity)` — `EXCLUDED.col` (PG), `excluded.col` (SQLite), `VALUES(col)` (MySQL) |
+| Upsert proposed row   | `qExcluded(Entity)` — `EXCLUDED.col` (PG), `excluded.col` (SQLite), `new.__col` (MySQL 8.0.19+), `VALUES(col)` (MariaDB, older MySQL) |
 | Current date / time   | `currentDate()`, `currentTime()`, `currentTimestamp()` — also on `Expressions`                 |
 | Type casts            | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` — dialect-specific type names |
 | Date components       | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfMonth()`, `.dayOfYear()`, `.week()` |
@@ -1122,7 +1124,7 @@ When an expression has no equivalent on the active dialect, the renderer throws 
 | Array operators (`.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`) | Native `@>` / `&&` / `<@` | **Unsupported** — throws `UNSUPPORTED_DATABASE` | **Unsupported** — throws `UNSUPPORTED_DATABASE` | No native array column type on MySQL/SQLite — model as a JSON array (JSON-path DSL) or junction table. Value array bound as one parameter. |
 | `coalesce` / `nullif` | Native | Native | Native | — |
 | `greatest` / `least` | Native `GREATEST` / `LEAST` — NULL arguments skipped | Native `GREATEST` / `LEAST` — any NULL argument yields NULL | `MAX(a, b)` / `MIN(a, b)` scalar form — any NULL argument yields NULL | NULL handling is **not** normalized. Wrap nullable arguments in `coalesce()` for portable behavior. |
-| Upsert `excluded` reference (`qExcluded`) | `EXCLUDED."col"` | `` VALUES(`col`) `` — deprecated in MySQL 8.0.20 but the only MariaDB form | `excluded."col"` | Only meaningful inside `createInsertBuilder()`. |
+| Upsert `excluded` reference (`qExcluded`) | `EXCLUDED."col"` | `` `new`.`__col` `` through a row alias on MySQL 8.0.19+; `` VALUES(`col`) `` on MariaDB and older MySQL | `excluded."col"` | Only meaningful inside `createInsertBuilder()`. |
 | Window functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | Native | Native (8.0+) | Native (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregates | Native (`WITHIN GROUP`) | **Unsupported** — throws `UNSUPPORTED_OPERATION` | **Unsupported** — throws `UNSUPPORTED_OPERATION` | MySQL: emulate with CTE + `ROW_NUMBER() OVER (ORDER BY x)` and pick `rn = CEIL(N * p)`. See [the cookbook recipe](./cookbook.md#cycle-time-percentile-report). |
 | `dateTrunc` (year/quarter/month/week/day/hour/minute/second) | Native `DATE_TRUNC` | Per-unit equivalents (`DATE`, `DATE_FORMAT`, ISO-Monday `WEEKDAY` math) | `date(..., 'start of …')` / `strftime` | All three dialects produce ISO-Monday weeks. |

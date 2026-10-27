@@ -4,6 +4,11 @@ import { EntityManagerInternals } from "../EntityManagerInternals";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import type { UpsertConflictGuard } from "./WriteExecutor";
+import {
+  mySqlProposedColumn,
+  mySqlRowAlias,
+  mySqlRowAliasClause,
+} from "../../dialects/mysql/mySqlRowAlias";
 
 /**
  * The ORM-managed assignments an upsert's conflict branch adds after the
@@ -49,6 +54,23 @@ export type InsertConflictAction =
   | { kind: "none" }
   | { kind: "nothing" }
   | { kind: "update"; set: Sql[]; where?: Sql };
+
+/** A MySQL/MariaDB proposed-row column: `new.__col` under a row alias, else `VALUES(col)`. */
+function proposedColumn(wrappedColumn: string, alias: string | null): string {
+  return alias
+    ? mySqlProposedColumn(alias, wrappedColumn)
+    : `VALUES(${wrappedColumn})`;
+}
+
+/**
+ * ` AS new (__a, __b)` after the VALUES list, or nothing when the row has
+ * no alias.
+ *
+ * @param wrappedColumns - The INSERT's column list, already wrapped.
+ */
+function rowAliasClause(alias: string | null, wrappedColumns: string[]): Sql {
+  return alias ? raw(mySqlRowAliasClause(alias, wrappedColumns)) : sql``;
+}
 
 /**
  * Builds dialect-specific DML SQL fragments (UPDATE / UPSERT / INSERT IGNORE)
@@ -188,7 +210,7 @@ export class DmlSqlBuilder {
    * for a SINGLE_TABLE child, holding another subtype.
    * PostgreSQL and SQLite take one `DO UPDATE … WHERE`; MySQL's
    * `ON DUPLICATE KEY UPDATE` has no WHERE, so **every** assignment is wrapped
-   * in `IF(<guard>, VALUES(col), table.col)` — assignments there take effect
+   * in `IF(<guard>, <proposed col>, table.col)` — assignments there take effect
    * immediately and are visible to the ones after them, so a single unguarded
    * assignment would defeat the guard for the rest of the list.
    *
@@ -281,16 +303,17 @@ export class DmlSqlBuilder {
       : this.upsertAssignments(updateColumns, managed);
 
     if (this.ctx.isMySqlFamily()) {
+      const alias = this.proposedRowAlias(tableName);
       // Resetting an already-NULL column changes nothing, so the revive form
       // needs no condition beyond the guard.
       const updateSet =
         assignments.length === 0
           ? this.mySqlNoOpUpdate(conflictColumns, columns)
           : join(
-              assignments.map((a) => this.mySqlAssignment(a, guard)),
+              assignments.map((a) => this.mySqlAssignment(a, guard, alias)),
               ", ",
             );
-      return sql`${head} ON DUPLICATE KEY UPDATE ${updateSet}`;
+      return sql`${head}${rowAliasClause(alias, columns)} ON DUPLICATE KEY UPDATE ${updateSet}`;
     }
 
     if (!this.ctx.isPostgres() && !this.ctx.isSqlite()) {
@@ -371,15 +394,18 @@ export class DmlSqlBuilder {
    * never a column assigned earlier in the list — `ON DUPLICATE KEY UPDATE`
    * assignments take effect immediately, so reading another assigned column
    * would see its new value.
+   *
+   * @param alias - The proposed row's alias, or null to read it through `VALUES()`.
    */
   private mySqlAssignment(
     assignment: UpsertAssignment,
-    guard?: UpsertConflictGuard | null,
+    guard: UpsertConflictGuard | null | undefined,
+    alias: string | null,
   ): Sql {
     const col = assignment.column;
     const value =
       assignment.kind === "proposed"
-        ? `VALUES(${col})`
+        ? proposedColumn(col, alias)
         : assignment.kind === "increment"
           ? `COALESCE(${assignment.stored}.${col}, 0) + 1`
           : "NULL";
@@ -393,17 +419,18 @@ export class DmlSqlBuilder {
    * The dialect's spelling of a column on the row an INSERT proposed —
    * what `qExcluded()` references resolve to.
    *
-   * PostgreSQL and SQLite expose a pseudo-table; MySQL/MariaDB exposes the
-   * `VALUES()` function instead. `VALUES()` is deprecated as of MySQL 8.0.20
-   * in favour of a row alias (`INSERT … AS new`), but it is the only form
-   * MariaDB accepts and the one every other upsert path here already emits,
-   * so it stays until version detection can pick between them.
+   * PostgreSQL and SQLite expose a pseudo-table. MySQL 8.0.19+ names the
+   * row with an alias (`INSERT … AS new (…)`, `new.__col`); MariaDB and older
+   * MySQL read it through the `VALUES()` function, which MySQL 8.0.20
+   * deprecated.
    *
    * @param wrappedColumn - The column identifier, already escaped.
+   * @param targetTable - The INSERT's target, already wrapped — the row
+   *   alias must not collide with it.
    */
-  renderExcludedColumn(wrappedColumn: string): string {
+  renderExcludedColumn(wrappedColumn: string, targetTable: string): string {
     if (this.ctx.isMySqlFamily()) {
-      return `VALUES(${wrappedColumn})`;
+      return proposedColumn(wrappedColumn, this.proposedRowAlias(targetTable));
     }
     if (this.ctx.isPostgres()) {
       return `EXCLUDED.${wrappedColumn}`;
@@ -543,7 +570,39 @@ export class DmlSqlBuilder {
       );
     }
 
-    return sql`${head} ON DUPLICATE KEY UPDATE ${join(action.set, ", ")}`;
+    const alias = this.proposedRowAlias(opts.tableName);
+    const aliasClause = rowAliasClause(
+      alias,
+      // Each column arrives as a bare raw identifier, so its text is the
+      // wrapped name.
+      opts.columns.map((column) => column.sql),
+    );
+    return sql`${head}${aliasClause} ON DUPLICATE KEY UPDATE ${join(action.set, ", ")}`;
+  }
+
+  /**
+   * Whether this connection's upserts read the proposed row through a row
+   * alias (MySQL 8.0.19+). The alias exposes only the columns the INSERT
+   * lists, so a builder statement that reads another one must list it —
+   * see {@link mySqlRowAlias}'s module notes.
+   */
+  readsProposedRowByAlias(): boolean {
+    return (
+      this.ctx.isMySqlFamily() &&
+      !!this.ctx.getDriver()?.supportsInsertRowAlias?.()
+    );
+  }
+
+  /**
+   * The alias a MySQL/MariaDB `ON DUPLICATE KEY UPDATE` reads the proposed
+   * row through, or null where the server needs `VALUES(col)` — MariaDB,
+   * MySQL before 8.0.19, or a server whose version was never read.
+   *
+   * @param targetTable - The INSERT's target, already wrapped.
+   */
+  private proposedRowAlias(targetTable: string): string | null {
+    if (!this.readsProposedRowByAlias()) return null;
+    return mySqlRowAlias(targetTable, (name) => this.ctx.wrap(name));
   }
 
   /** INSERT IGNORE / ON CONFLICT DO NOTHING for an M2M join-table row. */

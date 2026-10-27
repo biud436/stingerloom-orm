@@ -16,6 +16,11 @@ import { buildCreateTableDefinitions } from "../createTableDefinitions";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { MySqlConnector } from "./MySqlConnector";
 import { mysqlQueryWithOptions } from "./mysqlQueryWithOptions";
+import {
+  mySqlProposedColumn,
+  mySqlRowAlias,
+  mySqlRowAliasClause,
+} from "./mySqlRowAlias";
 import { DbVersion } from "../DbVersion";
 import { MySqlCapabilities, ALL_MYSQL } from "../DialectCapabilities";
 import { resolveMySqlCapabilities } from "../resolveCapabilities";
@@ -446,11 +451,24 @@ export class MySqlDriver implements ISqlDriver {
   ): string {
     const columnList = columns.map((c) => this.wrap(c)).join(", ");
     const valuePlaceholders = columns.map(() => "?").join(", ");
+    const alias = this.supportsInsertRowAlias()
+      ? mySqlRowAlias(this.wrap(tableName), (name) => this.wrap(name))
+      : null;
+    const proposed = (col: string) =>
+      alias
+        ? mySqlProposedColumn(alias, this.wrap(col))
+        : `VALUES(${this.wrap(col)})`;
     const updateSet = updateColumns
-      .map((col) => `${this.wrap(col)} = VALUES(${this.wrap(col)})`)
+      .map((col) => `${this.wrap(col)} = ${proposed(col)}`)
       .join(", ");
+    const rowAlias = alias
+      ? mySqlRowAliasClause(
+          alias,
+          columns.map((c) => this.wrap(c)),
+        )
+      : "";
 
-    return `INSERT INTO ${this.wrap(tableName)} (${columnList}) VALUES (${valuePlaceholders}) ON DUPLICATE KEY UPDATE ${updateSet}`;
+    return `INSERT INTO ${this.wrap(tableName)} (${columnList}) VALUES (${valuePlaceholders})${rowAlias} ON DUPLICATE KEY UPDATE ${updateSet}`;
   }
 
   async hasColumn(tableName: string, columnName: string): Promise<boolean> {
@@ -686,5 +704,22 @@ export class MySqlDriver implements ISqlDriver {
    */
   supportsInsertReturning(): boolean {
     return this.capabilities.supportsInsertReturning;
+  }
+
+  /**
+   * True on MySQL 8.0.19+, where `INSERT … AS new` replaces the `VALUES()`
+   * function that 8.0.20 deprecated.
+   *
+   * Unlike the capability table, an unread version does not count as
+   * "every feature available" here: the server could just as well be
+   * MariaDB or an older MySQL, where the alias is a syntax error, while
+   * `VALUES()` runs on all of them.
+   */
+  supportsInsertRowAlias(): boolean {
+    return (
+      !this.mariaDb &&
+      this.version !== DbVersion.UNKNOWN &&
+      this.version.gte(8, 0, 19)
+    );
   }
 }

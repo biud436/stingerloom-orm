@@ -11,9 +11,10 @@ import { qAlias, type QEntity } from "./qAlias";
  * strings that a {@link ColumnResolver} turns into SQL at build time. The
  * proposed row cannot be modelled as an ordinary alias because the three
  * dialects do not agree on a syntax for it — PostgreSQL and SQLite expose a
- * pseudo-table (`EXCLUDED.col` / `excluded.col`) while MySQL exposes a
- * function (`VALUES(col)`). So the alias is a sentinel: `InsertQueryBuilder`
- * recognizes it and asks the dialect how to spell the reference.
+ * pseudo-table (`EXCLUDED.col` / `excluded.col`), MySQL 8.0.19+ a row alias
+ * the statement declares (`AS new`), and MariaDB a function (`VALUES(col)`).
+ * So the alias is a sentinel: `InsertQueryBuilder` recognizes it and asks
+ * the dialect how to spell the reference.
  *
  * The double-underscore name is deliberately unusable as a real alias, so a
  * user alias can never collide with it.
@@ -34,7 +35,8 @@ export const EXCLUDED_ALIAS = "__stingerloom_excluded__";
  * |---------|-----------|
  * | PostgreSQL | `EXCLUDED."col"` |
  * | SQLite | `excluded."col"` |
- * | MySQL / MariaDB | `` VALUES(`col`) `` |
+ * | MySQL 8.0.19+ | `` `new`.`__col` `` (the statement adds `` AS `new` (`__col`, …) ``) |
+ * | MariaDB, older MySQL | `` VALUES(`col`) `` |
  *
  * `.doUpdate()` hands this reference to its callback form, so calling
  * `qExcluded()` directly is only needed when the SET expression is built

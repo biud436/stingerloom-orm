@@ -636,6 +636,21 @@ ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `lastLoginAt` = VALUES(`lastLog
 충돌 컬럼(세 번째 인자)에는 유니크 제약 조건이 있거나 PK여야 해요. 그렇지 않으면 데이터베이스가 쿼리를 거부해요. PostgreSQL에서는 `there is no unique or exclusion constraint matching the ON CONFLICT specification` 에러가 발생해요.
 :::
 
+### MySQL 8.0.19+: 행 별칭으로 읽는 제안 행
+
+이 페이지의 MySQL SQL은 MariaDB와 8.0.19 이전 MySQL이 받는 형태입니다. 충돌 분기는 제안된 값을 `VALUES(col)`로 읽습니다. MySQL 8.0.20이 이 함수를 deprecated로 돌리고 행 별칭을 대신 권하기 때문에, MySQL 8.0.19 이상에서는 같은 upsert가 별칭을 선언하고 그 별칭으로 읽습니다.
+
+```sql
+-- MySQL 8.0.19+
+INSERT INTO `user` (`id`, `name`, `email`)
+VALUES (?, ?, ?) AS `new` (`__id`, `__name`, `__email`)
+ON DUPLICATE KEY UPDATE `name` = `new`.`__name`, `email` = `new`.`__email`
+```
+
+어느 형태를 쓸지는 연결할 때 읽은 서버 버전으로 정해지고, `upsert()`·`batchUpsert()`·`createInsertBuilder()`가 함께 바뀝니다. MariaDB는 행 별칭을 받아들이지 않아서 `VALUES()`를 그대로 씁니다. 버전 숫자만으로는 두 서버를 구분할 수 없으니, `versionOverride`를 함께 쓴다면 `type: "mariadb"`로 선언하세요. 버전을 읽지 못한 서버도 `VALUES()`를 씁니다. 이 형태는 모든 MySQL·MariaDB 서버에서 돌지만 별칭은 그렇지 않기 때문입니다.
+
+별칭이 컬럼 이름을 바꾸는 것(`__name`)은 의도된 동작입니다. 테이블과 같은 이름을 쓰면 UPDATE 절의 한정자 없는 컬럼명이 모두 모호해지고(MySQL 오류 1052), 그 자리의 한정자 없는 이름은 원래부터 저장된 행을 뜻했습니다. 그래서 `` sql`hits + 1` `` 같은 raw 조각도 전과 똑같이 저장된 `hits`를 읽어요. 또 별칭에는 INSERT가 나열한 컬럼만 들어 있습니다. 그래서 `createInsertBuilder()` 문장이 나열되지 않은 컬럼을 제안 행에서 읽으면 그 컬럼을 `DEFAULT`로 목록에 넣고, `VALUES(col)`처럼 컬럼 기본값을 읽게 합니다.
+
 ### 배치 Upsert -- batchUpsert()
 
 수백 또는 수천 행을 한 번에 upsert해야 할 때 `batchUpsert()`가 `upsert()`를 루프로 호출하는 것보다 훨씬 빨라요. 모든 행을 하나의 다중 행 `INSERT ... ON CONFLICT` 문으로 묶어서 보내요.
@@ -798,7 +813,7 @@ await em.createInsertBuilder(SyncMarker)
 `doUpdate()`의 콜백은 참조 두 개를 받습니다.
 
 - `t` — **이미 저장되어 있는** 행. 테이블명으로 한정해 렌더링됩니다(`"sync_markers"."records"`). PostgreSQL에서는 이게 필수입니다. `DO UPDATE SET`과 그 `WHERE` 안에서는 대상 테이블과 `EXCLUDED`가 모두 스코프에 있어서, 한정하지 않은 컬럼명은 모호하다고 거부되거든요. MySQL과 SQLite도 같은 표기를 받아들입니다.
-- `ex` — 이 INSERT가 **제안한** 행. `EXCLUDED."col"`(PostgreSQL) · `excluded."col"`(SQLite) · `` VALUES(`col`) ``(MySQL)로 렌더링됩니다.
+- `ex` — 이 INSERT가 **제안한** 행. `EXCLUDED."col"`(PostgreSQL) · `excluded."col"`(SQLite) · `` `new`.`__col` ``(MySQL 8.0.19+, [행 별칭](#mysql-8-0-19-행-별칭으로-읽는-제안-행) 참고) · `` VALUES(`col`) ``(MariaDB, 이전 MySQL)로 렌더링됩니다.
 
 둘 다 평범한 `qAlias` 참조라서 표현식 전체가 그대로 조합됩니다. `.add()`, `.mul()`, `coalesce()`, `greatest()`, `CASE`, JSON 경로까지요.
 
@@ -964,7 +979,7 @@ const { text, values } = em.createInsertBuilder(SyncMarker)
 | 기능 | PostgreSQL | MySQL / MariaDB | SQLite |
 |------|-----------|-----------------|--------|
 | `doUpdate()` 표현식 | 지원 | 지원 | 지원 |
-| `excluded` 참조 | `EXCLUDED.col` | `VALUES(col)` | `excluded.col` |
+| `excluded` 참조 | `EXCLUDED.col` | `new.__col`(MySQL 8.0.19+), `VALUES(col)`(MariaDB, 이전 MySQL) | `excluded.col` |
 | `onConflict([...])` 컬럼 | 지원 | 받되 생성하지 않음 | 지원 |
 | `onConflict(..., { where })` | 지원 | 예외 | 지원 |
 | `onConflictConstraint()` | 지원 | 예외 | 예외 |

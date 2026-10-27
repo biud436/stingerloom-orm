@@ -1617,10 +1617,10 @@ export class EntityManager implements BaseEntityManager {
   /**
    * @internal Used by `InsertQueryBuilder`'s column resolver — the dialect's
    * spelling of a column on the row the INSERT proposed (`EXCLUDED.col`,
-   * `excluded.col`, or `VALUES(col)`).
+   * `excluded.col`, `new.__col` on MySQL 8.0.19+, or `VALUES(col)`).
    */
-  renderExcludedColumn(wrappedColumn: string): string {
-    return this.dmlSqlBuilder.renderExcludedColumn(wrappedColumn);
+  renderExcludedColumn(wrappedColumn: string, targetTable: string): string {
+    return this.dmlSqlBuilder.renderExcludedColumn(wrappedColumn, targetTable);
   }
 
   /**
