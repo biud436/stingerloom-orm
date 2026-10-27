@@ -2323,6 +2323,7 @@ export class WriteExecutor {
     insertableColumns: ColumnMetadata[],
     items: Partial<T>[],
     site: string,
+    defaultedColumns: string[] = [],
   ): { columns: Sql[]; valueRows: Sql[] } {
     const columns = insertableColumns.map((column) =>
       raw(this.ctx.wrap(column.name)),
@@ -2337,6 +2338,8 @@ export class WriteExecutor {
       insertableColumns,
       columns,
     );
+    const trailing = this.unlistedColumns(columns, defaultedColumns);
+    columns.push(...trailing.map((wrapped) => raw(wrapped)));
     const valueRows = items.map((item) => {
       const rowValues = this.buildInsertRowValues(
         insertableColumns,
@@ -2345,9 +2348,23 @@ export class WriteExecutor {
         site,
         discriminator,
       );
+      rowValues.push(...trailing.map(() => raw("DEFAULT")));
       return sql`(${join(rowValues, ", ")})`;
     });
     return { columns, valueRows };
+  }
+
+  /**
+   * The wrapped names of `names` the column list does not already hold.
+   * Compared without case, as MySQL — the only dialect that asks — compares
+   * column names.
+   */
+  private unlistedColumns(columns: Sql[], names: string[]): string[] {
+    if (names.length === 0) return [];
+    const listed = new Set(columns.map((column) => column.sql.toLowerCase()));
+    return names
+      .map((name) => this.ctx.wrap(name))
+      .filter((wrapped) => !listed.has(wrapped.toLowerCase()));
   }
 
   /**
@@ -2396,11 +2413,20 @@ export class WriteExecutor {
       metadata,
       items,
     );
+    // MySQL 8.0.19+ reads the proposed row through a row alias that holds
+    // only the listed columns; `VALUES(col)` and `EXCLUDED.col` read an
+    // unlisted one as its default, so the alias gets it listed as DEFAULT.
+    const defaultedColumns =
+      spec.action.kind === "update" &&
+      this.dmlSqlBuilder.readsProposedRowByAlias()
+        ? (spec.action.proposedColumns ?? [])
+        : [];
     const { columns, valueRows } = this.buildBulkInsertRows(
       entity,
       insertableColumns,
       items,
       "createInsertBuilder()",
+      defaultedColumns,
     );
 
     return {

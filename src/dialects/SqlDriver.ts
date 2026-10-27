@@ -452,6 +452,16 @@ export interface ISqlDriver<T = any> {
   supportsInsertReturning?(): boolean;
 
   /**
+   * Whether `ON DUPLICATE KEY UPDATE` reads the proposed row through a row
+   * alias (`INSERT … VALUES (…) AS new (…) ON DUPLICATE KEY UPDATE …`)
+   * instead of the `VALUES(col)` function, deprecated since MySQL 8.0.20.
+   *
+   * MySQL 8.0.19+ only. MariaDB never adopted the alias, so it keeps
+   * `VALUES()`. A driver that omits this method keeps `VALUES()` as well.
+   */
+  supportsInsertRowAlias?(): boolean;
+
+  /**
    * Execute a query with driver-level options that control result format.
    * Used by the RawPipeline plugin to bypass ORM entity transformation.
    *

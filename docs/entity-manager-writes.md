@@ -636,6 +636,21 @@ The "conflict columns" tell the database which uniqueness constraint to check. I
 The conflict columns (third argument) must have a unique constraint or be the primary key. Otherwise, the database will reject the query. In PostgreSQL, you will get: `there is no unique or exclusion constraint matching the ON CONFLICT specification`.
 :::
 
+### MySQL 8.0.19+: the proposed row through a row alias
+
+The MySQL SQL on this page is what MariaDB and MySQL before 8.0.19 receive: the conflict branch reads each proposed value with `VALUES(col)`. MySQL 8.0.20 deprecated that function in favour of a row alias, so on MySQL 8.0.19 and later the same upsert declares one and reads through it:
+
+```sql
+-- MySQL 8.0.19+
+INSERT INTO `user` (`id`, `name`, `email`)
+VALUES (?, ?, ?) AS `new` (`__id`, `__name`, `__email`)
+ON DUPLICATE KEY UPDATE `name` = `new`.`__name`, `email` = `new`.`__email`
+```
+
+The form follows the server version read at connect time, and `upsert()`, `batchUpsert()` and `createInsertBuilder()` switch together. MariaDB never adopted the alias and keeps `VALUES()` -- declare it with `type: "mariadb"` if you also set `versionOverride`, since a bare version number cannot tell the two servers apart. A server whose version could not be read keeps `VALUES()` as well, because that form runs on every MySQL and MariaDB server and the alias does not.
+
+The alias renames its columns (`__name`) on purpose. Under the table's own names, every bare column name in the update clause would be ambiguous (MySQL error 1052), and a bare name there has always meant the stored row -- so a raw fragment such as `` sql`hits + 1` `` reads the stored `hits` exactly as before. The alias also holds only the columns the INSERT lists, so a `createInsertBuilder()` statement that reads an unlisted column from the proposed row lists it with `DEFAULT`, and it reads the column default as `VALUES(col)` did.
+
 ### Batch Upsert -- batchUpsert()
 
 When you need to upsert hundreds or thousands of rows at once, `batchUpsert()` is significantly faster than calling `upsert()` in a loop. It packs all rows into a single multi-row `INSERT ... ON CONFLICT` statement.
@@ -798,7 +813,7 @@ await em.createInsertBuilder(SyncMarker)
 `doUpdate()`'s callback receives two references:
 
 - `t` -- the row **already stored**. Renders qualified by the table name (`"sync_markers"."records"`). PostgreSQL requires that: inside `DO UPDATE SET` and its `WHERE`, both the target table and `EXCLUDED` are in scope, so a bare column name is rejected as ambiguous. MySQL and SQLite accept the same spelling.
-- `ex` -- the row this INSERT **proposed**. Renders as `EXCLUDED."col"` (PostgreSQL), `excluded."col"` (SQLite) or `` VALUES(`col`) `` (MySQL).
+- `ex` -- the row this INSERT **proposed**. Renders as `EXCLUDED."col"` (PostgreSQL), `excluded."col"` (SQLite), `` `new`.`__col` `` (MySQL 8.0.19+, see [the row alias](#mysql-8-0-19-the-proposed-row-through-a-row-alias)) or `` VALUES(`col`) `` (MariaDB, older MySQL).
 
 Both are ordinary `qAlias` references, so the whole expression vocabulary composes -- `.add()`, `.mul()`, `coalesce()`, `greatest()`, `CASE`, JSON paths.
 
@@ -964,7 +979,7 @@ Tenant scoping is applied at execute time, so it does not appear in `build()` ou
 | Feature | PostgreSQL | MySQL / MariaDB | SQLite |
 |---------|-----------|-----------------|--------|
 | `doUpdate()` expressions | yes | yes | yes |
-| `excluded` reference | `EXCLUDED.col` | `VALUES(col)` | `excluded.col` |
+| `excluded` reference | `EXCLUDED.col` | `new.__col` (MySQL 8.0.19+), `VALUES(col)` (MariaDB, older MySQL) | `excluded.col` |
 | `onConflict([...])` columns | yes | accepted, not emitted | yes |
 | `onConflict(..., { where })` | yes | throws | yes |
 | `onConflictConstraint()` | yes | throws | throws |

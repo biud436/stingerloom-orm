@@ -23,6 +23,7 @@ function builderFor(dialect: Dialect): DmlSqlBuilder {
     isPostgres: () => dialect === "postgres",
     isSqlite: () => dialect === "sqlite",
     getDbType: () => dialect,
+    getDriver: () => undefined,
     wrap: (name: string) => `${quote}${name}${quote}`,
   };
   return new DmlSqlBuilder(ctx);

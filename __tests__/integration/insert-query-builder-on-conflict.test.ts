@@ -25,6 +25,7 @@ import { qAlias } from "../../src/core/query-builder/alias/qAlias";
 import { qExcluded } from "../../src/core/query-builder/alias/qExcluded";
 import { greatest } from "../../src/core/expressions/ComparisonExpression";
 import { iff } from "../../src/core/expressions/CaseExpression";
+import sql from "../../src/utils/sqlTag";
 import {
   createTestConnection,
   rawQuery,
@@ -398,5 +399,111 @@ describe.each(drivers)(
         });
       }
     });
+
+    it("reads a proposed column the rows leave out as its default", async () => {
+      // MySQL 8.0.19+ reads the proposed row through a row alias that holds
+      // only the listed columns, so the unlisted one must be listed as DEFAULT
+      // to read what VALUES(col) / EXCLUDED.col read: the column default.
+      await em
+        .createInsertBuilder(PartialE)
+        .values({
+          id: 1,
+          mac: "a",
+          hits: 1,
+          archivedAt: new Date("2026-01-01T00:00:00Z"),
+        } as any)
+        .execute();
+
+      await em
+        .createInsertBuilder(PartialE)
+        .values({ id: 1, mac: "a", hits: 2 } as any)
+        .onConflict(["id"] as any)
+        .doUpdate(["hits", "archivedAt"] as any)
+        .execute();
+
+      const [row] = (await em.find(PartialE, {} as any)) as Partial_[];
+      expect(row.hits).toBe(2);
+      expect(row.archivedAt).toBeNull();
+    });
+
+    if (type === "mysql") {
+      describe("ON DUPLICATE KEY UPDATE", () => {
+        /** Runs `write` and reads the server's warnings for it on the same session. */
+        async function warningsOf(
+          write: (tx: EntityManager) => Promise<unknown>,
+        ): Promise<Array<{ Code: number; Message: string }>> {
+          return em.transaction(async (tx) => {
+            await write(tx);
+            return tx.query(sql`SHOW WARNINGS`);
+          });
+        }
+
+        it("raises no warning — VALUES() is deprecated on MySQL 8.0.20+", async () => {
+          await accumulate([{ mac: "aa", bucketStart: 100, records: 1, lastTs: 1 }]);
+
+          expect(
+            await warningsOf((tx) =>
+              tx
+                .createInsertBuilder(MarkerE)
+                .values({ mac: "aa", bucketStart: 100, records: 2, lastTs: 2 } as any)
+                .onConflict(["mac", "bucketStart"] as any)
+                .doUpdate(["records", "lastTs"] as any)
+                .execute(),
+            ),
+          ).toEqual([]);
+          expect(
+            await warningsOf((tx) =>
+              tx.upsert(MarkerE, { mac: "aa", bucketStart: 100, records: 3, lastTs: 3 }),
+            ),
+          ).toEqual([]);
+          expect(
+            await warningsOf((tx) =>
+              tx.batchUpsert(MarkerE, [
+                { mac: "aa", bucketStart: 100, records: 4, lastTs: 4 },
+                { mac: "bb", bucketStart: 100, records: 5, lastTs: 5 },
+              ]),
+            ),
+          ).toEqual([]);
+          expect(await readAll()).toEqual([
+            { mac: "aa", bucketStart: 100, records: 4, lastTs: 4 },
+            { mac: "bb", bucketStart: 100, records: 5, lastTs: 5 },
+          ]);
+        });
+
+        it("keeps a bare column name in a raw fragment on the stored row", async () => {
+          // Under a bare `AS new` the alias's columns share the table's names
+          // and MySQL rejects `records` here as ambiguous (ER 1052).
+          await accumulate([{ mac: "aa", bucketStart: 100, records: 5, lastTs: 1 }]);
+
+          await em
+            .createInsertBuilder(MarkerE)
+            .values({ mac: "aa", bucketStart: 100, records: 100, lastTs: 2 } as any)
+            .onConflict(["mac", "bucketStart"] as any)
+            .doUpdate({ records: sql`records + 1` } as any)
+            .execute();
+
+          expect(await readAll()).toEqual([
+            { mac: "aa", bucketStart: 100, records: 6, lastTs: 1 },
+          ]);
+        });
+
+        it("leaves the stored row alone when nothing of the caller's is left to update", async () => {
+          // Every stated column is a conflict column, so the update clause
+          // degrades to a bare self-assignment (`id` = `id`).
+          await em.upsert(PartialE, { id: 1, mac: "a", hits: 1 } as any);
+
+          await em.upsert(PartialE, { id: 1, mac: "b", hits: 9 } as any, [
+            "id",
+            "mac",
+            "hits",
+          ]);
+
+          const rows = (await em.find(PartialE, {} as any)) as Partial_[];
+          expect(rows.map(({ id, mac, hits }) => ({ id, mac, hits }))).toEqual([
+            { id: 1, mac: "a", hits: 1 },
+          ]);
+        });
+      });
+    }
   },
 );

@@ -467,7 +467,7 @@ await em.createInsertBuilder(SyncMarker)
 .doUpdate((t, ex) => ({ records: t.records.add(ex.records) }))
 ```
 
-이 참조는 PostgreSQL에서 `EXCLUDED."col"`, SQLite에서 `excluded."col"`, MySQL/MariaDB에서 `` VALUES(`col`) ``로 렌더링됩니다. `createInsertBuilder()` 안에서만 의미가 있어요. 빌더 전체는 [EntityManager — 쓰기](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder)를 보세요.
+이 참조는 PostgreSQL에서 `EXCLUDED."col"`, SQLite에서 `excluded."col"`, MySQL 8.0.19+에서 `` `new`.`__col` ``([행 별칭](./entity-manager-writes.md#mysql-8-0-19-행-별칭으로-읽는-제안-행) 경유), MariaDB와 이전 MySQL에서 `` VALUES(`col`) ``로 렌더링됩니다. `createInsertBuilder()` 안에서만 의미가 있어요. 빌더 전체는 [EntityManager — 쓰기](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder)를 보세요.
 
 `doUpdateWhere()` 조건 안에서도 유효합니다. 가드를 건 upsert가 저장된 행과 제안한 행을 비교하는 방법이 바로 이것입니다.
 
@@ -950,7 +950,7 @@ qb.where(u.tags.arrayContains(["admin"]).not());       // NOT (...)
 | SELECT 별칭 | `.as("name")` — 컬럼 / JSON 경로 / 집계 어디에든. `AliasedExpression` 반환 |
 | null fallback | `coalesce(...)`, `col.coalesce(...)`, `nullif(a, b)` — 처음 non-null 값 / 일치 시 NULL |
 | 행 단위 최대 / 최소 | `greatest(a, b, …)`, `least(a, b, …)`, `col.greatest(…)`, `col.least(…)`, `Expressions.greatest`, `Expressions.least` — `GREATEST`/`LEAST` (PG, MySQL), `MAX`/`MIN` (SQLite) |
-| upsert 제안 행 참조 | `qExcluded(Entity)` — `EXCLUDED.col` (PG), `excluded.col` (SQLite), `VALUES(col)` (MySQL) |
+| upsert 제안 행 참조 | `qExcluded(Entity)` — `EXCLUDED.col` (PG), `excluded.col` (SQLite), `new.__col` (MySQL 8.0.19+), `VALUES(col)` (MariaDB, 이전 MySQL) |
 | 현재 시각 | `currentDate()`, `currentTime()`, `currentTimestamp()` — `Expressions`에도 동일 |
 | 타입 변환 | `.stringValue()`, `.intValue()`, `.longValue()`, `.floatValue()`, `.booleanValue()` |
 | 날짜 컴포넌트 | `.year()`, `.month()`, `.day()`, `.hour()`, `.minute()`, `.second()`, `.dayOfWeek()`, `.dayOfYear()`, `.week()` |
@@ -985,7 +985,7 @@ qb.where(u.tags.arrayContains(["admin"]).not());       // NOT (...)
 | 배열 연산자 (`.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`) | 네이티브 `@>` / `&&` / `<@` | **미지원** — `UNSUPPORTED_DATABASE` throw | **미지원** — `UNSUPPORTED_DATABASE` throw | MySQL/SQLite는 네이티브 배열 타입 없음 — JSON 배열(JSON 경로 DSL)이나 정션 테이블로 모델링. 값 배열은 단일 파라미터 바인딩. |
 | `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 | — |
 | `greatest` / `least` | 네이티브 `GREATEST` / `LEAST` — NULL 인자 무시 | 네이티브 `GREATEST` / `LEAST` — 인자 중 NULL 하나면 결과 NULL | `MAX(a, b)` / `MIN(a, b)` 스칼라 형태 — 인자 중 NULL 하나면 결과 NULL | NULL 처리는 보정하지 **않아요**. 이식성이 필요하면 nullable 인자를 `coalesce()`로 감싸세요. |
-| upsert `excluded` 참조 (`qExcluded`) | `EXCLUDED."col"` | `` VALUES(`col`) `` — MySQL 8.0.20에서 deprecated지만 MariaDB의 유일한 형태 | `excluded."col"` | `createInsertBuilder()` 안에서만 의미가 있어요. |
+| upsert `excluded` 참조 (`qExcluded`) | `EXCLUDED."col"` | MySQL 8.0.19+는 행 별칭으로 `` `new`.`__col` ``, MariaDB와 이전 MySQL은 `` VALUES(`col`) `` | `excluded."col"` | `createInsertBuilder()` 안에서만 의미가 있어요. |
 | Window 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) | — |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregate | 네이티브 (`WITHIN GROUP`) | **미지원** — `UNSUPPORTED_OPERATION` throw | **미지원** — `UNSUPPORTED_OPERATION` throw | MySQL: CTE + `ROW_NUMBER() OVER (ORDER BY x)`로 에뮬, `rn = CEIL(N * p)` 행을 픽. [cookbook 레시피](./cookbook.md#cycle-time-percentile-report) 참고. |
 | `dateTrunc` (year/quarter/month/week/day/hour/minute/second) | 네이티브 `DATE_TRUNC` | 단위별 등가 (`DATE`, `DATE_FORMAT`, ISO 월요일 `WEEKDAY` 계산) | `date(..., 'start of …')` / `strftime` | 세 dialect 모두 ISO 월요일 기준 주를 만들어요. |

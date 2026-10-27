@@ -26,12 +26,22 @@ type Dialect = "postgres" | "mysql" | "sqlite";
 const q = (d: Dialect, name: string) =>
   d === "mysql" ? `\`${name}\`` : `"${name}"`;
 
-function builderFor(dialect: Dialect): DmlSqlBuilder {
+/**
+ * `rowAlias` stands in for a MySQL 8.0.19+ connection, whose driver reads
+ * the proposed row through `INSERT … AS new`; without it the driver is
+ * absent and MySQL keeps `VALUES()`.
+ */
+function builderFor(
+  dialect: Dialect,
+  { rowAlias = false }: { rowAlias?: boolean } = {},
+): DmlSqlBuilder {
   const ctx: any = {
     isMySqlFamily: () => dialect === "mysql",
     isPostgres: () => dialect === "postgres",
     isSqlite: () => dialect === "sqlite",
     getDbType: () => dialect,
+    getDriver: () =>
+      rowAlias ? { supportsInsertRowAlias: () => true } : undefined,
     wrap: (name: string) => q(dialect, name),
   };
   return new DmlSqlBuilder(ctx);
@@ -286,6 +296,115 @@ describe("upsert conflict branch — managed columns (golden SQL)", () => {
           "`version` = IF(`orders`.`tenant_id` = ?, COALESCE(`orders`.`version`, 0) + 1, `orders`.`version`)",
       );
       expect(stmt.values).toEqual(["a", 1, 1, "b", 2, 1, "acme", "acme"]);
+    });
+  });
+
+  describe("MySQL 8.0.19+ row alias", () => {
+    const mysql8 = () => builderFor("mysql", { rowAlias: true });
+
+    it("reads the proposed values through the alias's renamed columns", () => {
+      const stmt = mysql8().buildUpsertQuery(
+        "`orders`",
+        COLUMNS("mysql"),
+        VALUES,
+        ["`slug`"],
+        ["`hits`"],
+        null,
+        managedFor("mysql"),
+      );
+
+      expect(stmt.sql).toBe(
+        "INSERT INTO `orders` (`slug`, `hits`, `version`, `created_at`, `updated_at`) " +
+          "VALUES (?, ?, ?, ?, ?) " +
+          "AS `new` (`__slug`, `__hits`, `__version`, `__created_at`, `__updated_at`) " +
+          "ON DUPLICATE KEY UPDATE " +
+          "`hits` = `new`.`__hits`, " +
+          "`updated_at` = `new`.`__updated_at`, " +
+          "`version` = COALESCE(`orders`.`version`, 0) + 1, " +
+          "`deleted_at` = NULL",
+      );
+      expect(stmt.values).toEqual(VALUES);
+    });
+
+    it("keeps the tenant IF() around every assignment", () => {
+      const stmt = mysql8().buildUpsertQuery(
+        "`orders`",
+        COLUMNS("mysql"),
+        VALUES,
+        ["`slug`"],
+        ["`hits`"],
+        guardFor("mysql"),
+        managedFor("mysql", { refresh: [], reset: [] }),
+      );
+
+      expect(stmt.sql).toBe(
+        "INSERT INTO `orders` (`slug`, `hits`, `version`, `created_at`, `updated_at`) " +
+          "VALUES (?, ?, ?, ?, ?) " +
+          "AS `new` (`__slug`, `__hits`, `__version`, `__created_at`, `__updated_at`) " +
+          "ON DUPLICATE KEY UPDATE " +
+          "`hits` = IF(`orders`.`tenant_id` = ?, `new`.`__hits`, `orders`.`hits`), " +
+          "`version` = IF(`orders`.`tenant_id` = ?, COALESCE(`orders`.`version`, 0) + 1, `orders`.`version`)",
+      );
+      expect(stmt.values).toEqual([...VALUES, "acme", "acme"]);
+    });
+
+    it("leaves the bare self-assignment of the no-op form unambiguous", () => {
+      // With the alias's columns renamed, a bare `slug` can only mean the
+      // stored row; under `AS new` alone MySQL rejects it as ambiguous.
+      const stmt = mysql8().buildUpsertQuery(
+        "`orders`",
+        ["`slug`", "`version`"],
+        ["a", 1],
+        ["`slug`"],
+        [],
+        null,
+        managedFor("mysql", { reset: [] }),
+      );
+
+      expect(stmt.sql).toBe(
+        "INSERT INTO `orders` (`slug`, `version`) VALUES (?, ?) " +
+          "AS `new` (`__slug`, `__version`) " +
+          "ON DUPLICATE KEY UPDATE `slug` = `slug`",
+      );
+    });
+
+    it("declares the alias once after a multi-row VALUES list", () => {
+      const stmt = mysql8().buildBatchUpsertQuery(
+        "`orders`",
+        ["`slug`", "`hits`"],
+        [sql`(${"a"}, ${1})`, sql`(${"b"}, ${2})`],
+        ["`slug`"],
+        ["`hits`"],
+        null,
+        null,
+      );
+
+      expect(stmt.sql).toBe(
+        "INSERT INTO `orders` (`slug`, `hits`) VALUES (?, ?), (?, ?) " +
+          "AS `new` (`__slug`, `__hits`) " +
+          "ON DUPLICATE KEY UPDATE `hits` = `new`.`__hits`",
+      );
+      expect(stmt.values).toEqual(["a", 1, "b", 2]);
+    });
+
+    it("names the alias new_row when the target table is itself called new", () => {
+      for (const target of ["`new`", "`shop`.`New`"]) {
+        const stmt = mysql8().buildUpsertQuery(
+          target,
+          ["`id`", "`hits`"],
+          [1, 2],
+          ["`id`"],
+          ["`hits`"],
+          null,
+          null,
+        );
+
+        expect(stmt.sql).toBe(
+          `INSERT INTO ${target} (\`id\`, \`hits\`) VALUES (?, ?) ` +
+            "AS `new_row` (`__id`, `__hits`) " +
+            "ON DUPLICATE KEY UPDATE `hits` = `new_row`.`__hits`",
+        );
+      }
     });
   });
 });

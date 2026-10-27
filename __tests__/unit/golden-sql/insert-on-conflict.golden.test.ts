@@ -403,3 +403,149 @@ const cases: BuilderGoldenCase[] = [
 ];
 
 runBuilderGoldenMatrix("golden-sql / INSERT ... ON CONFLICT", cases);
+
+/**
+ * MySQL 8.0.19+ reads the proposed row through a row alias instead of the
+ * deprecated `VALUES()`. The alias renames its columns (`__col`) so a bare
+ * column name keeps meaning the stored row, and it holds only the listed
+ * columns, so a proposed column the rows leave out is listed as DEFAULT —
+ * the value `VALUES(col)` reads for it.
+ */
+describe("golden-sql / INSERT ... ON CONFLICT — MySQL 8.0.19+ row alias", () => {
+  const mysql8 = () =>
+    createInsertBuilderFor(Counter, "mysql", { rowAlias: true });
+  const ALIAS = "AS `new` (`__mac`, `__bucketStart`, `__records`, `__lastTs`) ";
+
+  it("accumulate + high-water mark", () => {
+    expect(
+      render(
+        mysql8()
+          .values([ROW, ROW2])
+          .onConflict(["mac", "bucketStart"])
+          .doUpdate((t, x) => ({
+            records: t.records.add(x.records),
+            lastTs: Expressions.greatest(t.lastTs, x.lastTs),
+          })),
+      ),
+    ).toEqual({
+      text:
+        "INSERT INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
+        "VALUES (?, ?, ?, ?), (?, ?, ?, ?) " +
+        ALIAS +
+        "ON DUPLICATE KEY UPDATE " +
+        "`records` = (`counter`.`records` + `new`.`__records`), " +
+        "`lastTs` = GREATEST(`counter`.`lastTs`, `new`.`__lastTs`)",
+      values: ["aa", 100, 5, 150, "bb", 200, 7, 250],
+    });
+  });
+
+  it("doUpdate(columns)", () => {
+    expect(
+      render(
+        mysql8()
+          .values(ROW)
+          .onConflict(["mac", "bucketStart"])
+          .doUpdate(["records", "lastTs"]),
+      ),
+    ).toEqual({
+      text:
+        "INSERT INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
+        "VALUES (?, ?, ?, ?) " +
+        ALIAS +
+        "ON DUPLICATE KEY UPDATE " +
+        "`records` = `new`.`__records`, `lastTs` = `new`.`__lastTs`",
+      values: ["aa", 100, 5, 150],
+    });
+  });
+
+  it("CASE fold reads both rows", () => {
+    expect(
+      render(
+        mysql8()
+          .values(ROW)
+          .onConflict(["mac", "bucketStart"])
+          .doUpdate((t, x) => ({
+            lastTs: Expressions.iff(x.lastTs.gt(t.lastTs), x.lastTs, t.lastTs),
+          })),
+      ).text,
+    ).toBe(
+      "INSERT INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
+        "VALUES (?, ?, ?, ?) " +
+        ALIAS +
+        "ON DUPLICATE KEY UPDATE " +
+        "`lastTs` = CASE WHEN `new`.`__lastTs` > `counter`.`lastTs` " +
+        "THEN `new`.`__lastTs` ELSE `counter`.`lastTs` END",
+    );
+  });
+
+  it("lists a proposed column the rows leave out as DEFAULT", () => {
+    const partial = { mac: "aa", bucketStart: 100, records: 5 };
+    expect(
+      render(
+        mysql8()
+          .values([partial, { ...partial, mac: "bb" }])
+          .onConflict(["mac", "bucketStart"])
+          .doUpdate(["records", "lastTs"]),
+      ),
+    ).toEqual({
+      text:
+        "INSERT INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
+        "VALUES (?, ?, ?, DEFAULT), (?, ?, ?, DEFAULT) " +
+        ALIAS +
+        "ON DUPLICATE KEY UPDATE " +
+        "`records` = `new`.`__records`, `lastTs` = `new`.`__lastTs`",
+      values: ["aa", 100, 5, "bb", 100, 5],
+    });
+  });
+
+  it("lists nothing extra for a column read only from the stored row", () => {
+    const partial = { mac: "aa", bucketStart: 100, records: 5 };
+    expect(
+      render(
+        mysql8()
+          .values(partial)
+          .onConflict(["mac", "bucketStart"])
+          .doUpdate((t) => ({ lastTs: t.lastTs.add(1) })),
+      ).text,
+    ).toBe(
+      "INSERT INTO `counter` (`mac`, `bucketStart`, `records`) " +
+        "VALUES (?, ?, ?) " +
+        "AS `new` (`__mac`, `__bucketStart`, `__records`) " +
+        "ON DUPLICATE KEY UPDATE `lastTs` = (`counter`.`lastTs` + ?)",
+    );
+  });
+
+  it("keeps a raw fragment's bare column name on the stored row", () => {
+    expect(
+      render(
+        mysql8()
+          .values(ROW)
+          .onConflict(["mac", "bucketStart"])
+          .doUpdate({ records: sql`records + 1` }),
+      ).text,
+    ).toBe(
+      "INSERT INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
+        "VALUES (?, ?, ?, ?) " +
+        ALIAS +
+        "ON DUPLICATE KEY UPDATE `records` = records + 1",
+    );
+  });
+
+  it("doNothing stays INSERT IGNORE, with no alias", () => {
+    expect(
+      render(
+        mysql8().values(ROW).onConflict(["mac", "bucketStart"]).doNothing(),
+      ).text,
+    ).toBe(
+      "INSERT IGNORE INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
+        "VALUES (?, ?, ?, ?)",
+    );
+  });
+
+  it("a plain INSERT has no alias", () => {
+    expect(render(mysql8().values(ROW)).text).toBe(
+      "INSERT INTO `counter` (`mac`, `bucketStart`, `records`, `lastTs`) " +
+        "VALUES (?, ?, ?, ?)",
+    );
+  });
+});
