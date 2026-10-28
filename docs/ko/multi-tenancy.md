@@ -576,6 +576,7 @@ await em.register({
 | payload에 다른 테넌트의 `tenant_id`를 넣은 `save()` | INSERT와 UPDATE 모두 `TENANT_MISMATCH`. 테넌트 컬럼은 UPDATE `SET` 목록에 아예 들어가지 않으므로, find로 읽어 온 엔티티를 그대로 저장해도 행이 옮겨가지 않습니다 |
 | `upsert()` / `batchUpsert()` | 충돌 분기가 해당 행을 건너뜁니다 — PostgreSQL/SQLite에서는 `affected`에 0으로 잡히고, 엔티티 클래스당 한 번 경고가 남습니다 |
 | `createInsertBuilder().doUpdate()` | 동일하게 건너뜁니다. 직접 지정한 `doUpdateWhere()` 조건은 테넌트 조건과 AND로 묶여요 |
+| `createInsertBuilder().values(columns, query)` | 쿼리는 자기 테넌트 조건대로 테넌트 A의 행만 읽고, 쓰는 행에는 모두 테넌트 A가 들어갑니다. `columns`에 테넌트 컬럼을 넣으면 `INVALID_QUERY`를 던져요 |
 | `insertIgnore()` | 원래 안전합니다 — `DO NOTHING`은 기존 행을 절대 쓰지 않습니다(대신 이번 INSERT가 버려집니다) |
 | `update()` / `updateMany()` / `increment()` / `decrement()` / `delete()` / `deleteMany()` / `softDelete()` / `restore()` | `affected: 0`, 아무것도 쓰지 않습니다 |
 | `createUpdateBuilder()` | `affected: 0`, 아무것도 쓰지 않습니다 |

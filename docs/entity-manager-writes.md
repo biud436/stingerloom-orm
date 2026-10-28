@@ -845,6 +845,56 @@ builder.values({ mac, bucketStart, records, syncedAt: sql`NOW()` });
 
 Plain values go through the column's write transformer as usual; fragments are the caller's responsibility.
 
+### Rows from a query -- INSERT ... SELECT
+
+`values(columns, query)` takes the rows from a `SelectQueryBuilder` instead of a list, so they never travel through the application. Rolling orders up into daily totals is one statement, and with a conflict action a rerun adds to the totals already stored:
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+
+const o = qAlias(Order, "o");
+
+await em.createInsertBuilder(DailyTotal)
+  .values(
+    ["day", "customerId", "total"],
+    em.createQueryBuilder(Order, "o")
+      .select([o.day.as("day"), o.customerId.as("customerId"), o.amount.sum().as("total")])
+      .where(o.status.eq("paid"))
+      .groupBy(["o.day", "o.customerId"]),
+  )
+  .onConflict(["day", "customerId"])
+  .doUpdate((t, ex) => ({ total: t.total.add(ex.total) }))
+  .execute();
+```
+
+```sql
+-- PostgreSQL
+INSERT INTO "daily_totals" ("day", "customer_id", "total")
+SELECT "o"."day" AS "day", "o"."customer_id" AS "customerId", SUM("o"."amount") AS "total"
+  FROM "orders" AS "o" WHERE "o"."status" = $1 GROUP BY "o"."day", "o"."customer_id"
+ON CONFLICT ("day", "customer_id") DO UPDATE SET "total" = ("daily_totals"."total" + EXCLUDED."total")
+```
+
+The query's selected values fill `columns` **by position**, as in SQL, so the query must select them explicitly and in that order. A query left on its default `SELECT *` is rejected: `*` follows the table's physical column order, which the entity does not determine. `columns` names entity properties -- declared columns, or a relation that owns a foreign key (its join column is written).
+
+The query runs as built, so its own scoping decides which rows are copied: the soft-delete filter, and the tenant predicate under `tenant_column`. The INSERT side follows `insertMany()`:
+
+- The ORM fills the tenant column, the SINGLE_TABLE discriminator, and any `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` column you leave out, by adding their values to the end of the query's select list. Naming the tenant column or the discriminator in `columns` throws, since a query could select any value for them.
+- A key the ORM generates for each row (`@PrimaryGeneratedColumn("uuid")` or `"uuid-v7"`) has no row to be generated for, so the query must select it and `columns` must name it; otherwise the call throws `UNSUPPORTED_OPERATION`. PostgreSQL's `uuid` keys are the exception, since their column `DEFAULT` generates them.
+- The selected values never leave the database, so no write transformer runs on them.
+
+The conflict action works as with a VALUES list, with one restriction. A VALUES list reads a proposed column it does not write as the column default, but in an INSERT ... SELECT that is almost certainly a slip. So a `doUpdate()` that reads such a column from `ex` throws instead.
+
+Each dialect needs a different shape around the query, and the builder handles that:
+
+- **SQLite** encloses it as `SELECT * FROM (…) WHERE true` when a conflict clause follows. Otherwise SQLite would read the `ON` of `ON CONFLICT` as a join constraint.
+- **MySQL 8.0.19+** has no row alias in the SELECT form, so a `doUpdate()` reads the proposed row from a derived table under the same name, `SELECT * FROM (…) AS new (__day, …)`. That keeps the statement free of the deprecated `VALUES()`. **MariaDB** and older MySQL use `VALUES()`.
+- **PostgreSQL** moves the ORM's added values out of a `DISTINCT` select list. Inside one, PostgreSQL would type them as text, and a timestamp column would reject them.
+
+`executeAndReturn()` returns the written rows where the INSERT has `RETURNING`: PostgreSQL and SQLite, plus MariaDB 10.5+ when there is no conflict action. Otherwise it throws `UNSUPPORTED_OPERATION`, because on MySQL the rows are read back by key and the rows a query writes have none the ORM knows.
+
+A source that `SelectQueryBuilder` cannot express (a window function, a set operation, a CTE) belongs to a raw statement, `em.query(sql\`INSERT INTO … ${rawQb.build()}\`)`. There the ORM fills nothing in, and tenant scoping is yours to write.
+
 ### The three forms of doUpdate()
 
 ```typescript
@@ -951,7 +1001,7 @@ On PostgreSQL and SQLite this is `RETURNING *`, and a multi-row statement return
 - An auto-increment primary key comes back through `LAST_INSERT_ID()`. On the update path the conflict action also assigns `id = LAST_INSERT_ID(id)`, which leaves the key unchanged.
 - Any other row is read back by the `onConflict()` columns (for an update) or by the primary key, so the row must state those values and the columns must form a unique key.
 
-More than one row throws `UNSUPPORTED_OPERATION` before anything is sent. MariaDB 10.5+ returns the rows of a plain INSERT through `RETURNING`; with a conflict action it takes the MySQL path, because what MariaDB's `RETURNING` reports for an `ON DUPLICATE KEY UPDATE` or `INSERT IGNORE` row is not specified.
+More than one row throws `UNSUPPORTED_OPERATION` before anything is sent. MariaDB 10.5+ returns the rows of a plain INSERT through `RETURNING`; with a conflict action it takes the MySQL path, because what MariaDB's `RETURNING` reports for an `ON DUPLICATE KEY UPDATE` or `INSERT IGNORE` row is not specified. An [INSERT ... SELECT](#rows-from-a-query-insert-select) has no row to read back, so it throws on that path.
 
 ### Inspecting the SQL
 
@@ -985,7 +1035,8 @@ Tenant scoping is applied at execute time, so it does not appear in `build()` ou
 | `onConflictConstraint()` | yes | throws | throws |
 | `doNothing()` | `DO NOTHING` | `INSERT IGNORE` | `DO NOTHING` |
 | `doUpdateWhere()` | yes | throws | yes |
-| `executeAndReturn()` | `RETURNING *` | one row per call, read back by key (MariaDB 10.5+ plain INSERT: `RETURNING *`) | `RETURNING *` |
+| `executeAndReturn()` | `RETURNING *` | one row per call, read back by key (MariaDB 10.5+ plain INSERT: `RETURNING *`); throws for INSERT ... SELECT | `RETURNING *` |
+| `values(columns, query)` | the query as built | the query as built; derived table `AS new (…)` for `doUpdate()` on MySQL 8.0.19+ | `SELECT * FROM (…) WHERE true` before a conflict clause |
 
 MySQL arbitrates on every unique key at once, so it has no conflict target to name. Passing `.onConflict([...])` there is still worth doing -- it keeps the same call portable to PostgreSQL.
 

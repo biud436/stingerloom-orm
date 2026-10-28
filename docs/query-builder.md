@@ -443,8 +443,9 @@ are ordinary `qAlias` proxies, so everything on the
 
 The builder also covers `doNothing()`, `doUpdateWhere()` (PostgreSQL /
 SQLite), partial unique indexes via `onConflict(cols, { where })`,
-PostgreSQL's `onConflictConstraint()`, and `executeAndReturn()`, which
-returns the rows the statement wrote. Full reference, dialect matrix
+PostgreSQL's `onConflictConstraint()`, `executeAndReturn()`, which
+returns the rows the statement wrote, and `values(columns, query)`, which
+takes the rows from a `SelectQueryBuilder` (`INSERT ... SELECT`). Full reference, dialect matrix
 and behavior notes:
 [EntityManager — Writes](./entity-manager-writes.md#expression-based-upsert-createinsertbuilder).
 

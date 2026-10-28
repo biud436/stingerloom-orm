@@ -3329,6 +3329,38 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
+   * @internal This query as the rows of an `INSERT … SELECT`, with
+   * `trailing` values added after its select list — the columns the INSERT
+   * fills in itself. Rendered from a clone, so this builder is unchanged.
+   *
+   * The INSERT fills its columns by position, so a query that selects every
+   * column implicitly is rejected: `*` follows the table's physical column
+   * order, which the entity metadata does not determine.
+   */
+  toInsertSource(trailing: Array<{ alias: string; value: RawValue }>): Sql {
+    if (this.selectColumns === "*" && this.aliasedProjections === null) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `An INSERT … SELECT fills its columns by position, so its query must select them explicitly; ` +
+          `this ${this.entity.name} query selects every column. Call .select([...]) in the order of the INSERT's columns.`,
+      );
+    }
+    const outputs = trailing.map(
+      ({ alias, value }) => sql`${value} AS ${raw(this.em.wrap(alias))}`,
+    );
+    // PostgreSQL types a parameter in a DISTINCT select list as text, which
+    // a timestamp or integer column then rejects. Outside the DISTINCT the
+    // INSERT types it by its target column.
+    if (outputs.length > 0 && this.distinct && this.emInternals._ctx?.isPostgres?.()) {
+      const src = raw(this.em.wrap("__src"));
+      return sql`SELECT ${src}.*, ${join(outputs, ", ")} FROM (${this.toSql()}) AS ${src}`;
+    }
+    const source = this.clone();
+    source.selectExpressions.push(...outputs);
+    return source.toSql();
+  }
+
+  /**
    * Get the raw SQL text and parameters (for debugging).
    */
   getSql(): { text: string; values: any[] } {

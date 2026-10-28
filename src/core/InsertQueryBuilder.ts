@@ -10,6 +10,7 @@ import {
 } from "./expressions/ConditionLike";
 import type { DialectExpression } from "../dialects/DialectExpression";
 import type { EntityManager } from "./EntityManager";
+import type { SelectQueryBuilder } from "./SelectQueryBuilder";
 import { qAlias, type QEntity } from "./query-builder/alias/qAlias";
 import {
   qExcluded,
@@ -97,9 +98,18 @@ export type ConflictAction =
       proposedColumns?: string[];
     };
 
+/** @internal The rows of an `INSERT … SELECT`: a query and the columns it fills, by position. */
+export interface InsertSelectSource {
+  /** Entity property names, in the order the query selects their values. */
+  properties: string[];
+  query: SelectQueryBuilder<any, any>;
+}
+
 /** @internal Everything {@link InsertQueryBuilder} hands to the write path. */
 export interface InsertBuilderSpec<T> {
+  /** The VALUES rows; empty when {@link source} supplies the rows. */
   items: InsertValues<T>[];
+  source?: InsertSelectSource;
   target?: ConflictTarget;
   action: ConflictAction;
 }
@@ -118,8 +128,9 @@ export interface OnConflictOptions {
 }
 
 /**
- * Fluent builder for `INSERT … VALUES … ON CONFLICT …`, with the full
- * QueryDSL expression vocabulary available in the conflict action.
+ * Fluent builder for `INSERT … VALUES … ON CONFLICT …` — or
+ * `INSERT … SELECT … ON CONFLICT …` with `.values(columns, query)` — with
+ * the full QueryDSL expression vocabulary available in the conflict action.
  *
  * Created by `em.createInsertBuilder(Entity)` or
  * `em.createInsertBuilder(qAlias(Entity, "alias"))`. It is the expression-
@@ -164,6 +175,7 @@ export interface OnConflictOptions {
  */
 export class InsertQueryBuilder<T> {
   private rows: InsertValues<T>[] = [];
+  private source: InsertSelectSource | undefined;
   private conflictTarget: ConflictTarget | undefined;
   private action: ConflictAction = { kind: "none" };
   /**
@@ -196,9 +208,52 @@ export class InsertQueryBuilder<T> {
    * fragment. Values go through the column's write transformer; `Sql`
    * fragments are spliced verbatim.
    */
-  values(data: InsertValues<T> | InsertValues<T>[]): this {
+  values(data: InsertValues<T> | InsertValues<T>[]): this;
+  /**
+   * Take the rows from a query — `INSERT INTO t (columns) SELECT …`. The
+   * query's selected values fill `columns` **by position**, so it must
+   * select them explicitly and in the same order.
+   *
+   * The query runs as built, its own tenant and soft-delete scoping
+   * included. The INSERT side follows `insertMany()`: the tenant column,
+   * the STI discriminator and unlisted `@CreateTimestamp` /
+   * `@UpdateTimestamp` / `@Version` columns are filled in by the ORM.
+   *
+   * @param columns - The entity properties the query fills, in its select
+   *   order: declared columns, or relations that own a foreign key.
+   * @param query - A `SelectQueryBuilder` with an explicit select list. It
+   *   is not modified.
+   *
+   * @example Roll orders up into daily totals, adding to existing ones
+   * ```ts
+   * await em.createInsertBuilder(DailyTotal)
+   *   .values(["day", "total"], em.createQueryBuilder(Order, "o")
+   *     .select([o.day, sum(o.amount).as("total")])
+   *     .groupBy(["day"]))
+   *   .onConflict(["day"])
+   *   .doUpdate((t, ex) => ({ total: t.total.add(ex.total) }))
+   *   .execute();
+   * ```
+   */
+  values(
+    columns: Array<keyof T & string>,
+    query: SelectQueryBuilder<any, any>,
+  ): this;
+  values(
+    data: InsertValues<T> | InsertValues<T>[] | Array<keyof T & string>,
+    query?: SelectQueryBuilder<any, any>,
+  ): this {
+    if (query !== undefined) {
+      return this.valuesFromQuery(data as Array<keyof T & string>, query);
+    }
+    if (this.source) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        "InsertQueryBuilder.values(): this INSERT already takes its rows from a query. An INSERT … SELECT has no VALUES rows.",
+      );
+    }
     if (Array.isArray(data)) {
-      this.rows.push(...data);
+      this.rows.push(...(data as InsertValues<T>[]));
     } else {
       this.rows.push(data);
     }
@@ -379,7 +434,8 @@ export class InsertQueryBuilder<T> {
    * `LAST_INSERT_ID()`), else the `onConflict()` columns for an update, else
    * the primary key. More than one row throws `UNSUPPORTED_OPERATION` before
    * anything is sent. MariaDB takes the same path whenever a conflict action
-   * is set.
+   * is set. An `INSERT … SELECT` has no row to read back, so on that path it
+   * throws `UNSUPPORTED_OPERATION` too.
    *
    * @example Accumulate and get the new totals back
    * ```ts
@@ -416,7 +472,7 @@ export class InsertQueryBuilder<T> {
 
   /** @internal The immutable snapshot the write path consumes. */
   private spec(): InsertBuilderSpec<T> {
-    if (this.rows.length === 0) {
+    if (this.rows.length === 0 && !this.source) {
       throw new OrmError(
         OrmErrorCode.INVALID_QUERY,
         "InsertQueryBuilder: no rows to insert. Call .values() at least once.",
@@ -424,9 +480,38 @@ export class InsertQueryBuilder<T> {
     }
     return {
       items: this.rows,
+      source: this.source,
       target: this.conflictTarget,
       action: this.action,
     };
+  }
+
+  private valuesFromQuery(
+    columns: Array<keyof T & string>,
+    query: SelectQueryBuilder<any, any>,
+  ): this {
+    if (this.source || this.rows.length > 0) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        "InsertQueryBuilder.values(columns, query): an INSERT takes its rows from one VALUES list or one query, and this one already has " +
+          (this.source ? "a query." : "VALUES rows."),
+      );
+    }
+    if (!Array.isArray(columns) || columns.length === 0) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        "InsertQueryBuilder.values(columns, query) requires at least one column: the properties the query's select list fills, in order.",
+      );
+    }
+    const repeated = columns.find((c, i) => columns.indexOf(c) !== i);
+    if (repeated !== undefined) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `InsertQueryBuilder.values(columns, query) names '${repeated}' twice.`,
+      );
+    }
+    this.source = { properties: [...columns], query };
+    return this;
   }
 
   /** `col = EXCLUDED.col` for each named column. */

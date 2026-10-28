@@ -52,11 +52,13 @@ import { UpdateQueryBuilder } from "../UpdateQueryBuilder";
 import {
   DmlSqlBuilder,
   type InsertConflictAction,
+  type InsertRows,
   type UpsertManagedAssignments,
 } from "./DmlSqlBuilder";
 import type {
   ConflictAction,
   InsertBuilderSpec,
+  InsertSelectSource,
   InsertValues,
 } from "../InsertQueryBuilder";
 import {
@@ -2385,13 +2387,8 @@ export class WriteExecutor {
   /**
    * Resolves an {@link InsertBuilderSpec} down to the pieces
    * {@link DmlSqlBuilder.buildInsertOnConflictSql} needs: the named columns,
-   * one VALUES tuple per row, the wrapped conflict target and the rendered
-   * DO UPDATE assignments.
-   *
-   * The defaults (`applyBulkInsertDefaults`) mutate the caller's rows, which
-   * is why this runs inside the transaction on the execute path and on a
-   * copy nowhere else — `insertMany()` has always behaved that way and the
-   * builder is documented to match it.
+   * the rows (VALUES tuples, or the query of an `INSERT … SELECT`), the
+   * wrapped conflict target and the rendered DO UPDATE assignments.
    */
   private prepareBuilderInsert<T>(
     entity: ClazzType<T>,
@@ -2400,11 +2397,36 @@ export class WriteExecutor {
     guard: UpsertConflictGuard | null,
   ): {
     columns: Sql[];
-    valueRows: Sql[];
+    rows: InsertRows;
     conflictColumns: string[];
     action: InsertConflictAction;
   } {
     this.assertNotJoinedChild(entity, "createInsertBuilder");
+    const { columns, rows } = spec.source
+      ? this.builderSelectRows(entity, metadata, spec.source, spec.action)
+      : this.builderValueRows(entity, metadata, spec);
+
+    return {
+      columns,
+      rows,
+      conflictColumns: this.resolveConflictColumns(entity, metadata, spec),
+      action: this.renderConflictAction(entity, metadata, spec.action, guard),
+    };
+  }
+
+  /**
+   * The column list and VALUES tuples of a builder INSERT.
+   *
+   * The defaults (`applyBulkInsertDefaults`) mutate the caller's rows, which
+   * is why this runs inside the transaction on the execute path and on a
+   * copy nowhere else — `insertMany()` has always behaved that way and the
+   * builder is documented to match it.
+   */
+  private builderValueRows<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    spec: InsertBuilderSpec<T>,
+  ): { columns: Sql[]; rows: InsertRows } {
     const items = spec.items as Partial<T>[];
     this.applyBulkInsertDefaults(entity, metadata, items);
 
@@ -2428,13 +2450,180 @@ export class WriteExecutor {
       "createInsertBuilder()",
       defaultedColumns,
     );
+    return { columns, rows: { valueRows } };
+  }
+
+  /**
+   * The column list and SELECT of an `INSERT … SELECT`: the columns the
+   * query fills by position, then the ones the ORM fills itself, whose
+   * values are appended to the query's select list — unlisted
+   * `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` columns seeded as
+   * `insertMany()` seeds them, the tenant column and the STI discriminator.
+   *
+   * The selected values never leave the database, so no write transformer
+   * applies to them; the appended ones go through it as in a VALUES row.
+   */
+  private builderSelectRows<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    source: InsertSelectSource,
+    action: ConflictAction,
+  ): { columns: Sql[]; rows: InsertRows } {
+    const site = "createInsertBuilder().values(columns, query)";
+    const listed: string[] = [];
+    for (const property of source.properties) {
+      const columnName = this.insertSelectColumn(entity, metadata, property, site);
+      if (listed.includes(columnName)) {
+        throw new OrmError(
+          OrmErrorCode.INVALID_QUERY,
+          `${site}: '${property}' writes the column '${columnName}', which another of the columns already writes.`,
+        );
+      }
+      listed.push(columnName);
+    }
+
+    this.assertSelectSuppliesGeneratedKeys(entity, metadata, listed, site);
+
+    const filled: Array<{ alias: string; value: RawValue }> = [];
+    const fill = (columnName: string, value: unknown) => {
+      const column = metadata.columns.find(
+        (col: ColumnMetadata) => col.name === columnName,
+      );
+      filled.push({
+        alias: columnName,
+        value: (column
+          ? this.ctx.applyWriteTransform(column, value, site)
+          : value) as RawValue,
+      });
+    };
+
+    const now = new Date();
+    const seeded: Array<[string | null, unknown]> = [
+      [this.resolver.getCreateTimestampColumn(entity), now],
+      [this.resolver.getUpdateTimestampColumn(entity), now],
+      [this.resolver.getVersionColumn(entity), 1],
+    ];
+    for (const [columnName, value] of seeded) {
+      if (columnName && !listed.includes(columnName)) fill(columnName, value);
+    }
+
+    const tenantColumn = this.ctx.getTenantColumnConfig()
+      ? this.ctx.resolveTenantColumnName(entity)
+      : null;
+    if (tenantColumn) {
+      this.assertNotSelected(entity, listed, tenantColumn, "the tenant column", site);
+      // The same context check and value a VALUES row gets.
+      const probe: Record<string, unknown> = {};
+      this.ctx.applyTenantColumnOnInsert(entity, probe as Partial<T>);
+      fill(tenantColumn, Object.values(probe)[0]);
+    }
+
+    const discriminator = this.insertDiscriminator(entity);
+    if (discriminator) {
+      this.assertNotSelected(
+        entity,
+        listed,
+        discriminator.columnName,
+        "the discriminator",
+        site,
+      );
+      filled.push({ alias: discriminator.columnName, value: discriminator.value });
+    }
+
+    const written = [...listed, ...filled.map((f) => f.alias)];
+    // A VALUES row reads an unwritten column as its default, but from a
+    // query that is a slip, not an intent — and MySQL 8.0.19+ cannot read
+    // it at all (the derived table holds only the written columns).
+    const unwritten =
+      action.kind === "update"
+        ? (action.proposedColumns ?? []).find((c) => !written.includes(c))
+        : undefined;
+    if (unwritten !== undefined) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `${site}: the conflict action reads '${unwritten}' from the proposed row, which this INSERT … SELECT does not write. ` +
+          `Add it to the columns and the query's select list, or read the stored row instead.`,
+      );
+    }
 
     return {
-      columns,
-      valueRows,
-      conflictColumns: this.resolveConflictColumns(entity, metadata, spec),
-      action: this.renderConflictAction(entity, metadata, spec.action, guard),
+      columns: written.map((name) => raw(this.ctx.wrap(name))),
+      rows: { query: source.query.toInsertSource(filled) },
     };
+  }
+
+  /**
+   * The DB column an `INSERT … SELECT` column names: a declared column, or
+   * the join column of a relation that owns a foreign key.
+   */
+  private insertSelectColumn<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    property: string,
+    site: string,
+  ): string {
+    const column = metadata.columns.find(
+      (col: ColumnMetadata) => this.ctx.propKey(col) === property,
+    );
+    // Not every registration path lists a computed column among the columns.
+    if (this.ctx.getComputedColumnNames(entity).has(column?.name ?? property)) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `${site}: '${entity.name}.${property}' is a computed column, which no INSERT writes.`,
+      );
+    }
+    if (column) return column.name;
+    const relation = this.resolver
+      .resolveForeignKeyRelations(entity)
+      .find((rel) => rel.propertyKey === property);
+    if (relation) return relation.joinColumn;
+    throw new OrmError(
+      OrmErrorCode.INVALID_QUERY,
+      `${site}: '${property}' is not a column of ${entity.name}, nor a relation that owns a foreign key.`,
+    );
+  }
+
+  /** Rejects a column the ORM writes itself in an `INSERT … SELECT` column list. */
+  private assertNotSelected<T>(
+    entity: ClazzType<T>,
+    listed: string[],
+    columnName: string,
+    role: string,
+    site: string,
+  ): void {
+    if (!listed.includes(columnName)) return;
+    throw new OrmError(
+      OrmErrorCode.INVALID_QUERY,
+      `${site}: '${columnName}' is ${role} of ${entity.name}, which the ORM writes itself — ` +
+        `a query could select any value for it. Leave it out of the columns.`,
+    );
+  }
+
+  /**
+   * A key the ORM generates for each row (`uuid`, `uuid-v7`) has no row to
+   * be generated for in an `INSERT … SELECT`, so the query must select it.
+   * PostgreSQL's `uuid` keys are the exception: their column DEFAULT
+   * generates them.
+   */
+  private assertSelectSuppliesGeneratedKeys<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    listed: string[],
+    site: string,
+  ): void {
+    for (const column of metadata.columns) {
+      const strategy = column.options?.generationStrategy;
+      if (strategy !== "uuid" && strategy !== "uuid-v7") continue;
+      if (listed.includes(column.name)) continue;
+      if (strategy === "uuid" && this.ctx.isPostgres()) continue;
+      const property = this.ctx.propKey(column);
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `${site}: ${entity.name}.${property} is a ${strategy} key the ORM generates for each row, ` +
+          `and an INSERT … SELECT has no rows to generate it for.`,
+        `Select a key in the query and add '${property}' to the columns.`,
+      );
+    }
   }
 
   /**
@@ -2589,7 +2778,7 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     spec: InsertBuilderSpec<T>,
   ): Promise<{ affected: number }> {
-    if (spec.items.length === 0) {
+    if (spec.items.length === 0 && !spec.source) {
       return { affected: 0 };
     }
 
@@ -2620,7 +2809,7 @@ export class WriteExecutor {
     entity: ClazzType<T>,
     spec: InsertBuilderSpec<T>,
   ): Promise<InstanceType<ClazzType<T>>[]> {
-    if (spec.items.length === 0) {
+    if (spec.items.length === 0 && !spec.source) {
       return [];
     }
     if (!this.driver) {
@@ -2640,6 +2829,14 @@ export class WriteExecutor {
         OrmErrorCode.UNSUPPORTED_DATABASE,
         `executeAndReturn() requires INSERT ... RETURNING, unsupported by ${dialect}. ` +
           `Use execute() and read the rows back.`,
+      );
+    }
+    if (!useReturning && spec.source) {
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `executeAndReturn() cannot return the rows of an INSERT … SELECT on MySQL. ` +
+          `Without RETURNING the written rows are read back by key, and the rows a query writes have no key the ORM knows. ` +
+          `Use execute(), then read the rows with the same query.`,
       );
     }
     if (!useReturning && spec.items.length > 1) {
@@ -2749,7 +2946,7 @@ export class WriteExecutor {
     return this.dmlSqlBuilder.buildInsertOnConflictSql({
       tableName: this.ctx.wrapTable(metadata.name),
       columns: prepared.columns,
-      valueRows: prepared.valueRows,
+      rows: prepared.rows,
       conflictColumns: prepared.conflictColumns,
       constraintName: spec.target?.constraintName,
       indexPredicate: spec.target?.indexPredicate,
