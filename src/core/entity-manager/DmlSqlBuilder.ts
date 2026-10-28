@@ -73,6 +73,12 @@ function rowAliasClause(alias: string | null, wrappedColumns: string[]): Sql {
 }
 
 /**
+ * The rows an {@link DmlSqlBuilder.buildInsertOnConflictSql} statement
+ * writes: a VALUES list, or the SELECT of an `INSERT … SELECT`.
+ */
+export type InsertRows = { valueRows: Sql[] } | { query: Sql };
+
+/**
  * Builds dialect-specific DML SQL fragments (UPDATE / UPSERT / INSERT IGNORE)
  * shared by the write path. Pure SQL composition — holds no state beyond the
  * dialect/identifier helpers it reads from {@link EntityManagerInternals}.
@@ -445,7 +451,8 @@ export class DmlSqlBuilder {
   }
 
   /**
-   * Builds `INSERT … VALUES … ON CONFLICT …` for the INSERT query builder.
+   * Builds `INSERT … VALUES … ON CONFLICT …` (or `INSERT … SELECT …`) for
+   * the INSERT query builder.
    *
    * Unlike {@link buildUpsertQuery}, the DO UPDATE assignments arrive
    * already rendered, so the conflict action can be any expression rather
@@ -459,21 +466,20 @@ export class DmlSqlBuilder {
   buildInsertOnConflictSql(opts: {
     tableName: string;
     columns: Sql[];
-    valueRows: Sql[];
+    rows: InsertRows;
     conflictColumns: string[];
     constraintName?: string;
     indexPredicate?: Sql;
     action: InsertConflictAction;
   }): Sql {
-    const { tableName, columns, valueRows, action } = opts;
-    const head = sql`INSERT INTO ${raw(tableName)} (${join(columns, ", ")}) VALUES ${join(valueRows, ", ")}`;
+    const { action } = opts;
 
     if (action.kind === "none") {
-      return head;
+      return this.insertHead(opts, null);
     }
 
     if (this.ctx.isMySqlFamily()) {
-      return this.buildMySqlConflictTail(head, { ...opts, action });
+      return this.buildMySqlConflictTail({ ...opts, action });
     }
 
     if (!this.ctx.isPostgres() && !this.ctx.isSqlite()) {
@@ -484,6 +490,7 @@ export class DmlSqlBuilder {
     }
 
     const target = this.buildConflictTarget(opts);
+    const head = this.insertHead(opts, null, { conflictFollows: true });
 
     if (action.kind === "nothing") {
       return sql`${head} ON CONFLICT${target} DO NOTHING`;
@@ -492,6 +499,44 @@ export class DmlSqlBuilder {
     const setSql = join(action.set, ", ");
     const filter = action.where ? sql` WHERE ${action.where}` : sql``;
     return sql`${head} ON CONFLICT${target} DO UPDATE SET ${setSql}${filter}`;
+  }
+
+  /**
+   * `INSERT INTO t (cols)` and its rows, up to where a conflict clause would
+   * start.
+   *
+   * An `INSERT … SELECT` takes the query as built, except where the clause
+   * that follows needs more of it:
+   *
+   * - **MySQL 8.0.19+**, reading the proposed row (`alias`): the SELECT form
+   *   takes no row alias, so the query becomes a derived table under the
+   *   same name and column names — `SELECT * FROM (…) AS new (__a, …)` —
+   *   and `new.__a` reads it as it reads the row alias.
+   * - **SQLite**, before ON CONFLICT: its parser takes `ON` after a FROM
+   *   clause for a join constraint, so the query is closed off with a WHERE.
+   */
+  private insertHead(
+    opts: { tableName: string; columns: Sql[]; rows: InsertRows },
+    alias: string | null,
+    options: { ignore?: boolean; conflictFollows?: boolean } = {},
+  ): Sql {
+    const verb = options.ignore ? "INSERT IGNORE INTO" : "INSERT INTO";
+    const into = sql`${raw(verb)} ${raw(opts.tableName)} (${join(opts.columns, ", ")})`;
+    // Each column arrives as a bare raw identifier, so its text is the
+    // wrapped name.
+    const columnNames = () => opts.columns.map((column) => column.sql);
+
+    if ("valueRows" in opts.rows) {
+      return sql`${into} VALUES ${join(opts.rows.valueRows, ", ")}${rowAliasClause(alias, columnNames())}`;
+    }
+    const { query } = opts.rows;
+    if (alias) {
+      return sql`${into} SELECT * FROM (${query})${rowAliasClause(alias, columnNames())}`;
+    }
+    if (options.conflictFollows && this.ctx.isSqlite()) {
+      return sql`${into} SELECT * FROM (${query}) WHERE true`;
+    }
+    return sql`${into} ${query}`;
   }
 
   /**
@@ -531,17 +576,14 @@ export class DmlSqlBuilder {
    * the DO NOTHING case (rewriting the head, since the keyword sits before
    * the table).
    */
-  private buildMySqlConflictTail(
-    head: Sql,
-    opts: {
-      tableName: string;
-      columns: Sql[];
-      valueRows: Sql[];
-      constraintName?: string;
-      indexPredicate?: Sql;
-      action: Exclude<InsertConflictAction, { kind: "none" }>;
-    },
-  ): Sql {
+  private buildMySqlConflictTail(opts: {
+    tableName: string;
+    columns: Sql[];
+    rows: InsertRows;
+    constraintName?: string;
+    indexPredicate?: Sql;
+    action: Exclude<InsertConflictAction, { kind: "none" }>;
+  }): Sql {
     const { action } = opts;
     if (opts.constraintName) {
       throw new OrmError(
@@ -560,7 +602,7 @@ export class DmlSqlBuilder {
       // MySQL has no DO NOTHING; INSERT IGNORE is the equivalent. Note it
       // downgrades every error in the statement to a warning, not just the
       // duplicate-key one — the same tradeoff insertIgnore() already makes.
-      return sql`INSERT IGNORE INTO ${raw(opts.tableName)} (${join(opts.columns, ", ")}) VALUES ${join(opts.valueRows, ", ")}`;
+      return this.insertHead(opts, null, { ignore: true });
     }
 
     if (action.where) {
@@ -570,14 +612,8 @@ export class DmlSqlBuilder {
       );
     }
 
-    const alias = this.proposedRowAlias(opts.tableName);
-    const aliasClause = rowAliasClause(
-      alias,
-      // Each column arrives as a bare raw identifier, so its text is the
-      // wrapped name.
-      opts.columns.map((column) => column.sql),
-    );
-    return sql`${head}${aliasClause} ON DUPLICATE KEY UPDATE ${join(action.set, ", ")}`;
+    const head = this.insertHead(opts, this.proposedRowAlias(opts.tableName));
+    return sql`${head} ON DUPLICATE KEY UPDATE ${join(action.set, ", ")}`;
   }
 
   /**

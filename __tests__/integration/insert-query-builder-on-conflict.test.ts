@@ -20,12 +20,15 @@ import { Column } from "../../src/decorators/Column";
 import { PrimaryColumn } from "../../src/decorators/PrimaryColumn";
 import { PrimaryGeneratedColumn } from "../../src/decorators/PrimaryGeneratedColumn";
 import { UniqueIndex } from "../../src/decorators/UniqueIndex";
+import { UpdateTimestamp } from "../../src/decorators/UpdateTimestamp";
+import { Version } from "../../src/decorators/Version";
 import { EntityManager } from "../../src/core/EntityManager";
 import { qAlias } from "../../src/core/query-builder/alias/qAlias";
 import { qExcluded } from "../../src/core/query-builder/alias/qExcluded";
 import { greatest } from "../../src/core/expressions/ComparisonExpression";
 import { iff } from "../../src/core/expressions/CaseExpression";
 import sql from "../../src/utils/sqlTag";
+import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
 import {
   createTestConnection,
   rawQuery,
@@ -44,6 +47,8 @@ const TABLES = {
   marker: "iqb_marker",
   partial: "iqb_partial",
   counter: "iqb_counter",
+  reading: "iqb_reading",
+  stamped: "iqb_stamped",
 } as const;
 
 type Marker = {
@@ -63,6 +68,18 @@ type Partial_ = {
   hits: number;
   archivedAt: Date | null;
 };
+type Reading = {
+  id: number;
+  mac: string;
+  bucketStart: number;
+  ts: number;
+};
+type Stamped = {
+  mac: string;
+  records: number;
+  updatedAt: Date;
+  version: number;
+};
 
 describe.each(drivers)(
   "[Integration][$label] InsertQueryBuilder ON CONFLICT",
@@ -72,6 +89,8 @@ describe.each(drivers)(
     let MarkerE: new () => Marker;
     let PartialE: new () => Partial_;
     let CounterE: new () => Counter;
+    let ReadingE: new () => Reading;
+    let StampedE: new () => Stamped;
 
     const q = (name: string) => (type === "mysql" ? `\`${name}\`` : `"${name}"`);
 
@@ -103,10 +122,36 @@ describe.each(drivers)(
             @Column({ type: "int" }) hits!: number;
           }
 
+          @Entity({ name: TABLES.reading })
+          class ReadingEntity {
+            @PrimaryGeneratedColumn() id!: number;
+            @Column({ type: "varchar", length: 32 }) mac!: string;
+            @Column({ type: "int" }) bucketStart!: number;
+            @Column({ type: "int" }) ts!: number;
+          }
+
+          @Entity({ name: TABLES.stamped })
+          class StampedEntity {
+            @PrimaryColumn({ type: "varchar", length: 32 }) mac!: string;
+            @Column({ type: "int" }) records!: number;
+            @UpdateTimestamp() updatedAt!: Date;
+            @Version() version!: number;
+          }
+
           MarkerE = MarkerEntity;
           PartialE = PartialEntity;
           CounterE = CounterEntity;
-          return { entities: [MarkerEntity, PartialEntity, CounterEntity] };
+          ReadingE = ReadingEntity;
+          StampedE = StampedEntity;
+          return {
+            entities: [
+              MarkerEntity,
+              PartialEntity,
+              CounterEntity,
+              ReadingEntity,
+              StampedEntity,
+            ],
+          };
         },
       );
       em = conn.em;
@@ -121,7 +166,7 @@ describe.each(drivers)(
     }, 60000);
 
     afterAll(async () => {
-      for (const t of [TABLES.marker, TABLES.partial, TABLES.counter]) {
+      for (const t of Object.values(TABLES)) {
         try {
           await dropTestTable(t);
         } catch {
@@ -132,7 +177,7 @@ describe.each(drivers)(
     });
 
     beforeEach(async () => {
-      for (const t of [TABLES.marker, TABLES.partial, TABLES.counter]) {
+      for (const t of Object.values(TABLES)) {
         await rawQuery(`DELETE FROM ${q(t)}`);
       }
     });
@@ -426,6 +471,124 @@ describe.each(drivers)(
       expect(row.archivedAt).toBeNull();
     });
 
+    describe("INSERT … SELECT", () => {
+      // The entity class exists only once beforeAll has run.
+      const reading = (): any => qAlias(ReadingE, "r");
+
+      /** Readings per (mac, bucket): how many, and the latest timestamp. */
+      function rollupQuery() {
+        const r = reading();
+        return em
+          .createQueryBuilder(ReadingE, "r")
+          .select([
+            r.mac.as("mac"),
+            r.bucketStart.as("bucketStart"),
+            r.id.count().as("records"),
+            r.ts.max().as("lastTs"),
+          ] as any)
+          .groupBy(["r.mac", "r.bucketStart"]);
+      }
+
+      function rollup() {
+        return em
+          .createInsertBuilder(MarkerE)
+          .values(["mac", "bucketStart", "records", "lastTs"], rollupQuery())
+          .onConflict(["mac", "bucketStart"] as any)
+          .doUpdate((t: any, ex: any) => ({
+            records: t.records.add(ex.records),
+            lastTs: greatest(t.lastTs, ex.lastTs),
+          }));
+      }
+
+      beforeEach(async () => {
+        await em.insertMany(ReadingE, [
+          { mac: "aa", bucketStart: 100, ts: 10 },
+          { mac: "aa", bucketStart: 100, ts: 30 },
+          { mac: "bb", bucketStart: 100, ts: 20 },
+        ] as any);
+      });
+
+      it("rolls a query's rows up, then accumulates into them on a rerun", async () => {
+        await rollup().execute();
+        await em.insertMany(ReadingE, [{ mac: "aa", bucketStart: 100, ts: 25 }] as any);
+        await rollup().execute();
+
+        expect(await readAll()).toEqual([
+          { mac: "aa", bucketStart: 100, records: 5, lastTs: 30 },
+          { mac: "bb", bucketStart: 100, records: 2, lastTs: 20 },
+        ]);
+      });
+
+      it("fills the managed columns, also behind a DISTINCT query", async () => {
+        // PostgreSQL types a parameter inside a DISTINCT select list as
+        // text, which the timestamp column would reject.
+        const r = reading();
+        await em
+          .createInsertBuilder(StampedE)
+          .values(
+            ["mac", "records"],
+            em
+              .createQueryBuilder(ReadingE, "r")
+              .select([r.mac.as("mac"), r.bucketStart.as("records")] as any)
+              .setDistinct(),
+          )
+          .execute();
+
+        const rows = (await em.find(StampedE, {
+          orderBy: { mac: "ASC" },
+        } as any)) as Stamped[];
+        expect(rows.map(({ mac, records, version }) => ({ mac, records, version }))).toEqual([
+          { mac: "aa", records: 100, version: 1 },
+          { mac: "bb", records: 100, version: 1 },
+        ]);
+        expect(rows[0].updatedAt).toBeInstanceOf(Date);
+      });
+
+      if (type === "postgres") {
+        it("returns the rows it wrote", async () => {
+          await rollup().execute();
+          const written = (await rollup().executeAndReturn()) as Marker[];
+          expect(
+            written.map((m) => ({ ...m })).sort((a, b) => a.mac.localeCompare(b.mac)),
+          ).toEqual([
+            { mac: "aa", bucketStart: 100, records: 4, lastTs: 30 },
+            { mac: "bb", bucketStart: 100, records: 2, lastTs: 20 },
+          ]);
+        });
+      } else {
+        it("refuses executeAndReturn() with a conflict action before sending anything", async () => {
+          await expect(rollup().executeAndReturn()).rejects.toMatchObject({
+            code: OrmErrorCode.UNSUPPORTED_OPERATION,
+          });
+          expect(await readAll()).toEqual([]);
+        });
+
+        it("returns a plain INSERT … SELECT's rows only where the server has INSERT ... RETURNING", async () => {
+          const insert = () =>
+            em
+              .createInsertBuilder(MarkerE)
+              .values(["mac", "bucketStart", "records", "lastTs"], rollupQuery())
+              .executeAndReturn();
+
+          if (em.getDriver()!.supportsInsertReturning?.()) {
+            // MariaDB 10.5+
+            const rows = (await insert()) as Marker[];
+            expect(
+              rows.map((m) => [m.mac, m.records]).sort(),
+            ).toEqual([
+              ["aa", 2],
+              ["bb", 1],
+            ]);
+          } else {
+            await expect(insert()).rejects.toMatchObject({
+              code: OrmErrorCode.UNSUPPORTED_OPERATION,
+            });
+            expect(await readAll()).toEqual([]);
+          }
+        });
+      }
+    });
+
     if (type === "mysql") {
       describe("ON DUPLICATE KEY UPDATE", () => {
         /** Runs `write` and reads the server's warnings for it on the same session. */
@@ -467,6 +630,44 @@ describe.each(drivers)(
           expect(await readAll()).toEqual([
             { mac: "aa", bucketStart: 100, records: 4, lastTs: 4 },
             { mac: "bb", bucketStart: 100, records: 5, lastTs: 5 },
+          ]);
+        });
+
+        it("raises no warning for an INSERT … SELECT either", async () => {
+          // The SELECT form takes no row alias; MySQL 8.0.19+ reads the
+          // proposed row from a derived table instead of VALUES().
+          await em.insertMany(ReadingE, [
+            { mac: "aa", bucketStart: 100, ts: 10 },
+            { mac: "aa", bucketStart: 100, ts: 30 },
+          ] as any);
+          const r: any = qAlias(ReadingE, "r");
+          const rollup = (tx: EntityManager) =>
+            tx
+              .createInsertBuilder(MarkerE)
+              .values(
+                ["mac", "bucketStart", "records", "lastTs"],
+                tx
+                  .createQueryBuilder(ReadingE, "r")
+                  .select([
+                    r.mac.as("mac"),
+                    r.bucketStart.as("bucketStart"),
+                    r.id.count().as("records"),
+                    r.ts.max().as("lastTs"),
+                  ] as any)
+                  .groupBy(["r.mac", "r.bucketStart"]),
+              )
+              .onConflict(["mac", "bucketStart"] as any)
+              .doUpdate((t: any, ex: any) => ({
+                records: t.records.add(ex.records),
+                lastTs: sql`lastTs + 1`,
+              }))
+              .execute();
+
+          expect(await warningsOf(rollup)).toEqual([]);
+          expect(await warningsOf(rollup)).toEqual([]);
+          // The raw fragment's bare `lastTs` is the stored row's.
+          expect(await readAll()).toEqual([
+            { mac: "aa", bucketStart: 100, records: 4, lastTs: 31 },
           ]);
         });
 

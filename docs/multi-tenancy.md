@@ -576,6 +576,7 @@ With `tenantStrategy: "tenant_column"` the ORM applies four behaviors to every e
 | `save()` with a foreign `tenant_id` in the payload | `TENANT_MISMATCH`, on the INSERT and UPDATE branch alike. The column is never in the UPDATE `SET` list, so a round-tripped entity cannot move its own row |
 | `upsert()` / `batchUpsert()` | the conflict branch skips the row — `affected` counts it as 0 (PostgreSQL/SQLite) and a warning is logged once per entity class |
 | `createInsertBuilder().doUpdate()` | same skip; your own `doUpdateWhere()` predicate is ANDed with the tenant one |
+| `createInsertBuilder().values(columns, query)` | the query reads tenant A's rows only (its own tenant predicate), and every row it writes gets tenant A. Naming the tenant column in `columns` throws `INVALID_QUERY` |
 | `insertIgnore()` | already safe — `DO NOTHING` never writes an existing row (the insert is dropped instead) |
 | `update()` / `updateMany()` / `increment()` / `decrement()` / `delete()` / `deleteMany()` / `softDelete()` / `restore()` | `affected: 0`, nothing written |
 | `createUpdateBuilder()` | `affected: 0`, nothing written |

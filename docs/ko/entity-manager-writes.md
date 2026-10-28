@@ -845,6 +845,56 @@ builder.values({ mac, bucketStart, records, syncedAt: sql`NOW()` });
 
 일반 값에는 평소처럼 컬럼 write 트랜스포머가 적용되고, 프래그먼트는 호출자 책임입니다.
 
+### 쿼리 결과로 삽입하기 — INSERT ... SELECT
+
+`values(columns, query)`는 행 목록 대신 `SelectQueryBuilder`에서 행을 가져옵니다. 행이 애플리케이션을 거치지 않으므로, 주문을 일별 합계로 묶어 넣는 작업이 문장 하나로 끝납니다. 충돌 절을 붙이면 다시 돌렸을 때 이미 저장된 합계에 더해져요.
+
+```typescript
+import { qAlias } from "@stingerloom/orm";
+
+const o = qAlias(Order, "o");
+
+await em.createInsertBuilder(DailyTotal)
+  .values(
+    ["day", "customerId", "total"],
+    em.createQueryBuilder(Order, "o")
+      .select([o.day.as("day"), o.customerId.as("customerId"), o.amount.sum().as("total")])
+      .where(o.status.eq("paid"))
+      .groupBy(["o.day", "o.customerId"]),
+  )
+  .onConflict(["day", "customerId"])
+  .doUpdate((t, ex) => ({ total: t.total.add(ex.total) }))
+  .execute();
+```
+
+```sql
+-- PostgreSQL
+INSERT INTO "daily_totals" ("day", "customer_id", "total")
+SELECT "o"."day" AS "day", "o"."customer_id" AS "customerId", SUM("o"."amount") AS "total"
+  FROM "orders" AS "o" WHERE "o"."status" = $1 GROUP BY "o"."day", "o"."customer_id"
+ON CONFLICT ("day", "customer_id") DO UPDATE SET "total" = ("daily_totals"."total" + EXCLUDED."total")
+```
+
+SQL과 마찬가지로 쿼리가 고른 값은 `columns`에 **위치 순서대로** 들어갑니다. 그래서 쿼리는 그 순서대로 컬럼을 명시해서 골라야 합니다. 기본값인 `SELECT *` 그대로인 쿼리는 거부합니다. `*`는 테이블의 물리적 컬럼 순서를 따르는데, 이 순서는 엔티티 정의로 정해지지 않기 때문이에요. `columns`에는 엔티티 프로퍼티를 씁니다. 선언된 컬럼이나, 외래 키를 가진 관계를 쓸 수 있습니다(관계는 조인 컬럼에 씁니다).
+
+쿼리는 만든 그대로 실행됩니다. 어떤 행이 복사될지는 쿼리 자신의 스코프가 정해요. soft-delete 필터, 그리고 `tenant_column` 전략에서는 테넌트 조건이 그대로 적용됩니다. INSERT 쪽은 `insertMany()` 규칙을 따릅니다.
+
+- 테넌트 컬럼, SINGLE_TABLE 판별자, 그리고 `columns`에서 빠진 `@CreateTimestamp` / `@UpdateTimestamp` / `@Version` 컬럼은 ORM이 채웁니다. 값은 쿼리의 SELECT 목록 끝에 덧붙여요. 쿼리가 아무 값이나 고를 수 있으니, 테넌트 컬럼이나 판별자를 `columns`에 넣으면 예외를 던집니다.
+- ORM이 행마다 만드는 키(`@PrimaryGeneratedColumn("uuid")`, `"uuid-v7"`)는 만들어 줄 행이 없습니다. 그래서 쿼리에서 직접 골라 `columns`에 넣어야 하고, 그러지 않으면 `UNSUPPORTED_OPERATION`을 던집니다. 단, PostgreSQL의 `uuid` 키는 컬럼 `DEFAULT`가 생성하므로 예외입니다.
+- 고른 값은 데이터베이스 밖으로 나오지 않으므로 write 트랜스포머가 적용되지 않습니다.
+
+충돌 절은 VALUES 목록일 때와 같지만 제한이 하나 있습니다. VALUES 목록은 쓰지 않은 컬럼을 제안 행에서 읽으면 컬럼 기본값을 돌려줍니다. 그런데 INSERT ... SELECT에서 그런 읽기는 거의 확실히 실수예요. 그래서 그런 컬럼을 `ex`에서 읽는 `doUpdate()`는 예외를 던집니다.
+
+다이얼렉트마다 쿼리를 감싸는 모양이 다른데, 빌더가 알아서 맞춥니다.
+
+- **SQLite**는 충돌 절이 뒤따르면 쿼리를 `SELECT * FROM (…) WHERE true`로 감쌉니다. 그러지 않으면 `ON CONFLICT`의 `ON`을 조인 조건으로 읽기 때문이에요.
+- **MySQL 8.0.19+**의 SELECT 형태에는 행 별칭이 없습니다. 그래서 `doUpdate()`는 같은 이름의 파생 테이블 `SELECT * FROM (…) AS new (__day, …)`에서 제안 행을 읽고, deprecated된 `VALUES()`를 쓰지 않습니다. **MariaDB**와 이전 MySQL은 `VALUES()`를 씁니다.
+- **PostgreSQL**은 ORM이 덧붙인 값을 `DISTINCT` SELECT 목록 바깥으로 옮깁니다. 목록 안에 두면 PostgreSQL이 그 값을 text로 판단해서 timestamp 컬럼이 거부해요.
+
+`executeAndReturn()`은 INSERT에 `RETURNING`이 있는 곳에서 쓴 행을 돌려줍니다. PostgreSQL과 SQLite, 그리고 충돌 절이 없을 때의 MariaDB 10.5+입니다. 나머지 경우에는 `UNSUPPORTED_OPERATION`을 던집니다. MySQL에서는 쓴 행을 키로 다시 읽는데, 쿼리가 쓴 행은 ORM이 아는 키가 없기 때문이에요.
+
+`SelectQueryBuilder`로 표현할 수 없는 소스(윈도 함수, 집합 연산, CTE)는 원시 문장 `em.query(sql\`INSERT INTO … ${rawQb.build()}\`)`으로 씁니다. 이 경우 ORM은 아무것도 채우지 않으므로 테넌트 스코프도 직접 작성해야 합니다.
+
 ### doUpdate()의 세 가지 형태
 
 ```typescript
@@ -951,7 +1001,7 @@ PostgreSQL과 SQLite에서는 `RETURNING *`을 쓰므로 여러 행짜리 문장
 - auto-increment 기본 키는 `LAST_INSERT_ID()`로 받아 옵니다. 갱신 경로에서는 충돌 절에 `id = LAST_INSERT_ID(id)`를 함께 넣는데, 키 값은 바뀌지 않습니다.
 - 그 밖에는 `onConflict()` 컬럼(갱신일 때)이나 기본 키로 다시 읽습니다. 그래서 행에 그 값이 들어 있어야 하고, 그 컬럼들이 유니크 키를 이뤄야 합니다.
 
-두 행 이상을 넘기면 아무것도 보내기 전에 `UNSUPPORTED_OPERATION`을 던집니다. MariaDB 10.5+는 충돌 절이 없는 INSERT라면 `RETURNING`으로 행을 돌려줍니다. 충돌 절이 있으면 MySQL과 같은 경로를 타는데, `ON DUPLICATE KEY UPDATE`나 `INSERT IGNORE` 행에 대해 MariaDB의 `RETURNING`이 무엇을 보고하는지 정해져 있지 않기 때문이에요.
+두 행 이상을 넘기면 아무것도 보내기 전에 `UNSUPPORTED_OPERATION`을 던집니다. MariaDB 10.5+는 충돌 절이 없는 INSERT라면 `RETURNING`으로 행을 돌려줍니다. 충돌 절이 있으면 MySQL과 같은 경로를 타는데, `ON DUPLICATE KEY UPDATE`나 `INSERT IGNORE` 행에 대해 MariaDB의 `RETURNING`이 무엇을 보고하는지 정해져 있지 않기 때문이에요. INSERT ... SELECT는 다시 읽을 행이 없으므로 이 경로에서 예외를 던집니다.
 
 ### SQL 확인
 
@@ -985,7 +1035,8 @@ const { text, values } = em.createInsertBuilder(SyncMarker)
 | `onConflictConstraint()` | 지원 | 예외 | 예외 |
 | `doNothing()` | `DO NOTHING` | `INSERT IGNORE` | `DO NOTHING` |
 | `doUpdateWhere()` | 지원 | 예외 | 지원 |
-| `executeAndReturn()` | `RETURNING *` | 호출당 한 행, 키로 다시 읽음 (MariaDB 10.5+의 충돌 절 없는 INSERT는 `RETURNING *`) | `RETURNING *` |
+| `executeAndReturn()` | `RETURNING *` | 호출당 한 행, 키로 다시 읽음 (MariaDB 10.5+의 충돌 절 없는 INSERT는 `RETURNING *`), INSERT ... SELECT는 예외 | `RETURNING *` |
+| `values(columns, query)` | 쿼리 그대로 | 쿼리 그대로, MySQL 8.0.19+의 `doUpdate()`는 파생 테이블 `AS new (…)` | 충돌 절 앞에서 `SELECT * FROM (…) WHERE true` |
 
 MySQL은 모든 유니크 키를 한꺼번에 대상으로 삼기 때문에 지정할 충돌 대상 자체가 없습니다. 그래도 `.onConflict([...])`를 붙여 두는 편이 좋아요. 같은 호출을 PostgreSQL로 그대로 옮길 수 있으니까요.
 
