@@ -1656,7 +1656,7 @@ export class Account {
 }
 ```
 
-이 모드는 읽기(`find*`, `findWithCursor`, `stream`, RETURNING 행)와 `saveMany()` / `insertManyAndReturn()`가 배치에서 유도하는 기본 키에 적용됩니다. 쓰기는 어느 모드에서든 number, 숫자 문자열, `BigInt`를 모두 받아요. 모든 드라이버가 `BigInt` 파라미터를 네이티브로 바인딩하므로 `where: { snowflakeId: 9007199254740993n }`도 캐스팅 없이 동작합니다. 집계는 `number` 반환 타입을 유지합니다. `sum()` / `min()` / `max()`(그리고 `SelectQueryBuilder`의 대응 메서드)는 ±2^53을 넘는 정수 결과를 반올림하는 대신 `BIGINT_PRECISION_LOSS`를 던지므로, 그런 값은 `getRawOne()`에 `coerce: { total: "bigint" }`를 주어 읽으세요. 커서 페이지네이션은 `BigInt` 정렬 값과 키 값을 인코딩하고, `logging: true`는 `BigInt` 파라미터를 숫자 문자열로 출력합니다.
+이 모드는 읽기(`find*`, `findWithCursor`, `stream`, RETURNING 행)와 `saveMany()` / `insertManyAndReturn()`가 배치에서 유도하는 기본 키에 적용됩니다. 쓰기는 어느 모드에서든 number, 숫자 문자열, `BigInt`를 모두 받아요. 모든 드라이버가 `BigInt` 파라미터를 네이티브로 바인딩하므로 `where: { snowflakeId: 9007199254740993n }`도 캐스팅 없이 동작합니다. `sql` 조각에 넣는 `BigInt` 값(`` sql`... WHERE snowflake_id = ${id}` ``, `join([...])`)도 마찬가지입니다. 집계는 `number` 반환 타입을 유지합니다. `sum()` / `min()` / `max()`(그리고 `SelectQueryBuilder`의 대응 메서드)는 ±2^53을 넘는 정수 결과를 반올림하는 대신 `BIGINT_PRECISION_LOSS`를 던지므로, 그런 값은 `getRawOne()`에 `coerce: { total: "bigint" }`를 주어 읽으세요. 커서 페이지네이션은 `BigInt` 정렬 값과 키 값을 인코딩하고, `logging: true`는 `BigInt` 파라미터를 숫자 문자열로 출력합니다.
 
 SQLite에서는 bigint 컬럼을 `BIGINT`로 선언합니다(INTEGER affinity와 저장 방식은 이전과 동일). 커넥터가 어떤 문장에 무손실 정수 읽기가 필요한지 구분하기 위해서예요. `INTEGER`로 선언된 기존 테이블도 그대로 동작하고 타입 변경으로 보고되지 않지만, ±2^53을 넘는 값은 컬럼을 `BIGINT`로 다시 만들기 전까지 반올림된 채로 남습니다. 자동 증가 기본 키는 SQLite rowid의 별칭이 되는 유일한 표기인 `INTEGER PRIMARY KEY`를 유지합니다.
 
