@@ -1,10 +1,20 @@
 import sqlDefault, {
   Sql,
   raw,
-  join,
+  join as joinValues,
   empty,
-  type RawValue,
+  type Value as TagValue,
 } from "sql-template-tag";
+
+/**
+ * A value a fragment binds as a statement parameter. sql-template-tag's own
+ * type leaves out `bigint`, but the tag passes every value through untouched
+ * and every driver binds a `BigInt` parameter natively, so the wrapper widens
+ * the type instead of making callers cast.
+ */
+export type Value = TagValue | bigint;
+/** A bound value, or a nested fragment spliced in as SQL. */
+export type RawValue = Value | Sql;
 
 /**
  * Interop-safe access to sql-template-tag for both build outputs.
@@ -17,15 +27,18 @@ import sqlDefault, {
  * unwraps whichever shape arrives. Do not import "sql-template-tag" directly
  * (guarded by __tests__/unit/sql-template-tag-wrapper.test.ts).
  */
+type SqlTag = (strings: ReadonlyArray<string>, ...values: RawValue[]) => Sql;
+
 const sqlAny = sqlDefault as unknown;
-const sql: typeof sqlDefault =
-  typeof sqlAny === "function"
-    ? (sqlAny as typeof sqlDefault)
-    : (sqlAny as { default: typeof sqlDefault }).default;
+const sql = (
+  typeof sqlAny === "function" ? sqlAny : (sqlAny as { default: unknown }).default
+) as SqlTag;
+
+/** Join values (or fragments) with a separator, `", "` by default. */
+const join = joinValues as (values: RawValue[], separator?: string) => Sql;
 
 export default sql;
 export { sql, Sql, raw, join, empty };
-export type { RawValue };
 
 /**
  * Structural check for a `sql\`\`` fragment.

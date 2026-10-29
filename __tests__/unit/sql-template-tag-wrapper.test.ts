@@ -28,6 +28,27 @@ describe("sqlTag wrapper", () => {
     expect(empty).toBeInstanceOf(Sql);
   });
 
+  describe("bigint values", () => {
+    it("binds a BigInt as a parameter, unchanged", () => {
+      const query = sql`SELECT * FROM t WHERE id = ${9007199254740993n}`;
+      expect(query.sql).toBe("SELECT * FROM t WHERE id = ?");
+      expect(query.values).toEqual([9007199254740993n]);
+    });
+
+    it("joins BigInt values and keeps them through a nested fragment", () => {
+      const query = sql`SELECT * FROM t WHERE id IN (${join([1n, 2n])})`;
+      expect(query.sql).toBe("SELECT * FROM t WHERE id IN (?,?)");
+      expect(query.values).toEqual([1n, 2n]);
+    });
+
+    it("still rejects a value no driver binds", () => {
+      const bind = (value: symbol) =>
+        // @ts-expect-error a symbol is not a bindable value
+        sql`SELECT ${value}`;
+      expect(typeof bind).toBe("function");
+    });
+  });
+
   /**
    * The ESM build breaks on direct default imports of sql-template-tag (a
    * CJS package whose default binding becomes module.exports under Node

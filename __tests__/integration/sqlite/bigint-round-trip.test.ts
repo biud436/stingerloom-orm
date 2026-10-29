@@ -29,7 +29,7 @@ import {
   t,
   type InferEntity,
 } from "../../../src";
-import { sql, raw } from "../../../src/utils/sqlTag";
+import { sql, raw, join } from "../../../src/utils/sqlTag";
 
 const suffix = String(Date.now()).slice(-6);
 
@@ -251,6 +251,25 @@ describe("[Integration] SQLite In-Memory: bigint round trip beyond 2^53", () => 
       expect(rows[0].big).toBe(UNSAFE);
       expect(typeof rows[0].id).toBe("number");
       expect(rows[1].big).toBe(42);
+    });
+
+    it("binds a BigInt in a sql fragment without rounding it", async () => {
+      const table = raw(`"bi_str_${suffix}"`);
+      const exact = await conn.em.query<{ big: unknown }>(
+        sql`SELECT "big" FROM ${table} WHERE "big" = ${UNSAFE_BIG}`,
+      );
+      expect(exact.map((row) => row.big)).toEqual([UNSAFE]);
+
+      // 2^53, what 2^53 + 1 rounds to as a number, matches no row.
+      const rounded = await conn.em.query(
+        sql`SELECT "big" FROM ${table} WHERE "big" = ${9007199254740992n}`,
+      );
+      expect(rounded).toEqual([]);
+
+      const listed = await conn.em.query<{ big: unknown }>(
+        sql`SELECT "big" FROM ${table} WHERE "big" IN (${join([UNSAFE_BIG, 42n])}) ORDER BY "id"`,
+      );
+      expect(listed.map((row) => row.big)).toEqual([UNSAFE, 42]);
     });
 
     it("keeps MAX() over a bigint column lossless", async () => {
