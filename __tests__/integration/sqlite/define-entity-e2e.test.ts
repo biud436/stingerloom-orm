@@ -177,4 +177,63 @@ describe("[Integration] SQLite: defineEntity builder e2e", () => {
       await (pplEm as unknown as { destroy?: () => Promise<void> }).destroy?.();
     }
   });
+
+  it("round-trips a value object through a typed transformer()", async () => {
+    class Cents {
+      constructor(readonly amount: number) {}
+    }
+    class Instant {
+      constructor(readonly date: Date) {}
+    }
+    const Invoice = defineEntity("dee_invoices", {
+      id: t.int().primary().generated(),
+      // A temporal column reads as Date or as text depending on the driver.
+      issuedAt: t.datetime().transformer({
+        to: (value: Instant) => value.date,
+        from: (raw: Date | string) => new Instant(new Date(raw)),
+      }),
+      total: t.varchar(32).transformer({
+        to: (value: Cents) => String(value.amount),
+        from: (raw: string) => new Cents(Number(raw)),
+      }),
+      refund: t
+        .varchar(32)
+        .nullable()
+        .transformer({
+          to: (value: Cents | null) => (value === null ? null : String(value.amount)),
+          from: (raw: string) => new Cents(Number(raw)),
+        }),
+    });
+    const invEm = await createTestEntityManager({ entities: [Invoice] });
+    try {
+      // The payload is typed with the value object, no cast.
+      const issuedAt = new Date("2026-10-30T09:15:00.000Z");
+      const saved = await invEm.save(Invoice, {
+        issuedAt: new Instant(issuedAt),
+        total: new Cents(250),
+        refund: null,
+      });
+
+      const stored = (await invEm.query(
+        "SELECT total, refund FROM dee_invoices WHERE id = ?",
+        [saved.id],
+      )) as Array<{ total: string; refund: string | null }>;
+      expect(stored[0]).toEqual({ total: "250", refund: null });
+
+      const found = await invEm.findOne(Invoice, { where: { id: saved.id } });
+      expect(found!.total).toBeInstanceOf(Cents);
+      // `.amount` compiles only because the field is typed `Cents`.
+      expect(found!.total.amount).toBe(250);
+      expect(found!.refund).toBeNull();
+      expect(found!.issuedAt.date.getTime()).toBe(issuedAt.getTime());
+
+      // A where operand is the value object too; `to` maps it to the stored form.
+      const matched = await invEm.find(Invoice, {
+        where: { total: new Cents(250) },
+      });
+      expect(matched.map((row) => row.id)).toEqual([saved.id]);
+    } finally {
+      await (invEm as unknown as { destroy?: () => Promise<void> }).destroy?.();
+    }
+  });
 });

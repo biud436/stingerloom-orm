@@ -250,6 +250,29 @@ describe("defineRow — reading raw rows", () => {
     }
   });
 
+  it("types a transformed field as the value its transformer reads", () => {
+    class Cents {
+      constructor(readonly amount: number) {}
+    }
+    const Shape = defineRow({
+      total: t.varchar().transformer({ from: (raw: string) => new Cents(Number(raw)) }),
+      refund: t
+        .varchar()
+        .nullable()
+        .transformer({ from: (raw: string) => new Cents(Number(raw)) }),
+    });
+    const [row] = read(Shape, [{ total: "250", refund: null }]);
+
+    const _total: Cents = row.total;
+    const _refund: Cents | null = row.refund;
+    // @ts-expect-error — the field is the transformed value, not the stored string.
+    const _stored: string = row.total;
+    void [_total, _refund, _stored];
+    expect(row.total).toBeInstanceOf(Cents);
+    expect(row.total.amount).toBe(250);
+    expect(row.refund).toBeNull();
+  });
+
   it("reads a field from the column named by .name() and drops the column key", () => {
     const Shape = defineRow({ cachedAt: t.datetime().name("cached_at") });
     const [row] = read(Shape, [{ cached_at: "2026-10-24 00:00:00" }]);

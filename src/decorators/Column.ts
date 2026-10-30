@@ -109,6 +109,11 @@ export function isKnownColumnType(type: string): type is KnownColumnType {
  * round-trip stringifies on write and parses on read so users can assign
  * plain JS values directly.
  *
+ * `TEntity` is the property's type and `TDb` the stored value's type. Both
+ * default to `any`, so an unparameterized `ColumnTransformer` accepts any
+ * pair of functions. `from` never sees SQL `NULL` (it reads as `null`), while
+ * `to` is called with `null` when the property is `null`.
+ *
  * @example
  * ```ts
  * @Column({
@@ -121,9 +126,9 @@ export function isKnownColumnType(type: string): type is KnownColumnType {
  * email: string;
  * ```
  */
-export interface ColumnTransformer {
-  to?: (entityValue: any) => any;
-  from?: (dbValue: any) => any;
+export interface ColumnTransformer<TEntity = any, TDb = any> {
+  to?: (entityValue: TEntity) => TDb;
+  from?: (dbValue: TDb) => TEntity;
 }
 
 export interface ColumnOption {

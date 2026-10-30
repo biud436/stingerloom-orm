@@ -38,6 +38,17 @@ export abstract class SchemaBuilder<TInfer, TKind extends BuilderKind> {
 }
 
 /**
+ * `U`, plus `null` when the builder's type `T` already admits it (a
+ * `nullable()` or `deletedAt()` earlier in the chain). An `unknown` / `any`
+ * column (untyped `t.json()`) says nothing about nullability, so it adds none.
+ */
+type KeepNullable<T, U> = unknown extends T
+  ? U
+  : null extends T
+    ? U | null
+    : U;
+
+/**
  * Fluent builder for a stored column. Every modifier returns a new builder so
  * the inferred type can change (`nullable()` widens `T` to `T | null`) while
  * keeping the chain immutable.
@@ -134,9 +145,23 @@ export class ColumnBuilder<TInfer> extends SchemaBuilder<TInfer, "column"> {
     return this.with({ renamedFrom: oldColumnName });
   }
 
-  /** Bidirectional value transformer (decorator-free `@Column({ transformer })`). */
-  transformer(transformer: ColumnTransformer): ColumnBuilder<TInfer> {
-    return this.with({ transformer });
+  /**
+   * Bidirectional value transformer (decorator-free `@Column({ transformer })`).
+   *
+   * The field takes the transformer's entity-side type `U` — the return of
+   * `from`, the parameter of `to` — so a value object or a date-library type
+   * replaces the column's own type in `InferEntity`. A transformer that infers
+   * nothing keeps the column's type. A column that is already nullable stays
+   * nullable, since NULL reads as `null` without calling `from`. `to` is
+   * called with `null` for a null property, so accept it there.
+   */
+  // `NoInfer` keeps the `defineEntity` column map's contextual type
+  // (`SchemaBuilder<any, any>`) from inferring `U` as `any` when the
+  // transformer itself gives no candidate.
+  transformer<U = TInfer>(
+    transformer: ColumnTransformer<U>,
+  ): ColumnBuilder<NoInfer<KeepNullable<TInfer, U>>> {
+    return this.with<KeepNullable<TInfer, U>>({ transformer });
   }
 
   /** Declares a JSON/JSONB expression index over this column. */

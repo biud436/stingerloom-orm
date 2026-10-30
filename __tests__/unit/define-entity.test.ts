@@ -3,7 +3,7 @@ import "reflect-metadata";
 import { getScannerInstance } from "../../src/scanner/ScannerContainer";
 import { defineEntity, t, InferEntity, EntitySchema } from "../../src/schema";
 import { ENTITY_TOKEN, EntityMetadata } from "../../src/decorators/Entity";
-import { COLUMN_TOKEN } from "../../src/decorators/Column";
+import { COLUMN_TOKEN, ColumnTransformer } from "../../src/decorators/Column";
 import { MANY_TO_ONE_TOKEN } from "../../src/decorators/ManyToOne";
 import { ONE_TO_MANY_TOKEN } from "../../src/decorators/OneToMany";
 import { ONE_TO_ONE_TOKEN } from "../../src/decorators/OneToOne";
@@ -535,6 +535,122 @@ describe("defineEntity — type inference", () => {
     // @ts-expect-error — `id` is a number, not a string.
     const _badId: PostRow = { ...post, id: "1" };
     void _badId;
+  });
+});
+
+/** A value object a transformer maps a stored string to. */
+class Cents {
+  constructor(readonly amount: number) {}
+  static parse(raw: string): Cents {
+    return new Cents(Number(raw));
+  }
+  toString(): string {
+    return String(this.amount);
+  }
+}
+
+describe("defineEntity — transformer() type inference", () => {
+  it("types the field as the transformer's entity-side value", () => {
+    const transformer = {
+      to: (value: Cents) => value.toString(),
+      from: (raw: string) => Cents.parse(raw),
+    };
+    const Order = defineEntity("de_tt_order", {
+      id: t.int().primary().generated(),
+      total: t.varchar(32).transformer(transformer),
+      // `to` is unannotated: its parameter comes from `from`'s return type.
+      tax: t.varchar(32).transformer({
+        from: (raw: string) => Cents.parse(raw),
+        to: (value) => String(value.amount),
+      }),
+    });
+    type OrderRow = InferEntity<typeof Order>;
+
+    const row: OrderRow = { id: 1, total: new Cents(250), tax: new Cents(25) };
+    const _total: Cents = row.total;
+    const _tax: Cents = row.tax;
+    void [_total, _tax];
+
+    // @ts-expect-error — the field is no longer the stored string.
+    const _stored: string = row.total;
+    // @ts-expect-error — nor `any`: the unannotated form infers the same type.
+    const _taxStored: string = row.tax;
+    // @ts-expect-error — a string is not accepted where the value object is.
+    const _write: OrderRow = { ...row, total: "250" };
+    void [_stored, _taxStored, _write];
+
+    const columns: ColumnMetadata[] = Reflect.getMetadata(
+      COLUMN_TOKEN,
+      Order.prototype,
+    );
+    const total = columns.find((c) => c.propertyKey === "total")!;
+    expect(total.transformer).toBe(transformer);
+  });
+
+  it("accepts a reusable ColumnTransformer<TEntity, TDb>", () => {
+    const cents: ColumnTransformer<Cents, string> = {
+      to: (value) => value.toString(),
+      from: (raw) => Cents.parse(raw),
+    };
+    const Order = defineEntity("de_tt_reusable", {
+      id: t.int().primary().generated(),
+      total: t.varchar(32).transformer(cents),
+    });
+    const row = {} as InferEntity<typeof Order>;
+    const _total: Cents = row.total;
+    void _total;
+    expect(Order).toBeDefined();
+  });
+
+  it("keeps nullable() whichever side of transformer() it is on", () => {
+    // `to` also receives null for a null property, so it accepts null here.
+    const to = (value: Cents | null) => (value === null ? null : value.toString());
+    const from = (raw: string) => Cents.parse(raw);
+    const Order = defineEntity("de_tt_nullable", {
+      id: t.int().primary().generated(),
+      before: t.varchar(32).nullable().transformer({ to, from }),
+      after: t.varchar(32).transformer({ to, from }).nullable(),
+      removedAt: t.varchar(32).deletedAt().transformer({ to, from }),
+    });
+    type OrderRow = InferEntity<typeof Order>;
+
+    const row: OrderRow = { id: 1, before: null, after: null, removedAt: null };
+    const _before: Cents | null = row.before;
+    const _after: Cents | null = row.after;
+    const _removedAt: Cents | null = row.removedAt;
+    void [_before, _after, _removedAt];
+
+    // @ts-expect-error — a nullable column stays nullable after transformer().
+    const _notNull: Cents = row.before;
+    void _notNull;
+    expect(Order).toBeDefined();
+  });
+
+  it("does not make a non-nullable or untyped json column nullable", () => {
+    const Order = defineEntity("de_tt_not_null", {
+      id: t.int().primary().generated(),
+      total: t.varchar(32).transformer({ from: (raw: string) => Cents.parse(raw) }),
+      payload: t.json().transformer({ from: (raw: string) => Cents.parse(raw) }),
+    });
+    const row = {} as InferEntity<typeof Order>;
+    const _total: Cents = row.total;
+    const _payload: Cents = row.payload;
+    void [_total, _payload];
+    expect(Order).toBeDefined();
+  });
+
+  it("keeps the column type for a transformer that does not change it", () => {
+    const Account = defineEntity("de_tt_same_type", {
+      id: t.int().primary().generated(),
+      // No annotation anywhere: `value` is the column's own type.
+      email: t.varchar(255).transformer({ to: (value) => value.toLowerCase() }),
+    });
+    const row = {} as InferEntity<typeof Account>;
+    const _email: string = row.email;
+    // @ts-expect-error — still a string column.
+    const _bad: number = row.email;
+    void [_email, _bad];
+    expect(Account).toBeDefined();
   });
 });
 
