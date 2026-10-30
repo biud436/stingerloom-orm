@@ -54,3 +54,5 @@ export {
   type NormalizedIndex,
   type NormalizedForeignKey,
 } from "./driver-helpers";
+
+export { clearMappingScanners } from "./scanners";

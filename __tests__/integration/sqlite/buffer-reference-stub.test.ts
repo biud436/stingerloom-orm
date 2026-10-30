@@ -44,15 +44,8 @@ import {
 } from "../../../src";
 import { bufferPlugin } from "../../../src/core/plugin/buffer/bufferPlugin";
 import type { WriteBuffer } from "../../../src/core/plugin/buffer/WriteBuffer";
-import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
-import {
-  ColumnScanner,
-  ManyToOneScanner,
-  OneToManyScanner,
-  ManyToManyScanner,
-  OneToOneScanner,
-} from "../../../src/scanner";
 import { DatabaseClient } from "../../../src/DatabaseClient";
+import { clearMappingScanners } from "../helpers/scanners";
 
 function shortName(prefix: string): string {
   return `${prefix}_${String(Date.now()).slice(-7)}`;
@@ -103,11 +96,7 @@ describe("[Integration] SQLite: WriteBuffer getReference() stub", () => {
         plugins: [bufferPlugin()],
       },
       () => {
-        getScannerInstance(ColumnScanner).clear();
-        getScannerInstance(ManyToOneScanner).clear();
-        getScannerInstance(OneToManyScanner).clear();
-        getScannerInstance(ManyToManyScanner).clear();
-        getScannerInstance(OneToOneScanner).clear();
+        clearMappingScanners();
 
         // ── Item (plain, for scalar-write tests) ──
         const ItemC = class {} as any;

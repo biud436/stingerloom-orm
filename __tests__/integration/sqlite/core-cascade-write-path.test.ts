@@ -27,16 +27,9 @@ import {
   ManyToOne,
   OneToMany,
 } from "../../../src";
-import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
-import {
-  ColumnScanner,
-  ManyToOneScanner,
-  OneToManyScanner,
-  ManyToManyScanner,
-  OneToOneScanner,
-} from "../../../src/scanner";
 import { DatabaseClient } from "../../../src/DatabaseClient";
 import type { EntitySubscriber } from "../../../src/core/EntitySubscriber";
+import { clearMappingScanners } from "../helpers/scanners";
 
 function shortName(prefix: string): string {
   return `${prefix}_${String(Date.now()).slice(-7)}`;
@@ -61,11 +54,7 @@ describe("[Integration] SQLite: core cascade write paths (non-buffer)", () => {
         logging: false,
       },
       () => {
-        getScannerInstance(ColumnScanner).clear();
-        getScannerInstance(ManyToOneScanner).clear();
-        getScannerInstance(OneToManyScanner).clear();
-        getScannerInstance(ManyToManyScanner).clear();
-        getScannerInstance(OneToOneScanner).clear();
+        clearMappingScanners();
 
         const ParentC = class {} as any;
         Object.defineProperty(ParentC, "name", { value: parentName });
