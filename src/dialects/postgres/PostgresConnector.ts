@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { Pool, PoolClient } from "pg";
+import type { ClientBase, Pool, PoolClient } from "pg";
 import { Sql } from "../../utils/sqlTag";
 import { Logger } from "../../utils/Logger";
 import { stringifyForLog } from "../../utils/stringifyForLog";
@@ -16,6 +16,31 @@ import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DbVersion, detectDbVersion } from "../DbVersion";
 import { isValidPgIdentifier } from "./pgIdentifier";
+
+/**
+ * Pool options that run `statement` on each new client before the pool
+ * hands it out. The caller's first query never queues behind it, and if it
+ * fails the pool discards the client and the caller's acquire fails with
+ * the error — no query runs on a half-prepared client.
+ *
+ * pg-pool 3.13+ (pg 8.20+) waits for `onConnect`; older versions ignore it
+ * and wait for `verify` instead. A client `onConnect` prepared skips
+ * `verify`, so the statement runs once on either.
+ */
+function runOnEachNewClient(statement: string) {
+  const prepared = new WeakSet<ClientBase>();
+  const prepare = async (client: ClientBase): Promise<void> => {
+    if (prepared.has(client)) return;
+    await client.query(statement);
+    prepared.add(client);
+  };
+  return {
+    onConnect: prepare,
+    verify: (client: ClientBase, done: (error?: Error) => void): void => {
+      prepare(client).then(() => done(), done);
+    },
+  };
+}
 
 export class PostgresConnector extends IConnector {
   pool?: Pool;
@@ -97,6 +122,9 @@ export class PostgresConnector extends IConnector {
         sslConfig = { ...ssl };
       }
 
+      // Every connection the pool opens starts on the configured schema.
+      const setSearchPath = `SET search_path TO ${this.escapeIdentifier(this.schema)}`;
+
       const pool = new PgPool({
         host,
         user: username,
@@ -108,18 +136,12 @@ export class PostgresConnector extends IConnector {
         connectionTimeoutMillis: poolOptions?.acquireTimeoutMs ?? 30000,
         idleTimeoutMillis: poolOptions?.idleTimeoutMs ?? 10000,
         ...(sslConfig ? { ssl: sslConfig } : {}),
+        ...runOnEachNewClient(setSearchPath),
       });
 
       this.isDebug = !!logging;
       this.validateOnBorrow = poolOptions?.validateOnBorrow ?? false;
       this.pool = pool;
-
-      // Set the default search_path.
-      // This is then applied to every connection acquired from the pool.
-      const safeSchema = this.escapeIdentifier(this.schema);
-      this.pool.on("connect", (client) => {
-        client.query(`SET search_path TO ${safeSchema}`);
-      });
 
       // Detect the server version (validated `versionOverride` wins).
       this._dbVersion = options.versionOverride
