@@ -31,26 +31,15 @@ import {
   OneToMany,
   DeletedAt,
 } from "../../../src";
-import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
-import {
-  ColumnScanner,
-  ManyToOneScanner,
-  OneToManyScanner,
-  ManyToManyScanner,
-  OneToOneScanner,
-} from "../../../src/scanner";
 import type { EntitySubscriber } from "../../../src/core/EntitySubscriber";
+import { clearMappingScanners } from "../helpers/scanners";
 
 function shortName(prefix: string): string {
   return `${prefix}_${String(Date.now()).slice(-7)}`;
 }
 
 function clearScanners(): void {
-  getScannerInstance(ColumnScanner).clear();
-  getScannerInstance(ManyToOneScanner).clear();
-  getScannerInstance(OneToManyScanner).clear();
-  getScannerInstance(ManyToManyScanner).clear();
-  getScannerInstance(OneToOneScanner).clear();
+  clearMappingScanners();
 }
 
 describe("[Integration] SQLite: relation paths mirror find()/relations", () => {

@@ -32,21 +32,10 @@ import {
   ManyToMany,
 } from "../../../src";
 import { defineEntity, t } from "../../../src/schema";
-import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
-import {
-  ColumnScanner,
-  ManyToOneScanner,
-  OneToManyScanner,
-  ManyToManyScanner,
-} from "../../../src/scanner";
-import { OneToOneScanner } from "../../../src/scanner/OneToOneScanner";
+import { clearMappingScanners } from "../helpers/scanners";
 
 function clearScanners(): void {
-  getScannerInstance(ColumnScanner).clear();
-  getScannerInstance(ManyToOneScanner).clear();
-  getScannerInstance(OneToManyScanner).clear();
-  getScannerInstance(ManyToManyScanner).clear();
-  getScannerInstance(OneToOneScanner).clear();
+  clearMappingScanners();
 }
 
 interface FkRow {
