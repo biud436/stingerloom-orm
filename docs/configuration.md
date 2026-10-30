@@ -29,7 +29,7 @@ await em.register({
 
 PostgreSQL adds a level between the database and its tables: a **schema** is a namespace, and every database starts with one called `public`. The `schema` option names the schema this connection works in (default: `"public"`). It controls three things:
 
-- **Name resolution.** Every pooled connection runs `SET search_path TO "<schema>"` on connect, so unqualified table names in generated SQL resolve there.
+- **Name resolution.** Every new pooled connection runs `SET search_path TO "<schema>"` before the pool hands it out, so unqualified table names in generated SQL resolve there. If that statement fails, the pool discards the connection and the operation that asked for it fails with the error.
 - **DDL target.** `synchronize` creates and alters tables in that schema and provisions ENUM types there; `migrate:generate` introspects it. The schema itself is created when missing.
 - **Multi-tenancy baseline.** The schema-based tenant strategies (`search_path`, `schema_qualified`) switch away from it inside a tenant context and fall back to it outside one -- see [Multi-Tenancy](./multi-tenancy.md).
 
