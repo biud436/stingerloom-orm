@@ -11,9 +11,9 @@ import {
 import { SelectQueryBuilder } from "../../../src/core/SelectQueryBuilder";
 import type { InsertQueryBuilder } from "../../../src/core/InsertQueryBuilder";
 import { EntityManager } from "../../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../../src/core/RelationMetadataResolver";
 import { createDialectExpression } from "../../../src/dialects/DialectExpression";
 import type { DialectName } from "./harness";
+import { createMockEm } from "../helpers/mock-em";
 
 /**
  * Shared entity fixtures + query-builder factory for golden SQL tests.
@@ -65,33 +65,6 @@ export class User {
   deletedAt!: Date;
 }
 
-/** Map a golden `DialectName` to the mock context's dialect string. */
-function ctxDialect(dialect: DialectName): "mysql" | "postgresql" | "sqlite" {
-  return dialect === "postgres" ? "postgresql" : dialect;
-}
-
-/** Build the minimal `EntityManager` surface a `SelectQueryBuilder` consumes. */
-function createMockEm(dialect: DialectName): EntityManager {
-  const resolver = new RelationMetadataResolver();
-  const quote = dialect === "mysql" ? "`" : '"';
-  const wrap = (identifier: string): string =>
-    `${quote}${identifier.split(quote).join(quote + quote)}${quote}`;
-  return {
-    wrap,
-    wrapTable: (table: string) => wrap(table),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => dialect === "mysql",
-      isPostgres: () => dialect === "postgres",
-      isSqlite: () => dialect === "sqlite",
-      getDialect: () => ctxDialect(dialect),
-    },
-    async query<T>(): Promise<T[]> {
-      return [] as T[];
-    },
-  } as unknown as EntityManager;
-}
-
 /**
  * Construct a dialect-bound `SelectQueryBuilder` for one of the fixture
  * entities, with the property->column map and `DialectExpression` wired up
@@ -102,20 +75,7 @@ export function createQbFor<T>(
   alias: string,
   dialect: DialectName,
 ): SelectQueryBuilder<T> {
-  const em = createMockEm(dialect);
-  const qb = new SelectQueryBuilder<T>(entity, alias, em);
-  const resolver = (em as unknown as { resolver: RelationMetadataResolver })
-    .resolver;
-  const meta = resolver.resolveEntityMetadata(entity);
-  if (meta) {
-    const map = new Map<string, string>();
-    for (const column of meta.columns) {
-      const prop =
-        (column as { propertyKey?: string }).propertyKey ?? column.name!;
-      map.set(prop, column.name!);
-    }
-    qb.setPropertyToColumnMap(map);
-  }
+  const qb = createMockEm(dialect).createQueryBuilder(entity, alias);
   qb.setDialectExpression(createDialectExpression(dialect));
   return qb;
 }
@@ -173,12 +133,10 @@ export function createInsertBuilderFor<T>(
       `${quote}${identifier.split(quote).join(quote + quote)}${quote}`,
     ...(rowAlias ? { supportsInsertRowAlias: () => true } : {}),
   };
-  // Note this is the golden `DialectName` verbatim, not `ctxDialect()`:
   // `EntityManager._ctx.getDialect()` returns a `SchemaDialect`
-  // ("postgres", never "postgresql"), and the insert path feeds it
-  // straight to `createDialectExpression()`. The select-path mock above
-  // can use either because `createQbFor` overrides the expression object
-  // explicitly.
+  // ("postgres", never "postgresql"), which the golden `DialectName`
+  // already is; the insert path feeds it straight to
+  // `createDialectExpression()`.
   (em as unknown as { _ctx: { getDialect: () => string } })._ctx.getDialect =
     () => dialect;
   // The dialect predicates and the tenant-scope assertion are private

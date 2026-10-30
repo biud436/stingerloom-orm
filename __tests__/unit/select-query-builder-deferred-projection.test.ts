@@ -22,7 +22,7 @@ import {
 } from "../../src/decorators";
 import { qAlias } from "../../src/core/SelectQueryBuilder";
 import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm } from "./helpers/mock-em";
 
 @Entity({ name: "category" })
 class TreeCat {
@@ -34,22 +34,6 @@ class TreeCat {
   left!: number;
   @Column({ type: "int", name: "RGT_NO" })
   right!: number;
-}
-
-function createMockEm() {
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string) => `\`${col.replace(/`/g, "``")}\``;
-  return {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
-      getDialect: () => "mysql",
-    },
-  } as unknown as EntityManager;
 }
 
 function newQb() {

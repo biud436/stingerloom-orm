@@ -1,8 +1,7 @@
 import "reflect-metadata";
 import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
-import { EntityManager } from "../../src/core/EntityManager";
 import { Entity, PrimaryGeneratedColumn, Column, DeletedAt } from "../../src/decorators";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm } from "./helpers/mock-em";
 
 @Entity()
 class SoftItem {
@@ -14,27 +13,6 @@ class SoftItem {
 
   @DeletedAt()
   deletedAt!: Date | null;
-}
-
-function createMockEm(dbType: "mysql" | "postgresql" = "mysql") {
-  const resolver = new RelationMetadataResolver();
-  function wrap(col: string) {
-    if (dbType === "mysql") return `\`${col.replace(/`/g, "``")}\``;
-    return `"${col.replace(/"/g, '""')}"`;
-  }
-  return {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => dbType === "mysql",
-      isPostgres: () => dbType === "postgresql",
-      isSqlite: () => false,
-    },
-    async query<T>(): Promise<T[]> {
-      return [] as T[];
-    },
-  } as unknown as EntityManager;
 }
 
 describe("SelectQueryBuilder.toSql() immutability", () => {

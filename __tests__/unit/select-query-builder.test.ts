@@ -5,6 +5,7 @@ import { Entity, PrimaryGeneratedColumn, Column, DeletedAt } from "../../src/dec
 import { EntityManager } from "../../src/core/EntityManager";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { createDialectExpression } from "../../src/dialects/DialectExpression";
+import { createMockEm } from "./helpers/mock-em";
 
 // ── Test Entities ──────────────────────────────────────────
 // @Entity uses camelToSnakeCase(className) as table name:
@@ -56,47 +57,6 @@ class SoftItem {
 }
 
 // ── Mock EntityManager ─────────────────────────────────────
-
-function createMockEm(dbType: "mysql" | "postgresql" = "mysql") {
-  const resolver = new RelationMetadataResolver();
-
-  function wrap(col: string) {
-    if (dbType === "mysql") {
-      return `\`${col.replace(/`/g, "``")}\``;
-    }
-    return `"${col.replace(/"/g, '""')}"`;
-  }
-
-  const em = {
-    wrap,
-    wrapTable(tableName: string) {
-      return wrap(tableName);
-    },
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => dbType === "mysql",
-      isPostgres: () => dbType === "postgresql",
-    },
-    async query<T>(): Promise<T[]> {
-      return [] as T[];
-    },
-    createQueryBuilder(entity: any, alias: string) {
-      const qb = new SelectQueryBuilder(entity, alias, em as any);
-      const meta = resolver.resolveEntityMetadata(entity);
-      if (meta) {
-        const map = new Map<string, string>();
-        for (const col of meta.columns) {
-          const prop = (col as any).propertyKey ?? col.name!;
-          map.set(prop, col.name!);
-        }
-        qb.setPropertyToColumnMap(map);
-      }
-      return qb;
-    },
-  } as unknown as EntityManager;
-
-  return em;
-}
 
 // ── Tests ──────────────────────────────────────────────────
 

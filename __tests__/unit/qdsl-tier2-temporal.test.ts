@@ -1,7 +1,6 @@
 import "reflect-metadata";
 import { SelectQueryBuilder, qAlias } from "../../src/core/SelectQueryBuilder";
 import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { createDialectExpression } from "../../src/dialects/DialectExpression";
 import {
@@ -14,6 +13,7 @@ import {
   isScalarExpression,
 } from "../../src/core/expressions/ScalarExpression";
 import { Expressions } from "../../src/core/expressions/LogicalCondition";
+import { createMockEm } from "./helpers/mock-em";
 
 @Entity()
 class Session {
@@ -28,26 +28,6 @@ class Session {
 }
 
 type DbType = "mysql" | "postgresql" | "sqlite";
-
-function createMockEm(dbType: DbType = "postgresql") {
-  const resolver = new RelationMetadataResolver();
-  function wrap(col: string) {
-    if (dbType === "mysql") return `\`${col.replace(/`/g, "``")}\``;
-    return `"${col.replace(/"/g, '""')}"`;
-  }
-  return {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => dbType === "mysql",
-      isPostgres: () => dbType === "postgresql",
-      isSqlite: () => dbType === "sqlite",
-      getDialect: () =>
-        dbType === "mysql" ? "mysql" : dbType === "sqlite" ? "sqlite" : "postgresql",
-    },
-  } as unknown as EntityManager;
-}
 
 function createQb(dbType: DbType = "postgresql") {
   const em = createMockEm(dbType);

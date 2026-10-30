@@ -1,8 +1,7 @@
 import "reflect-metadata";
 import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
 import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
 class User {
@@ -23,31 +22,18 @@ class User {
  * real getCount() + getMany() sequence without a database.
  */
 function createMockEm(opts: { total: number; rows: any[] }) {
-  const resolver = new RelationMetadataResolver();
-  function wrap(col: string) {
-    return `\`${col.replace(/`/g, "``")}\``;
-  }
   const calls: string[] = [];
-  const em = {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
-    },
-    async query<T>(built: any): Promise<T[]> {
+  return sharedMockEm("mysql", {
+    async query(built: any) {
       const text = String(built?.sql ?? built?.text ?? "").toUpperCase();
       calls.push(text);
       if (text.includes("COUNT(*)")) {
-        return [{ count: opts.total }] as unknown as T[];
+        return [{ count: opts.total }];
       }
-      return opts.rows as T[];
+      return opts.rows;
     },
     __calls: calls,
-  } as unknown as EntityManager & { __calls: string[] };
-  return em;
+  });
 }
 
 function makeRows(n: number, startId = 1): any[] {

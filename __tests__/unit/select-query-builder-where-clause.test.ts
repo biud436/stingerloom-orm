@@ -1,8 +1,7 @@
 import "reflect-metadata";
 import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
 import { Entity, PrimaryGeneratedColumn, Column, DeletedAt } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm } from "./helpers/mock-em";
 
 @Entity()
 class User {
@@ -23,41 +22,6 @@ class User {
 
   @DeletedAt()
   deletedAt!: Date | null;
-}
-
-function createMockEm(dbType: "mysql" | "postgresql" = "mysql") {
-  const resolver = new RelationMetadataResolver();
-  function wrap(col: string) {
-    return dbType === "mysql"
-      ? `\`${col.replace(/`/g, "``")}\``
-      : `"${col.replace(/"/g, '""')}"`;
-  }
-  const em = {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => dbType === "mysql",
-      isPostgres: () => dbType === "postgresql",
-      isSqlite: () => false,
-    },
-    async query<T>(): Promise<T[]> {
-      return [] as T[];
-    },
-    createQueryBuilder(entity: any, alias: string) {
-      const qb = new SelectQueryBuilder(entity, alias, em as any);
-      const meta = resolver.resolveEntityMetadata(entity);
-      if (meta) {
-        const map = new Map<string, string>();
-        for (const col of meta.columns) {
-          map.set((col as any).propertyKey ?? col.name!, col.name!);
-        }
-        qb.setPropertyToColumnMap(map);
-      }
-      return qb;
-    },
-  } as unknown as EntityManager;
-  return em;
 }
 
 describe("SelectQueryBuilder.where() — WhereClause filter object", () => {

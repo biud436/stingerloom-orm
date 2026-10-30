@@ -1,8 +1,7 @@
 import "reflect-metadata";
 import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
-import { EntityManager } from "../../src/core/EntityManager";
 import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
 class Item {
@@ -14,28 +13,12 @@ class Item {
 }
 
 function createMockEm(batches: any[][]) {
-  const resolver = new RelationMetadataResolver();
   let callIndex = 0;
-
-  function wrap(col: string) {
-    return `\`${col.replace(/`/g, "``")}\``;
-  }
-
-  return {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
+  return sharedMockEm("mysql", {
+    async query() {
+      return batches[callIndex++] ?? [];
     },
-    async query<T>(): Promise<T[]> {
-      const result = batches[callIndex] ?? [];
-      callIndex++;
-      return result as T[];
-    },
-  } as unknown as EntityManager;
+  });
 }
 
 describe("SelectQueryBuilder.stream()", () => {

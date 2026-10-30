@@ -1,9 +1,7 @@
 import "reflect-metadata";
 import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
-import { EntityManager } from "../../src/core/EntityManager";
 import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
-import { Conditions } from "../../src/core/Conditions";
+import { createMockEm } from "./helpers/mock-em";
 
 @Entity()
 class User {
@@ -15,27 +13,6 @@ class User {
 
   @Column({ type: "int" })
   age!: number;
-}
-
-function createMockEm(dbType: "mysql" | "postgresql" = "mysql") {
-  const resolver = new RelationMetadataResolver();
-  function wrap(col: string) {
-    if (dbType === "mysql") return `\`${col.replace(/`/g, "``")}\``;
-    return `"${col.replace(/"/g, '""')}"`;
-  }
-  return {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => dbType === "mysql",
-      isPostgres: () => dbType === "postgresql",
-      isSqlite: () => false,
-    },
-    async query<T>(): Promise<T[]> {
-      return [] as T[];
-    },
-  } as unknown as EntityManager;
 }
 
 describe("SelectQueryBuilder.clone()", () => {
