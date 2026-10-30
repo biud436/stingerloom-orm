@@ -25,6 +25,7 @@ import {
 } from "../../../src";
 import { EntityManager } from "../../../src/core/EntityManager";
 import { MetadataContext } from "../../../src/metadata/MetadataContext";
+import { EntityNotFoundError } from "../../../src/errors/EntityNotFoundError";
 
 @Entity({ name: "tci_doc" })
 @Inheritance({ strategy: "JOINED" })
@@ -168,7 +169,7 @@ describe("[Integration] SQLite: tenant_column on inheritance hierarchies", () =>
         await em.save(TciReview, { id: acmeId, title: "a2", reviewer: "ann2" } as any);
         await expect(
           em.save(TciReview, { id: globexId, title: "x", reviewer: "x" } as any),
-        ).rejects.toThrow();
+        ).rejects.toThrow(EntityNotFoundError);
       });
       expect(await rawRows(em, `SELECT title FROM tci_doc ORDER BY id`)).toEqual([
         { title: "a2" },

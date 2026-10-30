@@ -30,6 +30,7 @@ import {
 import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../../src/scanner";
 import { DatabaseClient } from "../../../src/DatabaseClient";
+import { DeleteWithoutConditionsError } from "../../../src/errors/DeleteWithoutConditionsError";
 
 // ─────────────────────────────────────────────────────────
 // Helpers
@@ -664,7 +665,7 @@ describe("[Integration] SQLite: Batch Operations", () => {
 
     await expect(
       conn.em.update(BatchEntity, {} as any, { age: 0 } as any),
-    ).rejects.toThrow();
+    ).rejects.toThrow(DeleteWithoutConditionsError);
 
     // Untouched.
     const found = await repo.find();
