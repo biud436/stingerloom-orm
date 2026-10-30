@@ -1,13 +1,13 @@
 # Write-Path Mock-Test Inventory (issue #404)
 
-Audit date: 2026-07-14. Last updated: 2026-08-17 (third round — V4-T1-1
-false-green honesty pass; see the bottom section).
+Audit date: 2026-07-14. Last updated: 2026-10-30 (sixth round — scope
+recount; see the bottom section).
 
 Scope: every `__tests__/unit/` suite that replaces
 `em.save` / `em.update` / `em.delete` / `em.query` / `em.transaction` (or the
 `TransactionSessionManager`) with a mock AND asserts via `toHaveBeenCalled*`.
-49 files matched; each was classified by what its assertions can actually
-prove.
+49 files matched at the audit (58 at the sixth-round recount); each was
+classified by what its assertions can actually prove.
 
 Assertion styles:
 
@@ -213,3 +213,25 @@ Already covered before this round and not repeated: INSERT builder conflict
 actions (`insert-query-builder-on-conflict`), `insertIgnore` /
 `createUpdateBuilder` (upsert and tenant suites), uuid reboot diff
 (`uuid-column-schema-sync`), `em.clear()` (`clear-contract`).
+
+## Sixth round (2026-10-30) — scope recount
+
+The scope above now matches 58 unit suites. The recount used a grep for the
+same two conditions (a mocked `save` / `update` / `delete` / `query` /
+`transaction` or `TransactionSessionManager`, plus a `toHaveBeenCalled*`
+assertion). On the 2026-08-17 tree the grep finds 51, two wider than the
+hand classification, and it finds seven suites added or newly in scope since
+then. Each already has real-SQL coverage from the change that introduced it:
+
+| unit suite | style | real-SQL coverage |
+|---|---|---|
+| `advisory-lock-session` | BEHAVIOR — which pooled connection holds and releases the lock | dual-driver `migration-runner-real`, `advisory-lock-contention` |
+| `fail-loud-boot-and-migration` | BEHAVIOR — boot errors and warnings; lock release counted | `sqlite/boot-fail-loud`, `migration-runner-real` |
+| `foreign-key-actions-ddl` | SQL_STRING — FK DDL; an invalid action is rejected before anything is sent | dual-driver `sync-foreign-key-actions`, `sqlite/sync-inline-foreign-keys`, `sqlite/sync-foreign-key-action-validation` |
+| `insert-query-builder` | SQL_STRING | `insert-query-builder-on-conflict` (dual-driver and SQLite), `sqlite/insert-query-builder-returning` |
+| `json-column-defaults` | BEHAVIOR — write / read conversions; one spy asserts the dialect is not resolved for scalar values | dual-driver `json-column-roundtrip` |
+| `query-result-cache` | CALL_COUNT_ONLY for hits — executor call counts | `sqlite/query-cache` (an out-of-band UPDATE stays invisible on a hit), `query-cache-transaction-end` (dual-driver and SQLite) |
+| `schema-registrar-pinned-schema` | CALL_COUNT_ONLY — `pinTableSchema` / `hasSchema` arguments | `multi-tenancy-pinned-schema-postgres`, `multi-tenancy-pinned-schema-postgres-hardening` |
+
+No backfill needed. The SQLite `buffer-*` suites now number 24 (20 after the
+2026-07 sweeps).
