@@ -154,7 +154,7 @@ Chain modifiers in any order; each returns a new builder, and modifiers that cha
 | `.default(value)` | Column default. |
 | `.name(dbName)` | Overrides the database column name (default: the property key). |
 | `.length(n)` / `.precision(n)` / `.scale(n)` | Size / numeric precision. |
-| `.transformer({ to, from })` | Bidirectional value transformer. |
+| `.transformer({ to, from })` | Bidirectional value transformer; the field takes the transformer's entity-side type ([Transformers](#transformers)). |
 | `.createTimestamp()` / `.updateTimestamp()` | Auto-set timestamps. |
 | `.deletedAt()` | Soft-delete marker (implies nullable). |
 | `.version()` | Optimistic-locking version column. |
@@ -329,6 +329,47 @@ ssn: t.text().transformer({
   to:   (value: string) => encrypt(value),
   from: (value: string) => decrypt(value),
 }),
+```
+
+### Changing the field type
+
+The field takes the type of the transformer's entity side — what `from` returns and `to` accepts — so a column can hand your code a richer value than it stores. A `Dayjs` instead of a `Date`:
+
+```typescript
+import dayjs, { Dayjs } from "dayjs";
+
+export const Meeting = defineEntity("meetings", {
+  id:       t.int().primary().generated(),
+  startsAt: t.datetime().transformer({
+    to:   (value: Dayjs) => value.toDate(),
+    from: (raw: Date | string) => dayjs(raw), // SQLite reads temporal columns as text
+  }),
+  endsAt: t.datetime().nullable().transformer({
+    to:   (value: Dayjs | null) => (value ? value.toDate() : null),
+    from: (raw: Date | string) => dayjs(raw),
+  }),
+});
+export type Meeting = InferEntity<typeof Meeting>;
+// { id: number; startsAt: Dayjs; endsAt: Dayjs | null }
+
+await em.save(Meeting, { startsAt: dayjs("2026-11-02T09:00:00Z"), endsAt: null });
+const meeting = await em.findOne(Meeting, { where: { id: 1 } });
+meeting?.startsAt.add(1, "hour"); // a Dayjs, no cast
+```
+
+`where` operands take the same type and go through `to`, so `where: { startsAt: dayjs(...) }` compares against the stored value.
+
+A column marked `.nullable()` stays nullable on whichever side of `.transformer()` the call sits. NULL reads as `null` without reaching `from`, but `to` is called with `null` when the property is `null`, so give `to` a parameter that accepts it. A transformer that does not change the type, like the lowercase one above, keeps the column's type, and its parameters are typed from the column even without annotations.
+
+To share one transformer between columns, type it as `ColumnTransformer<TEntity, TDb>`:
+
+```typescript
+import { ColumnTransformer } from "@stingerloom/orm";
+
+const dayjsColumn: ColumnTransformer<Dayjs, Date | string> = {
+  to:   (value) => value.toDate(),
+  from: (raw) => dayjs(raw),
+};
 ```
 
 ## Indexes

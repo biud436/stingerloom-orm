@@ -154,7 +154,7 @@ export const Product = defineEntity("products", {
 | `.default(value)` | 컬럼 기본값. |
 | `.name(dbName)` | 데이터베이스 컬럼 이름 재정의(기본: 프로퍼티 키). |
 | `.length(n)` / `.precision(n)` / `.scale(n)` | 크기 / 숫자 정밀도. |
-| `.transformer({ to, from })` | 양방향 값 트랜스포머. |
+| `.transformer({ to, from })` | 양방향 값 트랜스포머. 필드 타입은 트랜스포머의 엔티티 쪽 타입을 따릅니다([트랜스포머](#트랜스포머)). |
 | `.createTimestamp()` / `.updateTimestamp()` | 자동 설정 타임스탬프. |
 | `.deletedAt()` | 소프트 삭제 마커(nullable 함의). |
 | `.version()` | 낙관적 잠금 버전 컬럼. |
@@ -329,6 +329,47 @@ ssn: t.text().transformer({
   to:   (value: string) => encrypt(value),
   from: (value: string) => decrypt(value),
 }),
+```
+
+### 필드 타입 바꾸기
+
+필드는 트랜스포머의 엔티티 쪽 타입, 즉 `from`이 반환하고 `to`가 받는 타입을 따릅니다. 그래서 컬럼에 저장된 값보다 풍부한 값을 코드에 넘겨줄 수 있어요. `Date` 대신 `Dayjs`를 쓰는 예시입니다:
+
+```typescript
+import dayjs, { Dayjs } from "dayjs";
+
+export const Meeting = defineEntity("meetings", {
+  id:       t.int().primary().generated(),
+  startsAt: t.datetime().transformer({
+    to:   (value: Dayjs) => value.toDate(),
+    from: (raw: Date | string) => dayjs(raw), // SQLite는 시간 컬럼을 텍스트로 읽음
+  }),
+  endsAt: t.datetime().nullable().transformer({
+    to:   (value: Dayjs | null) => (value ? value.toDate() : null),
+    from: (raw: Date | string) => dayjs(raw),
+  }),
+});
+export type Meeting = InferEntity<typeof Meeting>;
+// { id: number; startsAt: Dayjs; endsAt: Dayjs | null }
+
+await em.save(Meeting, { startsAt: dayjs("2026-11-02T09:00:00Z"), endsAt: null });
+const meeting = await em.findOne(Meeting, { where: { id: 1 } });
+meeting?.startsAt.add(1, "hour"); // 캐스팅 없이 Dayjs
+```
+
+`where` 피연산자도 같은 타입을 받고 `to`를 거치므로, `where: { startsAt: dayjs(...) }`는 저장된 값과 비교됩니다.
+
+`.nullable()`을 붙인 컬럼은 `.transformer()` 앞에 붙이든 뒤에 붙이든 nullable로 남습니다. NULL은 `from`을 거치지 않고 `null`로 읽히지만, 프로퍼티가 `null`이면 `to`는 `null`을 받아 호출되니 `to`의 매개변수가 `null`을 받을 수 있게 하세요. 위의 소문자 변환처럼 타입을 바꾸지 않는 트랜스포머는 컬럼 타입을 그대로 유지하고, 주석을 달지 않아도 매개변수 타입이 컬럼에서 정해져요.
+
+트랜스포머 하나를 여러 컬럼에서 같이 쓰려면 `ColumnTransformer<TEntity, TDb>`로 타입을 지정하세요:
+
+```typescript
+import { ColumnTransformer } from "@stingerloom/orm";
+
+const dayjsColumn: ColumnTransformer<Dayjs, Date | string> = {
+  to:   (value) => value.toDate(),
+  from: (raw) => dayjs(raw),
+};
 ```
 
 ## 인덱스
