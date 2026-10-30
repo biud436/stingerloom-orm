@@ -32,6 +32,23 @@ jest.mock("../../src/dialects/TransactionSessionManager", () => {
   };
 });
 
+/**
+ * Runs `fn` under fake timers. Waiting for the grace period needs the clock
+ * to move, and nothing here moves it, so a wait would hang the test instead
+ * of settling. That makes "it did not wait" a fact rather than an elapsed-time
+ * bound, which a loaded test run can stretch past any limit.
+ */
+async function settlesWithoutWaiting<T>(fn: () => Promise<T>): Promise<T> {
+  jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask"] });
+  try {
+    const result = await fn();
+    expect(jest.getTimerCount()).toBe(0);
+    return result;
+  } finally {
+    jest.useRealTimers();
+  }
+}
+
 describe("Graceful Shutdown (Issue #18)", () => {
   let em: EntityManager;
 
@@ -178,13 +195,12 @@ describe("Graceful Shutdown (Issue #18)", () => {
         logging: { nPlusOne: true },
       });
 
-      const start = Date.now();
-      const result = await em.propagateShutdown({ gracefulTimeoutMs: 5000 });
-      const elapsed = Date.now() - start;
+      const result = await settlesWithoutWaiting(() =>
+        em.propagateShutdown({ gracefulTimeoutMs: 5000 }),
+      );
 
+      // No active queries → nothing to wait for, despite the 5 s grace period.
       expect(result).toBe(true);
-      // Should not wait 5 seconds if no active queries
-      expect(elapsed).toBeLessThan(500);
     });
 
     it("should skip waiting when gracefulTimeoutMs is 0 (default)", async () => {
@@ -202,12 +218,11 @@ describe("Graceful Shutdown (Issue #18)", () => {
       const tracker = (em as any).queryTracker as QueryTracker;
       tracker.beginQuery();
 
-      const start = Date.now();
-      const result = await em.propagateShutdown({ gracefulTimeoutMs: 0 });
-      const elapsed = Date.now() - start;
+      const result = await settlesWithoutWaiting(() =>
+        em.propagateShutdown({ gracefulTimeoutMs: 0 }),
+      );
 
       expect(result).toBe(true); // No waiting, so "success"
-      expect(elapsed).toBeLessThan(200);
     });
 
     it("should skip waiting when queryTracker is null", async () => {

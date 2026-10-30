@@ -18,15 +18,21 @@ import { ColumnOption } from "../../../src/decorators/Column";
 import { getScannerInstance } from "../../../src/scanner/ScannerContainer";
 import { ColumnScanner } from "../../../src/scanner";
 
+let tableNameSequence = 0;
+
 /**
- * 타임스탬프 기반의 고유한 테이블명을 생성합니다.
+ * Generates a table name unique within the test process.
  *
- * @param baseName 테이블 기본 이름
- * @returns "baseName_<timestamp>" 형태의 고유 이름
+ * The timestamp alone has millisecond precision, so two calls with the same
+ * base name in one millisecond returned the same name; the per-process
+ * sequence keeps them apart.
+ *
+ * @param baseName base table name
+ * @returns a name of the form "baseName_<timestamp>_<sequence>"
  */
 export function generateTableName(baseName: string): string {
-  const timestamp = Date.now();
-  return `${baseName}_${timestamp}`;
+  tableNameSequence += 1;
+  return `${baseName}_${Date.now()}_${tableNameSequence}`;
 }
 
 /** 동적으로 생성된 엔티티 클래스와 메타정보 */

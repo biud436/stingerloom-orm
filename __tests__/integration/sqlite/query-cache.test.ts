@@ -52,8 +52,6 @@ class QcPost {
   author!: Relation<QcAuthor>;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 describe("[Integration] SQLite: query result cache", () => {
   let em: EntityManager;
   let authorId: number;
@@ -123,21 +121,31 @@ describe("[Integration] SQLite: query result cache", () => {
   });
 
   it("expires by TTL", async () => {
-    await em.findOne(QcAuthor, { where: { id: authorId }, cache: 40 });
-    await outOfBandScore(55);
+    // The cache reads its clock from Date.now(), so the test moves the clock
+    // instead of sleeping: with a 40 ms TTL and a real sleep, the second read
+    // missed whenever it ran more than 40 ms after the first.
+    const start = Date.now();
+    const clock = jest.spyOn(Date, "now").mockReturnValue(start);
+    try {
+      await em.findOne(QcAuthor, { where: { id: authorId }, cache: 2_000 });
+      await outOfBandScore(55);
 
-    const stillCached = await em.findOne(QcAuthor, {
-      where: { id: authorId },
-      cache: 40,
-    });
-    expect(stillCached?.score).toBe(10);
+      clock.mockReturnValue(start + 1_999);
+      const stillCached = await em.findOne(QcAuthor, {
+        where: { id: authorId },
+        cache: 2_000,
+      });
+      expect(stillCached?.score).toBe(10);
 
-    await sleep(80);
-    const fresh = await em.findOne(QcAuthor, {
-      where: { id: authorId },
-      cache: 40,
-    });
-    expect(fresh?.score).toBe(55);
+      clock.mockReturnValue(start + 2_000);
+      const fresh = await em.findOne(QcAuthor, {
+        where: { id: authorId },
+        cache: 2_000,
+      });
+      expect(fresh?.score).toBe(55);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("save() invalidates cached lists of the same table", async () => {
