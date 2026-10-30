@@ -18,8 +18,7 @@ import {
   Column,
   ManyToOne,
 } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
 class AcUser {
@@ -71,23 +70,11 @@ class AcRoot {
  * into transformJoinedEntityRows() with exactly these rows.
  */
 function createMockEm(rows: any[]) {
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string) => `\`${col.replace(/`/g, "``")}\``;
-  const em = {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
-      getDialect: () => "mysql",
+  return sharedMockEm("mysql", {
+    async query() {
+      return rows;
     },
-    async query<T>(): Promise<T[]> {
-      return rows as T[];
-    },
-  } as unknown as EntityManager;
-  return em;
+  });
 }
 
 // One flat row carrying the ambiguous `user_profile_*` keys alongside the

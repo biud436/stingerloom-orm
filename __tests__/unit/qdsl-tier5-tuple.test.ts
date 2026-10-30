@@ -1,7 +1,6 @@
 import "reflect-metadata";
 import {
   TupleExpression,
-  TupleCondition,
   tuple,
   isTupleCondition,
 } from "../../src/core/expressions/TupleExpression";
@@ -11,11 +10,11 @@ import {
   qAlias,
 } from "../../src/core/SelectQueryBuilder";
 import { Entity, PrimaryColumn, Column } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { createDialectExpression } from "../../src/dialects/DialectExpression";
 import { OrmError } from "../../src/errors/OrmError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
+import { createMockEm } from "./helpers/mock-em";
 
 /**
  * QueryDSL Tier 5.5 — `Expressions.tuple(...)` row-value comparison.
@@ -117,24 +116,8 @@ class Membership {
   role!: string;
 }
 
-function createMockEm(): EntityManager {
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string): string => `"${col.replace(/"/g, '""')}"`;
-  return {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => false,
-      isPostgres: () => true,
-      isSqlite: () => false,
-      getDialect: () => "postgresql",
-    },
-  } as unknown as EntityManager;
-}
-
 function createQb(): SelectQueryBuilder<Membership> {
-  const em = createMockEm();
+  const em = createMockEm("postgres");
   const qb = new SelectQueryBuilder<Membership>(Membership, "u", em);
   const resolver = (em as unknown as { resolver: RelationMetadataResolver })
     .resolver;

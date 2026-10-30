@@ -16,8 +16,7 @@ import {
   ManyToOne,
   OneToMany,
 } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
 class HydUser {
@@ -50,24 +49,8 @@ class HydComment {
 }
 
 function createMockEm(rows: any[] = []) {
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string) => `\`${col.replace(/`/g, "``")}\``;
   const queryMock = jest.fn().mockResolvedValue(rows);
-
-  const em = {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
-      getDialect: () => "mysql",
-    },
-    query: queryMock,
-  } as unknown as EntityManager;
-
-  return { em, queryMock };
+  return { em: sharedMockEm("mysql", { query: queryMock }), queryMock };
 }
 
 describe("*AndSelect SQL — alias 부여 (#370)", () => {

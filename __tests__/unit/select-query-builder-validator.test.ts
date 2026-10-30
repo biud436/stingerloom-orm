@@ -2,8 +2,8 @@ import "reflect-metadata";
 import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
 import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
 import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { z } from "zod";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 // ── Test Entity ──────────────────────────────────────────
 
@@ -25,24 +25,11 @@ class User {
 // ── Mock EntityManager ───────────────────────────────────
 
 function createMockEm(mockRows: any[] = []) {
-  const resolver = new RelationMetadataResolver();
-  function wrap(col: string) {
-    return `"${col.replace(/"/g, '""')}"`;
-  }
-  return {
-    wrap,
-    wrapTable(tableName: string) {
-      return wrap(tableName);
+  return sharedMockEm("postgres", {
+    async query() {
+      return mockRows;
     },
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => false,
-      isPostgres: () => true,
-    },
-    async query<T>(): Promise<T[]> {
-      return mockRows as T[];
-    },
-  } as unknown as EntityManager;
+  });
 }
 
 // ── Tests ─────────────────────────────────────────────────

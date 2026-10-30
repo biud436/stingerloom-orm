@@ -6,7 +6,7 @@ import { BaseRepository } from "../../src/core/BaseRepository";
 import { EntityNotFoundError } from "../../src/errors/EntityNotFoundError";
 import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
 import { ReadExecutor } from "../../src/core/entity-manager/ReadExecutor";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 // ── Test Entity ───────────────────────────────────────────
 
@@ -28,23 +28,11 @@ function createMockEmWithData(
   rows: any[],
   dbType: "mysql" | "postgresql" = "mysql",
 ) {
-  const resolver = new RelationMetadataResolver();
-  function wrap(col: string) {
-    if (dbType === "mysql") return `\`${col.replace(/`/g, "``")}\``;
-    return `"${col.replace(/"/g, '""')}"`;
-  }
-  return {
-    wrap,
-    wrapTable: wrap,
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => dbType === "mysql",
-      isPostgres: () => dbType === "postgresql",
+  return sharedMockEm(dbType, {
+    async query() {
+      return rows;
     },
-    async query<T>(): Promise<T[]> {
-      return rows as T[];
-    },
-  } as unknown as EntityManager;
+  });
 }
 
 // ── Tests ─────────────────────────────────────────────────

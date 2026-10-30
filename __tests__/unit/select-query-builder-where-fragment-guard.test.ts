@@ -2,12 +2,11 @@
 import "reflect-metadata";
 import sql, { Sql } from "sql-template-tag";
 import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
-import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { Conditions } from "../../src/core/Conditions";
 import { Column, Entity, PrimaryGeneratedColumn } from "../../src/decorators";
 import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
+import { createMockEm } from "./helpers/mock-em";
 
 @Entity()
 class User {
@@ -22,24 +21,6 @@ class User {
 
   @Column({ type: "varchar", name: "first_name" })
   firstName!: string;
-}
-
-function createMockEm() {
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string) => `\`${col.replace(/`/g, "``")}\``;
-  return {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
-    },
-    async query<T>(_query: Sql): Promise<T[]> {
-      return [] as T[];
-    },
-  } as unknown as EntityManager;
 }
 
 function qb() {

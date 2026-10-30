@@ -1,10 +1,10 @@
 import "reflect-metadata";
-import { SelectQueryBuilder, WhereGroupBuilder } from "../../src/core/SelectQueryBuilder";
-import { Conditions } from "../../src/core/Conditions";
+import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
 import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
 import { EntityManager } from "../../src/core/EntityManager";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { OrmError } from "../../src/errors/OrmError";
+import { createMockEm } from "./helpers/mock-em";
 
 // ── Test Entities ─────────────────────────────────────────
 
@@ -53,36 +53,6 @@ class User {
 }
 
 // ── Mock EntityManager ────────────────────────────────────
-
-function createMockEm(dbType: "mysql" | "postgresql" = "mysql") {
-  const resolver = new RelationMetadataResolver();
-
-  function wrap(col: string) {
-    if (dbType === "mysql") {
-      return `\`${col.replace(/`/g, "``")}\``;
-    }
-    return `"${col.replace(/"/g, '""')}"`;
-  }
-
-  const em = {
-    wrap,
-    wrapTable(tableName: string) {
-      return wrap(tableName);
-    },
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => dbType === "mysql",
-      isPostgres: () => dbType === "postgresql",
-      isSqlite: () => false,
-      getDialect: () => (dbType === "mysql" ? "mysql" : "postgresql"),
-    },
-    async query<T>(): Promise<T[]> {
-      return [] as T[];
-    },
-  } as unknown as EntityManager;
-
-  return em;
-}
 
 function createQb<T>(
   entity: new () => T,

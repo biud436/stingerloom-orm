@@ -13,6 +13,7 @@ import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolve
 import { Column, Entity, PrimaryGeneratedColumn } from "../../src/decorators";
 import { OrmError } from "../../src/errors/OrmError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
 class User {
@@ -39,26 +40,16 @@ class Account {
 }
 
 function createMockEm(captured: { sql?: Sql; calls: number } = { calls: 0 }) {
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string) => `\`${col.replace(/`/g, "``")}\``;
-  return {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
-    },
-    async query<T>(query: Sql): Promise<T[]> {
+  return sharedMockEm("mysql", {
+    async query(query: Sql) {
       captured.sql = query;
       captured.calls++;
-      return [] as T[];
+      return [];
     },
     compile(...args: unknown[]) {
       return EntityManager.prototype.compile.apply(this as any, args as any);
     },
-  } as unknown as EntityManager;
+  });
 }
 
 describe("PlaceholderMarker", () => {

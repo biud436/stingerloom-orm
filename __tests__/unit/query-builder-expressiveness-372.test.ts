@@ -16,7 +16,7 @@ import {
   DeletedAt,
 } from "../../src/decorators";
 import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
 class TreeCategory372 {
@@ -43,21 +43,7 @@ class TreePost372 {
 }
 
 function createMockEm(rows: any[] = []) {
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string) => `\`${col.replace(/`/g, "``")}\``;
-  const em = {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
-      getDialect: () => "mysql",
-    },
-    query: jest.fn().mockResolvedValue(rows),
-  } as unknown as EntityManager;
-  return em;
+  return sharedMockEm("mysql", { query: jest.fn().mockResolvedValue(rows) });
 }
 
 describe("JoinOnBuilder.onBetween (#372)", () => {

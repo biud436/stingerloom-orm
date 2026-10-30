@@ -21,8 +21,7 @@ import {
   ManyToOne,
   OneToMany,
 } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
 class PgUser {
@@ -65,33 +64,21 @@ function createMockEm(opts: {
   phase1: any[];
   phase2: any[];
 }) {
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string) => `\`${col.replace(/`/g, "``")}\``;
   const calls: { sql: string }[] = [];
-  const em = {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
-      getDialect: () => "mysql",
-    },
-    async query<T>(built: any): Promise<T[]> {
+  return sharedMockEm("mysql", {
+    async query(built: any) {
       const text = String(built?.sql ?? built?.text ?? "");
       calls.push({ sql: text });
       if (text.toUpperCase().includes("COUNT(*)")) {
-        return [{ count: opts.total }] as unknown as T[];
+        return [{ count: opts.total }];
       }
       if (text.toUpperCase().includes("SELECT DISTINCT")) {
-        return opts.phase1 as T[];
+        return opts.phase1;
       }
-      return opts.phase2 as T[];
+      return opts.phase2;
     },
     __calls: calls,
-  } as unknown as EntityManager & { __calls: { sql: string }[] };
-  return em;
+  });
 }
 
 const PHASE2_ROWS = [

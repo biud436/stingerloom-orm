@@ -21,7 +21,7 @@ import {
   Column,
 } from "../../src/decorators";
 import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
 class Member {
@@ -46,30 +46,15 @@ interface MockOptions {
  * for getMany()'s ResultTransformer to hydrate plain rows into entities.
  */
 function createMockEm(opts: MockOptions = {}) {
-  const dbType = opts.dbType ?? "mysql";
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string) =>
-    dbType === "mysql"
-      ? `\`${col.replace(/`/g, "``")}\``
-      : `"${col.replace(/"/g, '""')}"`;
   const calls: string[] = [];
   const rows: Record<string, unknown>[] = opts.rows ?? [];
-  const em = {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => dbType === "mysql",
-      isPostgres: () => dbType === "postgresql",
-      isSqlite: () => false,
-    },
-    async query<T>(built: any): Promise<T[]> {
+  return sharedMockEm(opts.dbType ?? "mysql", {
+    async query(built: any) {
       calls.push(String(built?.sql ?? built?.text ?? built));
-      return rows as unknown as T[];
+      return rows;
     },
     __calls: calls,
-  } as unknown as EntityManager & { __calls: string[] };
-  return em;
+  });
 }
 
 function makeQb(em: EntityManager) {

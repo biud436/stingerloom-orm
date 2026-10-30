@@ -11,9 +11,8 @@
 import "reflect-metadata";
 import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
 import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { CompiledQuery } from "../../src/core/CompiledQuery";
+import { createMockEm } from "./helpers/mock-em";
 
 // ── Type-level equality helpers ────────────────────────────────
 // (<T>() => T extends X ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2)
@@ -44,30 +43,9 @@ class TestUser {
   isActive!: boolean;
 }
 
-function createMockEm(): EntityManager {
-  const resolver = new RelationMetadataResolver();
-  function wrap(col: string) {
-    return `"${col.replace(/"/g, '""')}"`;
-  }
-  return {
-    wrap,
-    wrapTable(tableName: string) {
-      return wrap(tableName);
-    },
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => false,
-      isPostgres: () => true,
-    },
-    async query<T>(): Promise<T[]> {
-      return [] as T[];
-    },
-  } as unknown as EntityManager;
-}
-
 describe("SelectQueryBuilder type narrowing (strict equality)", () => {
   it("getMany() returns Promise<T[]> by default", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em);
 
     type Actual = ReturnType<typeof qb.getMany>;
@@ -76,7 +54,7 @@ describe("SelectQueryBuilder type narrowing (strict equality)", () => {
   });
 
   it("getMany() narrows to Promise<Pick<T, K>[]> after select()", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select(["id", "name"]);
 
@@ -89,7 +67,7 @@ describe("SelectQueryBuilder type narrowing (strict equality)", () => {
   });
 
   it("getOne() narrows to Promise<Pick<T, K> | null>", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select(["id", "email"]);
 
@@ -99,7 +77,7 @@ describe("SelectQueryBuilder type narrowing (strict equality)", () => {
   });
 
   it("getOneOrFail() narrows to Promise<Pick<T, K>>", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select(["id", "email"]);
 
@@ -109,7 +87,7 @@ describe("SelectQueryBuilder type narrowing (strict equality)", () => {
   });
 
   it("getManyAndCount() narrows to Promise<[Pick<T, K>[], number]>", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select(["id", "age"]);
 
@@ -119,7 +97,7 @@ describe("SelectQueryBuilder type narrowing (strict equality)", () => {
   });
 
   it("getPartialMany() and getPartialOne() narrow to the same shape", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select(["id", "name"]);
 
@@ -132,7 +110,7 @@ describe("SelectQueryBuilder type narrowing (strict equality)", () => {
   });
 
   it("prepare() carries the narrowed TResult into CompiledQuery", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select(["id", "name"]);
 
@@ -143,7 +121,7 @@ describe("SelectQueryBuilder type narrowing (strict equality)", () => {
   });
 
   it("select('*') returns the full T shape", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select("*");
 
@@ -155,7 +133,7 @@ describe("SelectQueryBuilder type narrowing (strict equality)", () => {
 
 describe("SelectQueryBuilder compile-time rejections", () => {
   it("rejects invalid column names in select()", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em);
 
     // @ts-expect-error — "nonexistent" is not a key of TestUser
@@ -163,7 +141,7 @@ describe("SelectQueryBuilder compile-time rejections", () => {
   });
 
   it("rejects invalid column names in orderBy()", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em);
 
     // @ts-expect-error — "nonexistent" is not a key of TestUser
@@ -171,7 +149,7 @@ describe("SelectQueryBuilder compile-time rejections", () => {
   });
 
   it("allows WHERE/orderBy on unselected columns (full entity is still queryable)", () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
 
     const qb = new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select(["id", "name"])
@@ -190,7 +168,7 @@ describe("SelectQueryBuilder compile-time rejections", () => {
 
 describe("SelectQueryBuilder runtime behavior mirrors type narrowing", () => {
   it("getPartialMany after select returns the narrowed shape (empty mock)", async () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
 
     const results = await new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .select(["id", "name"])
@@ -206,7 +184,7 @@ describe("SelectQueryBuilder runtime behavior mirrors type narrowing", () => {
   });
 
   it("getMany() without select returns empty array (class instances)", async () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
 
     const entities = await new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .getMany();
@@ -215,7 +193,7 @@ describe("SelectQueryBuilder runtime behavior mirrors type narrowing", () => {
   });
 
   it("getRawMany returns Record<string, unknown>[]", async () => {
-    const em = createMockEm();
+    const em = createMockEm("postgres");
 
     const raw = await new SelectQueryBuilder<TestUser, TestUser>(TestUser, "u", em)
       .getRawMany();

@@ -9,9 +9,9 @@ import {
   qAlias,
 } from "../../src/core/SelectQueryBuilder";
 import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { createDialectExpression } from "../../src/dialects/DialectExpression";
+import { createMockEm } from "./helpers/mock-em";
 
 /**
  * QueryDSL Tier 5.3 / 5.4 — Aggregate `FILTER (WHERE …)` and the
@@ -220,30 +220,6 @@ class FilterUser {
 }
 
 type DbType = "mysql" | "postgresql" | "sqlite";
-
-function createMockEm(dbType: DbType): EntityManager {
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string): string =>
-    dbType === "mysql"
-      ? `\`${col.replace(/`/g, "``")}\``
-      : `"${col.replace(/"/g, '""')}"`;
-  return {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => dbType === "mysql",
-      isPostgres: () => dbType === "postgresql",
-      isSqlite: () => dbType === "sqlite",
-      getDialect: () =>
-        dbType === "mysql"
-          ? "mysql"
-          : dbType === "sqlite"
-            ? "sqlite"
-            : "postgresql",
-    },
-  } as unknown as EntityManager;
-}
 
 function createQb(dbType: DbType): SelectQueryBuilder<FilterUser> {
   const em = createMockEm(dbType);

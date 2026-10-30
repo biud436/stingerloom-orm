@@ -1,9 +1,8 @@
 import "reflect-metadata";
 import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
 import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { decodeCursor, encodeCursor } from "../../src/core/CursorPagination";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
 class User {
@@ -26,30 +25,17 @@ type RecordedCall = { sql: string; values: any[] };
  * getMany() -> toSql() path (ORDER BY / WHERE / LIMIT) without a database.
  */
 function createMockEm(rows: any[]) {
-  const resolver = new RelationMetadataResolver();
-  function wrap(col: string) {
-    return `\`${col.replace(/`/g, "``")}\``;
-  }
   const calls: RecordedCall[] = [];
-  const em = {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
-    },
-    async query<T>(built: any): Promise<T[]> {
+  return sharedMockEm("mysql", {
+    async query(built: any) {
       calls.push({
         sql: String(built?.sql ?? built?.text ?? ""),
         values: (built?.values ?? []) as any[],
       });
-      return rows as T[];
+      return rows;
     },
     __calls: calls,
-  } as unknown as EntityManager & { __calls: RecordedCall[] };
-  return em;
+  });
 }
 
 function makeRows(n: number, startId = 1): any[] {

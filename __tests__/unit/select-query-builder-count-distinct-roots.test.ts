@@ -25,9 +25,8 @@ import {
   ManyToOne,
   OneToMany,
 } from "../../src/decorators";
-import { EntityManager } from "../../src/core/EntityManager";
-import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { sql } from "../../src/utils/sqlTag";
+import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
 class CntUser {
@@ -98,30 +97,15 @@ class CntChild {
  * resolve to the configured total; other queries resolve to an empty list.
  */
 function createMockEm(total = 0) {
-  const resolver = new RelationMetadataResolver();
-  const wrap = (col: string) => `\`${col.replace(/`/g, "``")}\``;
   const calls: string[] = [];
-  const em = {
-    wrap,
-    wrapTable: (t: string) => wrap(t),
-    resolver,
-    _ctx: {
-      isMySqlFamily: () => true,
-      isPostgres: () => false,
-      isSqlite: () => false,
-      getDialect: () => "mysql",
-    },
-    async query<T>(built: any): Promise<T[]> {
+  return sharedMockEm("mysql", {
+    async query(built: any) {
       const text = String(built?.sql ?? built?.text ?? "");
       calls.push(text);
-      if (text.toUpperCase().includes("COUNT(*)")) {
-        return [{ count: total }] as unknown as T[];
-      }
-      return [] as unknown as T[];
+      return text.toUpperCase().includes("COUNT(*)") ? [{ count: total }] : [];
     },
     __calls: calls,
-  } as unknown as EntityManager & { __calls: string[] };
-  return em;
+  });
 }
 
 describe("getCount() — distinct root counting under to-many *AndSelect", () => {
