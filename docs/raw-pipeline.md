@@ -287,6 +287,8 @@ Batch 2:  SELECT * FROM "order" WHERE ...
             ORDER BY ("created_at" IS NULL) ASC, "created_at" ASC, "id" ASC LIMIT 5000
 ```
 
+A composite primary key breaks ties with every key column, in declared order. Ordering by its first column pages by the whole key (`ORDER BY "order_id" ASC, "line_no" ASC`), so the lines of one order are never split across a batch boundary and lost.
+
 Because of the `("created_at" IS NULL)` sort key, an index on `created_at` alone does not return these rows in order. The database sorts each batch's matching rows instead, so for a very large export, ordering by the primary key stays the fastest choice.
 
 ::: tip When to use keyset

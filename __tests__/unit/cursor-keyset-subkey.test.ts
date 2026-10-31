@@ -18,7 +18,7 @@ const wrap = (n: string) => `"${n}"`;
 function plan(overrides: Partial<KeysetPlan>): KeysetPlan {
   return {
     orderColumn: "id",
-    pkColumn: "id",
+    pkColumns: ["id"],
     isPkOrder: true,
     direction: "ASC",
     pageSize: 2,

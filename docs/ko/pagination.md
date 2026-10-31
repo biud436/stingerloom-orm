@@ -235,7 +235,7 @@ async function getPosts(req: Request, res: Response) {
 - 행이 계속 추가되는 실시간 피드
 - 페이지 깊이에 관계없이 성능이 일정해야 할 때
 
-> **Hint** Cursor pagination은 정렬된 고유 컬럼(보통 primary key)이 필요해요. 임의 페이지로 점프하는 건 지원하지 않아요 -- 클라이언트가 순차적으로 앞으로만 이동해야 해요.
+> **Hint** Cursor pagination은 컬럼 하나로 정렬하고, 값이 같은 행은 기본 키(복합 키면 키 컬럼 전부)로 순서를 가립니다. 그래서 정렬 컬럼에 같은 값이 있어도 됩니다. 임의 페이지로 점프하는 건 지원하지 않아요 -- 클라이언트가 순차적으로 앞으로만 이동해야 해요.
 
 `findWithCursor()`는 `find()`와 동일한 필터를 적용합니다. `withDeleted: true`를 넘기지 않으면 soft-delete된 행은 제외되고, 단일 테이블 상속(STI) 자식 클래스를 페이징하면 discriminator 술어가 자동으로 붙어 해당 서브타입 행만 반환돼요.
 

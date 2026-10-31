@@ -3,15 +3,19 @@
  * Composite primary keys on real servers (MySQL/MariaDB + PostgreSQL).
  *
  * deleteMany() keyed its DELETE on the first key column only, so a scalar
- * id removed every row sharing it; it now takes full key objects.
+ * id removed every row sharing it; it now takes full key objects. Keyset
+ * paging (findWithCursor, pipe keyset) broke ties by that column alone and
+ * skipped the rows sharing a page's boundary value; it now carries the key.
  *
- * SQLite mirror: __tests__/integration/sqlite/delete-many-composite-pk.test.ts
+ * SQLite mirrors: __tests__/integration/sqlite/delete-many-composite-pk.test.ts,
+ * __tests__/integration/sqlite/cursor-keyset-composite-pk.test.ts
  */
 
 import "reflect-metadata";
 import { EntityManager } from "../../src/core/EntityManager";
 import { Entity, Column, PrimaryColumn } from "../../src";
 import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
+import { rawPipelinePlugin } from "../../src/core/plugin/raw-pipeline/rawPipelinePlugin";
 import {
   createTestConnection,
   dropTestTable,
@@ -40,6 +44,7 @@ describe.each(drivers)(
             @PrimaryColumn({ type: "int" }) orderId!: number;
             @PrimaryColumn({ type: "int", name: "line_no" }) lineNo!: number;
             @Column() sku!: string;
+            @Column({ type: "int" }) qty!: number;
           }
           Line = CpkLine;
           return { entities: [CpkLine] };
@@ -63,7 +68,7 @@ describe.each(drivers)(
 
     async function seed(keys: Array<[number, number]>): Promise<void> {
       for (const [orderId, lineNo] of keys) {
-        await em.save(Line, { orderId, lineNo, sku: `o${orderId}l${lineNo}` });
+        await em.save(Line, { orderId, lineNo, sku: `o${orderId}l${lineNo}`, qty: lineNo % 2 });
       }
     }
 
@@ -97,6 +102,56 @@ describe.each(drivers)(
 
         expect(error).toBeInstanceOf(InvalidQueryError);
         expect(await skus()).toEqual(["o1l1", "o1l2"]);
+      });
+    });
+
+    describe("keyset paging", () => {
+      // Out of key order, so insertion order does not hide a skipped row.
+      const KEYS: Array<[number, number]> = [3, 1, 2].flatMap((o) =>
+        [2, 3, 1].map((l): [number, number] => [o, l]),
+      );
+      const ALL = ["o1l1", "o1l2", "o1l3", "o2l1", "o2l2", "o2l3", "o3l1", "o3l2", "o3l3"];
+
+      async function walk(option: Record<string, unknown>): Promise<string[]> {
+        const seen: string[] = [];
+        let cursor: string | undefined;
+        for (let guard = 0; guard < 20; guard++) {
+          const page: any = await em.findWithCursor(Line, { ...option, take: 2, cursor } as any);
+          seen.push(...page.data.map((row: any) => row.sku));
+          if (!page.hasNextPage) return seen;
+          cursor = page.nextCursor;
+        }
+        throw new Error("cursor walk did not terminate");
+      }
+
+      it("findWithCursor() pages every row by the key, both directions", async () => {
+        await seed(KEYS);
+
+        expect(await walk({})).toEqual(ALL);
+        expect(await walk({ orderBy: "orderId", direction: "DESC" })).toEqual([...ALL].reverse());
+      });
+
+      it("findWithCursor() breaks ties of a repeated value by the whole key", async () => {
+        await seed(KEYS);
+
+        expect(await walk({ orderBy: "qty" })).toEqual([
+          "o1l2", "o2l2", "o3l2",
+          "o1l1", "o1l3", "o2l1", "o2l3", "o3l1", "o3l3",
+        ]);
+      });
+
+      it("pipe keyset reads every row by the first key column", async () => {
+        await seed(KEYS);
+        const piped: any = em.extend(rawPipelinePlugin());
+
+        const rows: any[] = [];
+        for await (const batch of piped
+          .pipe(Line, { orderBy: { orderId: "ASC" }, keyset: true, batchSize: 2 })
+          .raw()) {
+          rows.push(...batch);
+        }
+
+        expect(rows.map((row) => row.sku)).toEqual(ALL);
       });
     });
   },

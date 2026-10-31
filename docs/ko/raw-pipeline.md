@@ -287,6 +287,8 @@ Batch 2:  SELECT * FROM "order" WHERE ...
             ORDER BY ("created_at" IS NULL) ASC, "created_at" ASC, "id" ASC LIMIT 5000
 ```
 
+복합 기본 키는 키 컬럼 전부를 선언 순서대로 써서 동점을 가립니다. 첫 번째 키 컬럼으로 정렬하면 키 전체로 페이지를 넘기므로(`ORDER BY "order_id" ASC, "line_no" ASC`), 한 주문의 행들이 배치 경계에서 갈려도 빠지지 않습니다.
+
 `("created_at" IS NULL)` 정렬 키 때문에 `created_at` 단독 인덱스로는 이 순서대로 행을 꺼낼 수 없습니다. 데이터베이스가 배치마다 조건에 맞는 행을 정렬하므로, 아주 큰 테이블을 내보낼 때는 여전히 기본 키 정렬이 가장 빠릅니다.
 
 ::: tip Keyset을 쓸 때
