@@ -6,6 +6,7 @@
  *   - NULL 영역 위치 계약 (ASC = 마지막, DESC = 먼저) — PG의 기본
  *     NULLS LAST와 MySQL의 NULL 먼저가 이 키로 통일되는지
  *   - (orderValue, pk) 튜플 커서 술어의 무손실 순회
+ *   - the query builder's getCursor() on the same keyset
  *
  * SQLite 미러: __tests__/integration/sqlite/cursor-pagination-keyset.test.ts
  */
@@ -119,6 +120,38 @@ describe.each(drivers)(
       await seed([1, 2, 3]);
       const seen = await iterateAll({});
       expect(seen.map((s) => s.age)).toEqual([1, 2, 3]);
+    });
+
+    describe("query builder getCursor()", () => {
+      async function iterateBuilder(
+        option: Record<string, unknown>,
+      ): Promise<Array<{ id: number; age: number | null }>> {
+        const seen: Array<{ id: number; age: number | null }> = [];
+        let cursor: string | undefined;
+        for (let guard = 0; guard < 20; guard++) {
+          const page: any = await em
+            .createQueryBuilder(Item, "i")
+            .getCursor({ ...option, take: 2, cursor } as any);
+          for (const row of page.data) seen.push({ id: row.id, age: row.age });
+          if (!page.hasNextPage) return seen;
+          cursor = page.nextCursor;
+        }
+        throw new Error("cursor iteration did not terminate");
+      }
+
+      it("pages repeated and NULL sort values without loss (ASC: NULLs last)", async () => {
+        await seed([10, null, 10, 10, null, 20]);
+        const seen = await iterateBuilder({ orderBy: "age" });
+        expect(new Set(seen.map((s) => s.id)).size).toBe(6);
+        expect(seen.map((s) => s.age)).toEqual([10, 10, 10, 20, null, null]);
+      });
+
+      it("pages them descending with NULLs first", async () => {
+        await seed([10, null, 10, 10, null, 20]);
+        const seen = await iterateBuilder({ orderBy: "age", direction: "DESC" });
+        expect(new Set(seen.map((s) => s.id)).size).toBe(6);
+        expect(seen.map((s) => s.age)).toEqual([null, null, 20, 10, 10, 10]);
+      });
     });
   },
 );

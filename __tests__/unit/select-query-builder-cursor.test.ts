@@ -1,7 +1,12 @@
 import "reflect-metadata";
 import { SelectQueryBuilder } from "../../src/core/SelectQueryBuilder";
 import { Entity, PrimaryGeneratedColumn, Column } from "../../src/decorators";
-import { decodeCursor, encodeCursor } from "../../src/core/CursorPagination";
+import {
+  decodeCursorKey,
+  encodeCursor,
+  encodeCursorKey,
+} from "../../src/core/CursorPagination";
+import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
 import { createMockEm as sharedMockEm } from "./helpers/mock-em";
 
 @Entity()
@@ -58,8 +63,8 @@ describe("SelectQueryBuilder.getCursor()", () => {
     expect(result.count).toBe(2);
     expect(result.hasNextPage).toBe(true);
     expect(result.nextCursor).not.toBeNull();
-    // nextCursor encodes the last visible row's sort value (id = 2).
-    expect(decodeCursor(result.nextCursor!)).toBe(2);
+    // nextCursor encodes the last visible row's sort value and key (id = 2).
+    expect(decodeCursorKey(result.nextCursor!)).toEqual({ order: 2, pk: 2, subKey: undefined });
     expect(result.data[0]).toBeInstanceOf(User);
 
     const { sql, values } = em.__calls[0];
@@ -93,7 +98,20 @@ describe("SelectQueryBuilder.getCursor()", () => {
     expect(values[values.length - 1]).toBe(21);
   });
 
-  it("with an incoming cursor (ASC): appends a `> ?` keyset predicate bound to the decoded value", async () => {
+  it("with an incoming cursor (PK order): appends a `> ?` key compare", async () => {
+    const em = createMockEm(makeRows(1));
+    await new SelectQueryBuilder(User, "u", em).getCursor({
+      take: 2,
+      cursor: encodeCursorKey(5, 5),
+    });
+
+    const { sql, values } = em.__calls[0];
+    expect(sql).toContain("`u`.`id` > ?");
+    expect(sql).not.toContain("IS NULL");
+    expect(values).toContain(5);
+  });
+
+  it("with a sort-value-only cursor from an earlier version: compares the value, NULL rows kept", async () => {
     const em = createMockEm(makeRows(1));
     await new SelectQueryBuilder(User, "u", em).getCursor({
       take: 2,
@@ -101,8 +119,7 @@ describe("SelectQueryBuilder.getCursor()", () => {
     });
 
     const { sql, values } = em.__calls[0];
-    expect(sql).toContain("`u`.`id` > ?");
-    expect(sql).toContain("IS NULL"); // NULL rows kept in the ASC window
+    expect(sql).toContain("(`u`.`id` > ? OR `u`.`id` IS NULL)");
     expect(values).toContain(5);
   });
 
@@ -111,7 +128,7 @@ describe("SelectQueryBuilder.getCursor()", () => {
     await new SelectQueryBuilder(User, "u", em).getCursor({
       take: 2,
       direction: "DESC",
-      cursor: encodeCursor(5),
+      cursor: encodeCursorKey(5, 5),
     });
 
     const { sql, values } = em.__calls[0];
@@ -128,16 +145,57 @@ describe("SelectQueryBuilder.getCursor()", () => {
     });
 
     const { sql } = em.__calls[0];
-    expect(sql).toContain("`u`.`age`");
-    // nextCursor is taken from the last visible row's `age` (rows start at 20).
-    expect(decodeCursor(result.nextCursor!)).toBe(21);
+    // The NULL region is ordered explicitly and the PK breaks ties.
+    expect(sql).toContain("ORDER BY (`u`.`age` IS NULL) ASC, `u`.`age` ASC, `u`.`id` ASC");
+    // nextCursor carries the last visible row's `age` (rows start at 20) and id.
+    expect(decodeCursorKey(result.nextCursor!)).toEqual({ order: 21, pk: 2, subKey: undefined });
+  });
+
+  it("breaks ties of a repeated sort value by the primary key", async () => {
+    const em = createMockEm(makeRows(1));
+    await new SelectQueryBuilder(User, "u", em).getCursor({
+      take: 2,
+      orderBy: "age",
+      cursor: encodeCursorKey(21, 2),
+    });
+
+    const { sql, values } = em.__calls[0];
+    expect(sql).toContain(
+      "(`u`.`age` > ? OR (`u`.`age` = ? AND `u`.`id` > ?) OR `u`.`age` IS NULL)",
+    );
+    expect(values.slice(0, 3)).toEqual([21, 21, 2]);
+  });
+
+  it("continues from a page that ended on a NULL sort value", async () => {
+    const rows = makeRows(3).map((row) => ({ ...row, age: null }));
+    const em = createMockEm(rows);
+    const first = await new SelectQueryBuilder(User, "u", em).getCursor({
+      take: 2,
+      orderBy: "age",
+    });
+
+    expect(decodeCursorKey(first.nextCursor!)).toEqual({ order: null, pk: 2, subKey: undefined });
+
+    await new SelectQueryBuilder(User, "u", em).getCursor({
+      take: 2,
+      orderBy: "age",
+      cursor: first.nextCursor!,
+    });
+    expect(em.__calls[1].sql).toContain("(`u`.`age` IS NULL AND `u`.`id` > ?)");
+  });
+
+  it("rejects a cursor that carries another key shape", async () => {
+    const em = createMockEm(makeRows(1));
+    await expect(
+      new SelectQueryBuilder(User, "u", em).getCursor({ cursor: encodeCursorKey(1, [1, 2]) }),
+    ).rejects.toThrow(InvalidQueryError);
   });
 
   it("preserves an existing .where() on the builder (ANDed with the keyset predicate)", async () => {
     const em = createMockEm(makeRows(1));
     await new SelectQueryBuilder(User, "u", em)
       .where("age", ">=", 18)
-      .getCursor({ take: 2, cursor: encodeCursor(5) });
+      .getCursor({ take: 2, cursor: encodeCursorKey(5, 5) });
 
     const { sql, values } = em.__calls[0];
     // Both the user WHERE and the keyset predicate are present.
@@ -147,7 +205,7 @@ describe("SelectQueryBuilder.getCursor()", () => {
     expect(values).toContain(5);
   });
 
-  it("keeps any pre-existing ORDER BY as a tiebreaker after the keyset column", async () => {
+  it("keeps any pre-existing ORDER BY after the keyset keys", async () => {
     const em = createMockEm(makeRows(1));
     await new SelectQueryBuilder(User, "u", em)
       .orderBy({ name: "ASC" })
@@ -174,7 +232,7 @@ describe("SelectQueryBuilder.getCursor()", () => {
     const em = createMockEm(makeRows(3));
     const qb = new SelectQueryBuilder(User, "u", em).where("age", ">=", 18);
 
-    await qb.getCursor({ take: 2, cursor: encodeCursor(5) });
+    await qb.getCursor({ take: 2, cursor: encodeCursorKey(5, 5) });
 
     // The original builder carries no LIMIT, no keyset predicate, and no
     // ORDER BY injected by getCursor() — only the user's own WHERE remains.
