@@ -690,6 +690,8 @@ ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NU
 | MySQL / MariaDB `ENUM` 값 변경 | 비교 안 함 | 비교 안 함 |
 | 엔티티 제거 | 테이블 유지 | 테이블 유지 |
 
+기존 테이블에 추가되는 컬럼은 CREATE TABLE에서와 같이 선언한 `default`를 갖고 추가되므로, 이미 있던 행에도 그 값이 들어갑니다. 선언한 default가 없으면 NOT NULL 텍스트·숫자·불리언 컬럼은 `''`, `0`, `FALSE`로 채우고, 그 밖의 NOT NULL 컬럼(날짜, enum, JSON)은 경고와 함께 nullable로 추가합니다. SQLite는 `"(CURRENT_TIMESTAMP)"` 같은 표현식 default로 컬럼을 추가하지 못해서, 그 컬럼은 default 없이 추가하고 경고로 알려 줍니다.
+
 이런 수정 뒤 재시작하면 동기화가 성공한 것처럼 보이기 쉬우므로 두 경로 모두 이를 알립니다. 이미 있던 테이블이 하나라도 있으면 `synchronize`는 부팅마다 한 줄을 남기는데, 엔티티가 실제로 쓰는 종류만 나열합니다. 예를 들어 `default`는 어떤 컬럼이 선언했을 때만 목록에 들어가요:
 
 ```

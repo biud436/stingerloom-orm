@@ -47,6 +47,12 @@ export interface ColumnChange {
    * the entity says this one replaces. Only set on addColumns.
    */
   renamedFrom?: string;
+  /**
+   * `@Column({ default })` on the added column, so ADD COLUMN gives an
+   * existing table the default a new table gets. Only set on addColumns,
+   * and only when the column declares one.
+   */
+  defaultValue?: string | number | boolean | null;
   currentType?: string;
   nullable?: boolean;
   /**
@@ -221,6 +227,32 @@ const CHARACTER_TYPES = new Set([
   "BINARY",
   "VARBINARY",
 ]);
+
+/**
+ * The column type an ADD / ALTER COLUMN statement spells for `col`: its
+ * `columnType`, with the declared length or precision reattached when the
+ * type carries none (a hand-built diff may give a bare `VARCHAR` plus 255).
+ * A length goes only on a character type — the decorator gives `int` and
+ * `boolean` a length (a MySQL display width) that CREATE TABLE never
+ * renders, and PostgreSQL rejects `INTEGER(11)` / `BOOLEAN(1)`.
+ */
+export function withDeclaredSize(
+  type: string,
+  col: Pick<ColumnChange, "expectedLength" | "expectedPrecision" | "expectedScale">,
+): string {
+  if (type.includes("(")) return type;
+  if (col.expectedLength && CHARACTER_TYPES.has(type.trim().toUpperCase())) {
+    return `${type}(${col.expectedLength})`;
+  }
+  if (col.expectedPrecision) {
+    const scale =
+      col.expectedScale !== undefined && col.expectedScale !== null
+        ? `,${col.expectedScale}`
+        : "";
+    return `${type}(${col.expectedPrecision}${scale})`;
+  }
+  return type;
+}
 
 /** `CHAR(36)` → `CHAR`, `NUMERIC(10, 2)` → `NUMERIC`, `TEXT[]` → `TEXT`. */
 function stripTypeArguments(type: string): string {
@@ -397,6 +429,9 @@ export class SchemaDiff {
             comparisonType: declared.compare,
             ...(col.options?.renamedFrom
               ? { renamedFrom: col.options.renamedFrom }
+              : {}),
+            ...(col.options?.default !== undefined
+              ? { defaultValue: col.options.default }
               : {}),
             nullable: col.options?.nullable ?? false,
             expectedLength,

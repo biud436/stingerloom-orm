@@ -1,9 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { SchemaDiffResult, ColumnChange, RenamedColumn, EnumChange } from "./SchemaDiff";
+import {
+  SchemaDiffResult,
+  ColumnChange,
+  RenamedColumn,
+  EnumChange,
+  withDeclaredSize,
+} from "./SchemaDiff";
 import { SchemaGenerator, SchemaDialect } from "./SchemaGenerator";
 import { createColumnDefinitionBuilder } from "../../dialects/ColumnDefinitionBuilder";
+import { addColumnDefaultClause } from "../../dialects/columnDefault";
 import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../../decorators/ManyToOne";
 import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../../decorators/OneToOne";
 import {
@@ -174,11 +181,7 @@ export class SchemaDiffMigrationGenerator {
 
     // Add columns
     for (const col of diff.addColumns) {
-      const typeStr = this.renderColumnType(col, dialect);
-      const nullability = col.nullable === false ? "NOT NULL" : "NULL";
-      sqls.push(
-        `ALTER TABLE ${this.escapeTable(col.tableName, col.schema, dialect)} ADD COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr} ${nullability}`,
-      );
+      sqls.push(this.buildAddColumnSql(col, dialect));
     }
 
     // Add computed (generated) columns
@@ -200,6 +203,18 @@ export class SchemaDiffMigrationGenerator {
     }
 
     return sqls;
+  }
+
+  /**
+   * `ALTER TABLE … ADD COLUMN` for an added column, with its declared
+   * `@Column({ default })` as CREATE TABLE renders it (an expression default
+   * is left out on SQLite, which rejects it on ADD COLUMN).
+   */
+  private buildAddColumnSql(col: ColumnChange, dialect: SchemaDialect): string {
+    const typeStr = this.renderColumnType(col, dialect);
+    const nullability = col.nullable === false ? "NOT NULL" : "NULL";
+    const defaultClause = addColumnDefaultClause(col.defaultValue, dialect);
+    return `ALTER TABLE ${this.escapeTable(col.tableName, col.schema, dialect)} ADD COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr} ${nullability}${defaultClause}`;
   }
 
   private buildDownSql(
@@ -279,13 +294,7 @@ export class SchemaDiffMigrationGenerator {
 
     // Add columns
     for (const col of diff.addColumns) {
-      const typeStr = this.renderColumnType(col, dialect);
-      const nullability = col.nullable === false ? "NOT NULL" : "NULL";
-      stmts.push(
-        this.wrapSqlInQuery(
-          `ALTER TABLE ${this.escapeTable(col.tableName, col.schema, dialect)} ADD COLUMN ${this.escapeId(col.columnName, dialect)} ${typeStr} ${nullability}`,
-        ),
-      );
+      stmts.push(this.wrapSqlInQuery(this.buildAddColumnSql(col, dialect)));
     }
 
     // Add computed (generated) columns
@@ -614,19 +623,7 @@ export class SchemaDiffMigrationGenerator {
       type = `ENUM(${values})`;
     }
 
-    if (!type.includes("(")) {
-      if (col.expectedLength) {
-        type = `${type}(${col.expectedLength})`;
-      } else if (col.expectedPrecision) {
-        const scale =
-          col.expectedScale !== undefined && col.expectedScale !== null
-            ? `,${col.expectedScale}`
-            : "";
-        type = `${type}(${col.expectedPrecision}${scale})`;
-      }
-    }
-
-    return type;
+    return withDeclaredSize(type, col);
   }
 
   /**
