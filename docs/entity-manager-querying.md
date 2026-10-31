@@ -423,11 +423,13 @@ const users = await em.find(User, {
 
 ```sql
 SELECT * FROM "user"
-WHERE "email" LIKE $1 AND "username" LIKE $2 AND "domain" LIKE $3
--- parameters: ['%gmail%', 'admin%', '%.com']
+WHERE "email" LIKE $1 ESCAPE $2 AND "username" LIKE $3 ESCAPE $4 AND "domain" LIKE $5 ESCAPE $6
+-- parameters: ['%gmail%', '\', 'admin%', '\', '%.com', '\']
 ```
 
 Why does the escaping matter? Suppose a user searches for "50%". With raw `like`, `{ like: "%50%%" }` would be ambiguous — is the third `%` a wildcard or the literal character? With `contains`, you just write `{ contains: "50%" }` and the ORM escapes it to `%50\%%`, matching the literal string "50%".
+
+Each of these sends `ESCAPE '\'` with the pattern. SQLite's `LIKE` has no escape character unless one is named, and the clause makes all three dialects match the same rows. Raw `like` / `notLike` send the pattern as written, with no `ESCAPE` clause.
 
 **Case-insensitive search (PostgreSQL only): `ilike`**
 

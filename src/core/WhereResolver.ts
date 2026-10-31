@@ -5,6 +5,7 @@ import { WhereClause, FILTER_OPERATOR_KEYS } from "../dialects/FindOption";
 import type { DialectExpression } from "../dialects/DialectExpression";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { attachedWhereValueTransform } from "./WhereValueTransform";
+import { escapeLikeValue, likeEscaped } from "./expressions/likeEscape";
 
 /**
  * An operator whose operand is `undefined` has no sensible SQL: `eq` / `gt`
@@ -68,7 +69,7 @@ function isUntransformable(v: unknown): boolean {
  * so it can be safely used in `contains` / `startsWith` / `endsWith`.
  */
 function escapeLikePattern(s: string): string {
-  return s.replace(/[%_\\]/g, "\\$&");
+  return escapeLikeValue(s);
 }
 
 /**
@@ -188,13 +189,13 @@ function resolveFilterObject(
         }
         break;
       case "contains":
-        clauses.push(Conditions.like(column, `%${escapeLikePattern(val)}%`));
+        clauses.push(likeEscaped(column, `%${escapeLikePattern(val)}%`));
         break;
       case "startsWith":
-        clauses.push(Conditions.like(column, `${escapeLikePattern(val)}%`));
+        clauses.push(likeEscaped(column, `${escapeLikePattern(val)}%`));
         break;
       case "endsWith":
-        clauses.push(Conditions.like(column, `%${escapeLikePattern(val)}`));
+        clauses.push(likeEscaped(column, `%${escapeLikePattern(val)}`));
         break;
       case "search":
         if (dialectExpression) {
