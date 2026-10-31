@@ -210,8 +210,9 @@ describe("WhereResolver", () => {
 
     it("contains: auto-wrapped with %", () => {
       const result = resolveSingle({ name: { contains: "alice" } });
-      expect(result.sql).toContain("`name` LIKE");
-      expect(result.values).toContain("%alice%");
+      // ESCAPE names the escape character: SQLite's LIKE has none by default.
+      expect(result.sql).toBe("`name` LIKE ? ESCAPE ?");
+      expect(result.values).toEqual(["%alice%", "\\"]);
     });
 
     it("contains: escapes % and _ in value", () => {
@@ -221,13 +222,13 @@ describe("WhereResolver", () => {
 
     it("startsWith: auto-wrapped with trailing %", () => {
       const result = resolveSingle({ name: { startsWith: "alice" } });
-      expect(result.sql).toContain("`name` LIKE");
+      expect(result.sql).toBe("`name` LIKE ? ESCAPE ?");
       expect(result.values).toContain("alice%");
     });
 
     it("endsWith: auto-wrapped with leading %", () => {
       const result = resolveSingle({ email: { endsWith: "@gmail.com" } });
-      expect(result.sql).toContain("`email` LIKE");
+      expect(result.sql).toBe("`email` LIKE ? ESCAPE ?");
       expect(result.values).toContain("%@gmail.com");
     });
   });

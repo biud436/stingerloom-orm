@@ -423,11 +423,13 @@ const users = await em.find(User, {
 
 ```sql
 SELECT * FROM "user"
-WHERE "email" LIKE $1 AND "username" LIKE $2 AND "domain" LIKE $3
--- parameters: ['%gmail%', 'admin%', '%.com']
+WHERE "email" LIKE $1 ESCAPE $2 AND "username" LIKE $3 ESCAPE $4 AND "domain" LIKE $5 ESCAPE $6
+-- parameters: ['%gmail%', '\', 'admin%', '\', '%.com', '\']
 ```
 
 이스케이프가 왜 중요할까요? 사용자가 "50%"를 검색한다고 해봐요. raw `like`로는 `{ like: "%50%%" }`가 모호해요 -- 세 번째 `%`가 와일드카드인지 리터럴인지 불분명하거든요. `contains`를 쓰면 `{ contains: "50%" }`만 작성하면 ORM이 `%50\%%`로 이스케이프해서 리터럴 "50%"에 매칭해요.
+
+세 연산자는 패턴과 함께 `ESCAPE '\'`를 보냅니다. SQLite의 `LIKE`에는 따로 지정하지 않으면 이스케이프 문자가 없어서, 이 절이 있어야 세 방언이 같은 행을 찾습니다. raw `like` / `notLike`는 적은 패턴을 그대로 보내고 `ESCAPE` 절을 붙이지 않아요.
 
 **대소문자 무시 검색 (PostgreSQL 전용): `ilike`**
 

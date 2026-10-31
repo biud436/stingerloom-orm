@@ -6,7 +6,7 @@ import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import type { ConditionLike } from "../../expressions/ConditionLike";
 import { OrderExpression } from "../../expressions/OrderExpression";
 import { AggregateExpression } from "../../expressions/AggregateExpression";
-import { escapeLikeValue } from "../../expressions/likeEscape";
+import { escapeLikeValue, likeEscaped } from "../../expressions/likeEscape";
 import {
   resolveRegex,
   inlineFlagPrefix,
@@ -105,7 +105,7 @@ export class ColumnExpression {
       this.ref,
       "_LIKE_ESCAPED",
       pattern,
-      (qualified) => sql`${raw(qualified)} LIKE ${pattern} ESCAPE ${"\\"}`,
+      (qualified) => likeEscaped(qualified, pattern),
     );
   }
 
