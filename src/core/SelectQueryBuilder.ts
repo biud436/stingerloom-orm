@@ -27,11 +27,18 @@ import {
   type PagePaginationResult,
 } from "./PagePagination";
 import {
-  encodeCursor,
-  decodeCursor,
+  decodeCursorKey,
   type CursorPaginationOption,
   type CursorPaginationResult,
 } from "./CursorPagination";
+import {
+  buildKeysetOrderBy,
+  buildKeysetPredicate,
+  cursorFitsKeyset,
+  encodeNextCursor,
+  sliceCursorPage,
+  type KeysetPlan,
+} from "./entity-manager/CursorKeyset";
 import { coerceRows, type RawResultOptions } from "./RawValueCoercion";
 import { COLUMN_TOKEN } from "../decorators/Column";
 import { buildPropertyToColumnMap as buildSharedPropertyToColumnMap } from "./PropertyColumnMap";
@@ -3989,43 +3996,40 @@ export class SelectQueryBuilder<T, TResult = T> {
 
   /**
    * Keyset (cursor) pagination terminal — the seek-method counterpart to the
-   * offset-based {@link paginate}. Instead of `LIMIT/OFFSET`, it filters with
-   * a `<sortColumn> > <lastValue>` (ASC) / `< <lastValue>` (DESC) predicate, so
-   * latency stays flat on very large tables and the page window does not skip
-   * or duplicate rows when concurrent inserts shift offsets. Mirrors the
-   * semantics of `EntityManager.findWithCursor()` and reuses the exact same
-   * cursor encoding (`encodeCursor` / `decodeCursor`), `take` normalization
-   * (`normalizePageSize`), and {@link CursorPaginationResult} envelope.
+   * offset-based {@link paginate}. Instead of `LIMIT/OFFSET`, each page
+   * starts after the previous page's last row, so latency stays flat on very
+   * large tables and the window does not skip or duplicate rows when
+   * concurrent inserts shift offsets. Pages exactly as
+   * `EntityManager.findWithCursor()` does, through the same keyset, cursor
+   * encoding, `take` normalization (`normalizePageSize`) and
+   * {@link CursorPaginationResult} envelope.
    *
    * The option shape is {@link CursorPaginationOption} — `take` (page size,
    * default 20), `cursor` (Base64 token from a previous call), `orderBy` (sort
    * property, default the entity primary key), and `direction` (default
    * `"ASC"`). The builder's own WHERE / JOIN / soft-delete / tenant scoping is
    * preserved: the keyset predicate is appended through `andWhere()` rather
-   * than rebuilding the query, and the sort column is inserted as the PRIMARY
-   * `ORDER BY` so any existing `orderBy()` clauses follow as tiebreakers.
+   * than rebuilding the query.
+   *
+   * The page is ordered by the sort property, then by the primary key —
+   * every column of a composite key — so rows that share a sort value are
+   * neither skipped nor repeated at a page boundary. A nullable sort property
+   * keeps its NULL rows together at the end (ASC) or the start (DESC) on every
+   * dialect. Any `orderBy()` already on the builder follows those keys; since
+   * the primary key is unique, it does not change the order.
    *
    * Side-effect-free on `this`: all mutation happens on a {@link clone}, so the
    * source builder can be reused or paged again afterward.
    *
    * Like `findWithCursor()`, `hasNextPage` is detected by over-fetching one
-   * extra row (`take + 1`), and `nextCursor` is `encodeCursor(<last row's sort
-   * value>)` — or `null` on the final page.
+   * extra row (`take + 1`), and `nextCursor` encodes the last row's sort value
+   * and primary key — or is `null` on the final page.
    *
-   * IMPORTANT — use a NON-NULL sort column (the PK or a `NOT NULL` timestamp).
-   * The keyset keeps not-yet-visited NULL rows in the window, which assumes the
-   * PostgreSQL ordering `NULLs last in ASC / first in DESC`. MySQL and SQLite
-   * sort NULLs the opposite way, so paging a NULLABLE sort column can repeat the
-   * NULL rows across pages on those engines. This caveat is shared with
-   * `findWithCursor`; keyset pagination is only well-defined over a strictly
-   * ordered, non-null column.
-   *
-   * Scope: single-column keyset only (one `orderBy` column, matching
-   * `findWithCursor`). The cursor value is read from the deserialized entity
-   * by property name, so a sort column carrying a value `transformer` may
-   * encode the transformed (not the raw DB) value; for the typical PK /
-   * timestamp / numeric sort columns the two are identical. Combining with a
-   * to-many `*AndSelect` join (distinct-root windowing) is out of scope.
+   * The cursor values are read from the deserialized entity by property
+   * name, so a sort column carrying a value `transformer` may encode the
+   * transformed (not the raw DB) value; for the typical PK / timestamp /
+   * numeric sort columns the two are identical. Combining with a to-many
+   * `*AndSelect` join (distinct-root windowing) is out of scope.
    *
    * @example
    * ```ts
@@ -4063,18 +4067,34 @@ export class SelectQueryBuilder<T, TResult = T> {
       );
     }
 
-    // Resolve the sort column. `option.orderBy` is an entity property name
-    // (consistent with where()/orderBy()); when omitted, fall back to the
-    // entity's primary key, matching findWithCursor.
-    const sortProperty = this.resolveCursorSortProperty(option.orderBy);
-    const qualifiedSortColumn = this.col(sortProperty);
+    // The keyset is keyed by entity property names: `col()` qualifies them
+    // with the builder's alias for the SQL, and the hydrated entities carry
+    // the same names for the next cursor. `option.orderBy` defaults to the
+    // primary key, matching findWithCursor.
+    const pkProperties = this.cursorKeyProperties();
+    const sortProperty = option.orderBy ?? pkProperties[0];
+    if (!sortProperty) {
+      throw new InvalidQueryError(
+        "Cursor pagination requires an orderBy column or a primary key.",
+        "Pass orderBy in the getCursor() option, or add a primary key to the entity.",
+      );
+    }
+    const plan: KeysetPlan = {
+      orderColumn: sortProperty,
+      pkColumns: pkProperties,
+      isPkOrder: pkProperties.length === 0 || sortProperty === pkProperties[0],
+      direction,
+      pageSize,
+      cursor: null,
+    };
 
     // Decode the incoming cursor with the same strictness as findWithCursor:
-    // a non-null cursor string that fails to decode is a hard error.
-    let cursorValue: unknown = null;
+    // a cursor string that fails to decode, or carries another key shape, is
+    // a hard error. A cursor minted before the keyset (`{v}` only) pages
+    // that one transition page by the sort value alone.
     if (option.cursor) {
-      cursorValue = decodeCursor(option.cursor);
-      if (cursorValue === null) {
+      plan.cursor = decodeCursorKey(option.cursor);
+      if (plan.cursor === null || !cursorFitsKeyset(plan, plan.cursor)) {
         throw new InvalidQueryError(
           "Invalid cursor value.",
           "Ensure the cursor string was returned from a previous getCursor() call.",
@@ -4092,27 +4112,17 @@ export class SelectQueryBuilder<T, TResult = T> {
       paged.withDeleted();
     }
 
-    // Append the keyset predicate, ANDed with the builder's existing WHERE /
-    // JOIN / soft-delete / tenant clauses via the same andWhere() path. NULL
-    // rows that have not been visited yet are included, matching findWithCursor.
-    if (cursorValue !== null) {
-      const keyset =
-        direction === "ASC"
-          ? Conditions.or([
-              Conditions.gt(qualifiedSortColumn, cursorValue),
-              Conditions.isNull(qualifiedSortColumn),
-            ])
-          : Conditions.or([
-              Conditions.lt(qualifiedSortColumn, cursorValue),
-              Conditions.isNull(qualifiedSortColumn),
-            ]);
+    // The keyset predicate is ANDed with the builder's existing WHERE /
+    // JOIN / soft-delete / tenant clauses via the same andWhere() path.
+    const wrap = (property: string) => this.col(property);
+    const keyset = buildKeysetPredicate(plan, wrap);
+    if (keyset) {
       paged.andWhere(keyset);
     }
 
-    // The sort column drives ordering as the primary key; any ORDER BY already
-    // on the builder follows as a tiebreaker.
+    // The keyset keys lead the ORDER BY; an orderBy() on the builder follows.
     paged.orderByClauses = [
-      { column: qualifiedSortColumn, direction },
+      ...buildKeysetOrderBy(plan, wrap),
       ...paged.orderByClauses,
     ];
 
@@ -4122,14 +4132,12 @@ export class SelectQueryBuilder<T, TResult = T> {
 
     const rows = await paged.getMany();
 
-    const hasNextPage = rows.length > pageSize;
-    const data = hasNextPage ? rows.slice(0, pageSize) : rows;
+    const { pageRows: data, hasNextPage } = sliceCursorPage(rows, pageSize);
 
-    let nextCursor: string | null = null;
-    if (hasNextPage && data.length > 0) {
-      const lastRow = data[data.length - 1] as Record<string, unknown>;
-      nextCursor = encodeCursor(lastRow[sortProperty]);
-    }
+    const nextCursor =
+      hasNextPage && data.length > 0
+        ? encodeNextCursor(plan, data[data.length - 1] as Record<string, unknown>)
+        : null;
 
     return {
       data,
@@ -4140,33 +4148,17 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
-   * @internal Resolve the cursor sort column as an entity property name.
-   * Returns `orderBy` when provided, otherwise the entity's primary-key
-   * property. Throws when neither is available (matches findWithCursor).
+   * @internal The entity's primary-key property names in declared order — the
+   * cursor's default sort property and its tiebreaker. Empty without a PK.
    */
-  private resolveCursorSortProperty(
-    orderBy?: keyof T & string,
-  ): keyof T & string {
-    if (orderBy) {
-      return orderBy;
-    }
+  private cursorKeyProperties(): Array<keyof T & string> {
     const resolver = (this.em as unknown as {
       resolver?: RelationMetadataResolver;
     }).resolver;
     const metadata = resolver?.resolveEntityMetadata(this.entity);
-    const pk = metadata?.columns?.find(
-      (column: ColumnMetadata) => column.options?.primary,
-    );
-    const pkProperty = (pk?.propertyKey ?? pk?.name) as
-      | (keyof T & string)
-      | undefined;
-    if (!pkProperty) {
-      throw new InvalidQueryError(
-        "Cursor pagination requires an orderBy column or a primary key.",
-        "Pass orderBy in the getCursor() option, or add a primary key to the entity.",
-      );
-    }
-    return pkProperty;
+    return (metadata?.columns ?? [])
+      .filter((column: ColumnMetadata) => column.options?.primary)
+      .map((column: ColumnMetadata) => (column.propertyKey ?? column.name) as keyof T & string);
   }
 
   // ── EXECUTION: Partial (typed plain objects) ───────────

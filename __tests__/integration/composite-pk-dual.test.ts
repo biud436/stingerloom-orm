@@ -4,7 +4,7 @@
  *
  * deleteMany() keyed its DELETE on the first key column only, so a scalar
  * id removed every row sharing it; it now takes full key objects. Keyset
- * paging (findWithCursor, pipe keyset) broke ties by that column alone and
+ * paging (findWithCursor, getCursor, pipe keyset) broke ties by that column alone and
  * skipped the rows sharing a page's boundary value; it now carries the key.
  *
  * SQLite mirrors: __tests__/integration/sqlite/delete-many-composite-pk.test.ts,
@@ -138,6 +138,23 @@ describe.each(drivers)(
           "o1l2", "o2l2", "o3l2",
           "o1l1", "o1l3", "o2l1", "o2l3", "o3l1", "o3l3",
         ]);
+      });
+
+      it("query builder getCursor() pages every row by the key", async () => {
+        await seed(KEYS);
+
+        const seen: string[] = [];
+        let cursor: string | undefined;
+        for (let guard = 0; guard < 20; guard++) {
+          const page: any = await em
+            .createQueryBuilder(Line, "l")
+            .getCursor({ take: 2, cursor } as any);
+          seen.push(...page.data.map((row: any) => row.sku));
+          if (!page.hasNextPage) break;
+          cursor = page.nextCursor;
+        }
+
+        expect(seen).toEqual(ALL);
       });
 
       it("pipe keyset reads every row by the first key column", async () => {

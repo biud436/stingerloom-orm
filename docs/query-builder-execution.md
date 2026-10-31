@@ -150,9 +150,9 @@ do {
 **Key behaviors:**
 
 - **Side-effect-free** -- `getCursor()` operates on an internal clone of the builder. The original instance is not mutated and can be reused or paged again.
-- **Keyset predicate ANDed in** -- the cursor value is appended as `AND <col> > ?` (ASC) or `AND <col> < ?` (DESC) via the same `andWhere()` path as the rest of the builder's clauses. NULL rows not yet visited are included.
-- **Single sort column** -- `orderBy` must be one entity property name. Any `orderBy()` already on the builder acts as a secondary tiebreaker.
-- **NULL-safe** -- keyset conditions use `OR col IS NULL` for the first unvisited page when the sort column is nullable, matching `findWithCursor()` behavior.
+- **Same keyset as `findWithCursor()`** -- the page is ordered by the sort property, then by the primary key (every column of a composite key), and each page starts after the previous page's last row: `AND (<col> > ? OR (<col> = ? AND <pk> > ?) OR <col> IS NULL)` for ASC, ANDed in through the same `andWhere()` path as the builder's other clauses. Rows that share a sort value are neither skipped nor repeated at a page boundary.
+- **Single sort column** -- `orderBy` must be one entity property name. An `orderBy()` already on the builder follows the keyset keys; since the primary key is unique, it does not change the order.
+- **NULL-safe** -- NULL sort values come last in ascending order and first in descending order on every dialect, and a page that ends on a NULL row continues from it.
 - **Invalid cursor throws** -- a non-null cursor string that cannot be decoded throws `InvalidQueryError`. Always use the `nextCursor` value returned by a previous `getCursor()` call unchanged.
 - **`orderBy` defaults to the entity PK** -- when omitted, `getCursor()` resolves the entity's primary key column automatically, matching `findWithCursor()`.
 
