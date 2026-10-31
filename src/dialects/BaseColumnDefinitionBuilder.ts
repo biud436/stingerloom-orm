@@ -6,6 +6,7 @@ import {
 } from "../decorators/Column";
 import type { ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import { ColumnDefinitionBuilder, ColumnDefContext } from "./ColumnDefinitionBuilder";
+import { renderDefaultClause } from "./columnDefault";
 import { CommonCapabilities, ALL_COMMON } from "./DialectCapabilities";
 import { ColumnTypeRegistry, DialectName } from "../core/ColumnTypeRegistry";
 import { renderComputedColumnExpression } from "../core/expressions/ComputedColumnExpression";
@@ -333,22 +334,7 @@ export abstract class BaseColumnDefinitionBuilder
   protected renderDefaultClause(
     value: string | number | boolean | null | undefined,
   ): string {
-    if (value === undefined) return "";
-    if (value === null) return " DEFAULT NULL";
-    if (typeof value === "number") return ` DEFAULT ${value}`;
-    if (typeof value === "boolean") {
-      return this.renderBooleanDefault(value);
-    }
-    // Parenthesized string → raw SQL expression
-    if (
-      typeof value === "string" &&
-      value.startsWith("(") &&
-      value.endsWith(")")
-    ) {
-      return ` DEFAULT ${value}`;
-    }
-    // String literal — escape single quotes
-    return ` DEFAULT '${value.replace(/'/g, "''")}'`;
+    return renderDefaultClause(value, (v) => this.renderBooleanDefault(v));
   }
 
   /**

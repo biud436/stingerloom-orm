@@ -58,6 +58,7 @@ import {
   SchemaDiff,
   ColumnChange,
   SchemaDiffResult,
+  withDeclaredSize,
 } from "./generators/SchemaDiff";
 import { InheritanceResolver } from "./InheritanceResolver";
 import { EntityMetadata } from "../decorators/Entity";
@@ -77,6 +78,7 @@ import { escapeSqlLiteral } from "../utils/escapeSqlLiteral";
 import { SynchronizePolicy } from "./DatabaseClientOptions";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { addColumnDefaultClause, isExpressionDefault } from "../dialects/columnDefault";
 
 /**
  * A schema change that `synchronize: "safe"` detected but declined to apply.
@@ -984,7 +986,7 @@ export class SchemaRegistrar {
 
     // 1. ADD COLUMNS (runs for both true and safe modes)
     for (const col of diff.addColumns) {
-      const typeDef = this.buildAddColumnTypeDef(col);
+      const typeDef = this.buildAddColumnTypeDef(col, dialect);
       if (isDryRun) {
         this.logger.info(
           `[dry-run] ALTER TABLE ${col.tableName} ADD COLUMN ${col.columnName} ${typeDef}`,
@@ -1326,29 +1328,20 @@ export class SchemaRegistrar {
       type = `ENUM(${values})`;
     }
 
-    // If a length is specified and the type does not yet include parentheses, append it.
-    if (col.expectedLength && !type.includes("(")) {
-      type = `${type}(${col.expectedLength})`;
-    }
-
-    // If precision/scale is specified, append it.
-    if (col.expectedPrecision && !type.includes("(")) {
-      const scale =
-        col.expectedScale !== undefined && col.expectedScale !== null
-          ? `,${col.expectedScale}`
-          : "";
-      type = `${type}(${col.expectedPrecision}${scale})`;
-    }
-
-    return type;
+    return withDeclaredSize(type, col);
   }
 
   /**
    * Produces the ADD COLUMN type-definition string from a ColumnChange.
    * Examples: "VARCHAR(255) NULL", "INT NOT NULL DEFAULT 0".
    *
-   * For non-nullable columns being backfilled into existing rows,
-   * a type-appropriate default is used (#177):
+   * A declared `@Column({ default })` is added with the column, as CREATE
+   * TABLE adds it, so existing rows and later inserts get that value.
+   * SQLite cannot ADD COLUMN with an expression default; there the column
+   * is added as if it declared none, and the gap is reported.
+   *
+   * For non-nullable columns without a declared default, being backfilled
+   * into existing rows, a type-appropriate default is used (#177):
    *   - String types (VARCHAR, TEXT, CHAR, LONGTEXT) -> DEFAULT ''
    *   - Numeric types (INT, BIGINT, FLOAT, etc.) -> DEFAULT 0
    *   - Boolean -> DEFAULT FALSE (pg/sqlite) or DEFAULT 0 (mysql)
@@ -1359,11 +1352,21 @@ export class SchemaRegistrar {
    * A forced-NULL fall-through means the shipped column is weaker than the
    * entity declares, so it is reported rather than applied silently.
    */
-  private buildAddColumnTypeDef(col: ColumnChange): string {
+  private buildAddColumnTypeDef(col: ColumnChange, dialect: SchemaDialect): string {
     const type = this.buildColumnTypeExpr(col);
+    const declaredDefault = addColumnDefaultClause(col.defaultValue, dialect);
+    if (dialect === "sqlite" && isExpressionDefault(col.defaultValue)) {
+      this.logger.warn(
+        `[sync] SQLite cannot add column ${col.tableName}.${col.columnName} with its expression default ${String(col.defaultValue)}. ` +
+          `It is added without it, so existing rows and inserts that leave the column out do not get that value. Recreate the table in a migration to apply it.`,
+      );
+    }
 
     if (col.nullable !== false) {
-      return `${type} NULL`;
+      return `${type} NULL${declaredDefault}`;
+    }
+    if (declaredDefault) {
+      return `${type} NOT NULL${declaredDefault}`;
     }
 
     // Type-appropriate default for NOT NULL backfill (#177)

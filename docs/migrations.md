@@ -690,6 +690,8 @@ On a table that already exists, the diff compares columns: their presence, type,
 | MySQL / MariaDB `ENUM` values changed | Not compared | Not compared |
 | Entity removed | Table kept | Table kept |
 
+A column added to an existing table gets its declared `default`, as it would in CREATE TABLE, so the rows already there take that value. Without one, a NOT NULL text, number or boolean column is backfilled with `''`, `0` or `FALSE`, and any other NOT NULL column (a date, an enum, JSON) is added nullable with a warning. SQLite cannot add a column with an expression default such as `"(CURRENT_TIMESTAMP)"`. There the column is added without it, and a warning names it.
+
 Because a restart after such an edit would otherwise look like a successful sync, both say so. When a table already existed, `synchronize` logs one line per boot listing the kinds your entities can run into -- a default is only listed when some column declares one, and so on:
 
 ```
