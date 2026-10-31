@@ -582,7 +582,7 @@ await em.register({
 | `createUpdateBuilder()` | `affected: 0`, 아무것도 쓰지 않습니다 |
 | 테넌트 컬럼 자체를 쓰는 모든 연산 | `TENANT_MISMATCH` — 자기 행을 다른 테넌트에게 넘기는 것도 막습니다. `save()` / `updateMany()`는 *현재* 테넌트 값이면 통과시키고 `SET` 목록에서 빼지만, `createUpdateBuilder().set()`과 `createInsertBuilder().doUpdate()`는 값이 이미 렌더링된 뒤라 컬럼 자체를 거부합니다. 이 가드는 테넌트 컨텍스트가 살아 있는 동안 적용되므로, 의도적으로 행을 옮기려면 `MetadataContext.runUnscoped()`나 `MetadataContext.run("public", ...)`을 쓰세요 |
 | `clear()` | 테넌트 A의 행만 지웁니다 — 테넌트 B의 행은 남아요 |
-| `@ManyToMany` 조인 테이블의 `attachRelation()` / `detachRelation()` | **스코프 없음** — 조인 테이블에는 테넌트 컬럼이 없습니다. 소유 엔티티 쪽에서 스코프를 거세요 |
+| `@ManyToMany` 조인 테이블의 `attachRelation()` / `detachRelation()` | `attachRelation()`은 `EntityNotFoundError`를 던지고, `detachRelation()`은 `affected: 0`을 반환합니다. 조인 테이블에는 테넌트 컬럼이 없어서, 쓰기 전에 두 id를 각자의 테이블에서 테넌트 조건으로 조회합니다. 두 행이 모두 테넌트 A의 것이거나 한쪽이 `@NonTenantEntity()`일 때만 링크를 씁니다 |
 | `em.query()` raw SQL | **스코프 없음** — 호출 지점당 한 번 경고합니다 |
 
 `upsert()` / `batchUpsert()` / `createInsertBuilder().doUpdate()`는 먼저 INSERT입니다. 새 행에 채워 넣을 테넌트 값이 없으니 테넌트 컨텍스트가 없으면 `tenantOnMissingContext` 정책과 무관하게, `runUnscoped()`나 `run("public", ...)` 안에서도 거부합니다.
