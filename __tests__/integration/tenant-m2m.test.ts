@@ -159,11 +159,13 @@ describe.each(drivers)(
         globexTagId = t.id;
       });
 
+      // attachRelation() rejects this link inside a tenant, but an unscoped
+      // write (or data from before that check) can still leave one behind,
+      // and the read path must contain it.
+      await MetadataContext.runUnscoped(() =>
+        em.attachRelation(PostE, acmePostId, "tags", globexTagId),
+      );
       await MetadataContext.run("acme", async () => {
-        // attachRelation does not validate tenant ownership of the related
-        // row — representable bad data the read path must still contain.
-        await em.attachRelation(PostE, acmePostId, "tags", globexTagId);
-
         const rows: any[] = await em.find(PostE, { relations: ["tags"] as any });
         expect(rows.length).toBe(1);
         expect(rows[0].tags).toEqual([]);

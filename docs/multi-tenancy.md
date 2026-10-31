@@ -582,7 +582,7 @@ With `tenantStrategy: "tenant_column"` the ORM applies four behaviors to every e
 | `createUpdateBuilder()` | `affected: 0`, nothing written |
 | any write that sets the tenant column itself | `TENANT_MISMATCH` — a tenant cannot hand one of its own rows to another tenant either. `save()` / `updateMany()` accept the *current* tenant and drop it from the `SET` list; `createUpdateBuilder().set()` and `createInsertBuilder().doUpdate()` reject the column outright, because their values are already rendered by the time the statement runs. The guard applies while a tenant context is active — `MetadataContext.runUnscoped()` and `MetadataContext.run("public", ...)` are the way to move a row deliberately |
 | `clear()` | deletes tenant A's rows only — tenant B's rows stay |
-| `attachRelation()` / `detachRelation()` on a `@ManyToMany` pivot | **not scoped** — the join table has no tenant column; scope the owning entity instead |
+| `attachRelation()` / `detachRelation()` on a `@ManyToMany` pivot | `attachRelation()` throws `EntityNotFoundError`; `detachRelation()` returns `affected: 0`. The join table has no tenant column, so both look up the two ids in their own tables with the tenant predicate before writing. A link is written only when both rows belong to tenant A, or when one side is a `@NonTenantEntity()` |
 | `em.query()` raw SQL | **not scoped** — warns once per call site |
 
 `upsert()` / `batchUpsert()` / `createInsertBuilder().doUpdate()` are INSERTs first: they always reject without a tenant context, under every `tenantOnMissingContext` policy and under `runUnscoped()` / `run("public", ...)` too, because there is no tenant value to write into the new row.

@@ -206,11 +206,13 @@ describe("RelationLoader under tenant_column strategy", () => {
           globexTagId = t.id;
         });
 
-        // Pivot row linking acme's post to globex's tag — attachRelation does
-        // not validate tenant ownership, so this is representable bad data.
+        // Pivot row linking acme's post to globex's tag. attachRelation()
+        // rejects it inside a tenant, but an unscoped write (or data from
+        // before that check) can still leave one behind.
+        await MetadataContext.runUnscoped(() =>
+          em.attachRelation(Post, acmePostId, "tags", globexTagId),
+        );
         await MetadataContext.run("acme", async () => {
-          await em.attachRelation(Post, acmePostId, "tags", globexTagId);
-
           const rows: any[] = await em.find(Post, {
             relations: ["tags"] as any,
           });
