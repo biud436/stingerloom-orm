@@ -24,6 +24,7 @@ import {
 import {
   buildKeysetOrderBy,
   buildKeysetPredicate,
+  cursorKeyOf,
   type KeysetPlan,
 } from "../../entity-manager/CursorKeyset";
 import type { DecodedCursorKey } from "../../CursorPagination";
@@ -129,7 +130,8 @@ interface EntityInfo {
   tableName: string;
   columns: ColumnMetadata[];
   propToCol: Map<string, string>;
-  primaryKey: string | null;
+  /** PK columns in declared order (the auto-increment column without a PK flag); empty without one. */
+  primaryKeys: string[];
 }
 
 const entityInfoCache = new WeakMap<Function, EntityInfo>();
@@ -191,12 +193,13 @@ function getEntityInfo(entity: ClazzType<any>): EntityInfo {
   // The map find() resolves names with: @Column properties plus the FK
   // properties of @ManyToOne / @OneToOne relations (`authorId` → `author_id`).
   const propToCol = buildPropertyToColumnMap({ target: entity, columns }, relations);
-  const primaryKey =
-    (columns.find((col) => col.options?.primary) ??
-      columns.find((col) => col.options?.autoIncrement))?.name ?? null;
+  const pkColumns = columns.filter((col) => col.options?.primary);
+  const primaryKeys = (
+    pkColumns.length > 0 ? pkColumns : columns.filter((col) => col.options?.autoIncrement).slice(0, 1)
+  ).map((col) => col.name);
 
   attachWhereValueTransform(propToCol, columns);
-  cached = { tableName, columns, propToCol, primaryKey };
+  cached = { tableName, columns, propToCol, primaryKeys };
   entityInfoCache.set(entity, cached);
   return cached;
 }
@@ -305,8 +308,9 @@ export class RawPipeline<T> {
 
   /**
    * How a keyset traversal pages, the way `findWithCursor` does: by the
-   * ordering column, then the primary key, so rows that share an ordering
-   * value are neither skipped nor repeated at a batch boundary, with NULLs
+   * ordering column, then the primary key (every column of a composite
+   * one), so rows that share an ordering value are neither skipped nor
+   * repeated at a batch boundary, with NULLs
    * kept together at the end (ASC) or the start (DESC) on every dialect. A
    * table-per-class root adds its discriminator, since its tables number
    * their keys independently.
@@ -322,8 +326,8 @@ export class RawPipeline<T> {
           : `Order by one property, or drop keyset to sort by several (LIMIT/OFFSET batches).`,
       );
     }
-    const pkColumn = this.info.primaryKey;
-    if (!pkColumn) {
+    const pkColumns = this.info.primaryKeys;
+    if (pkColumns.length === 0) {
       throw new InvalidQueryError(
         `keyset: true needs a primary key on "${this.entity.name}" to tell apart rows with the same ordering value.`,
         "Drop keyset to read in LIMIT/OFFSET batches.",
@@ -332,8 +336,8 @@ export class RawPipeline<T> {
     const [{ column, direction }] = this.order;
     return {
       orderColumn: column,
-      pkColumn,
-      isPkOrder: column === pkColumn,
+      pkColumns,
+      isPkOrder: column === pkColumns[0],
       subKeyColumn: isTpcPolymorphicRoot(inheritance, this.entity)
         ? (inheritance.getDiscriminatorColumn(this.entity)?.name ?? "dtype")
         : undefined,
@@ -441,12 +445,7 @@ export class RawPipeline<T> {
       if (!rows || rows.length === 0) break;
       yield rows;
 
-      const last = rows[rows.length - 1];
-      cursor = {
-        order: last[plan.orderColumn] ?? null,
-        pk: last[plan.pkColumn!],
-        subKey: plan.subKeyColumn ? last[plan.subKeyColumn] : undefined,
-      };
+      cursor = cursorKeyOf(plan, rows[rows.length - 1]);
 
       if (rows.length < this.batchSize) break;
     }
@@ -650,8 +649,8 @@ export class RawPipeline<T> {
       (prop) => this.info.propToCol.get(prop) ?? prop,
     );
     if (this.keyset) {
-      const { orderColumn, pkColumn, subKeyColumn } = this.keyset;
-      for (const key of [orderColumn, pkColumn, subKeyColumn]) {
+      const { orderColumn, pkColumns, subKeyColumn } = this.keyset;
+      for (const key of [orderColumn, ...pkColumns, subKeyColumn]) {
         if (key && !columns.includes(key)) columns.push(key);
       }
     }

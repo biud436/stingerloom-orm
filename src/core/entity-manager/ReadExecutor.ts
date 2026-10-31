@@ -35,6 +35,7 @@ import {
 import {
   buildKeysetOrderBy,
   buildKeysetPredicate,
+  cursorFitsKeyset,
   encodeNextCursor,
   sliceCursorPage,
   type KeysetPlan,
@@ -181,8 +182,11 @@ interface FindOperation<T> {
  * {@link ReadExecutor.resolveCursorOrder}.
  */
 interface CursorOrder<T> {
-  /** PK column: default order key and the keyset tiebreaker. Undefined when the entity has none. */
-  pk: ColumnMetadata | undefined;
+  /**
+   * PK columns in declared order: the first is the default order key, all
+   * of them the keyset tiebreaker. Empty when the entity has none.
+   */
+  pkColumns: ColumnMetadata[];
   /** Property (or, by default, PK column) name the page is ordered by. */
   orderByColumn: keyof T & string;
   direction: "ASC" | "DESC";
@@ -1846,16 +1850,18 @@ export class ReadExecutor {
    * The page order `findWithCursor` runs under: the PK (for the default
    * order and the keyset tiebreaker), the order property, direction, page
    * size and the decoded cursor of the previous page. Rejects an entity
-   * with neither an `orderBy` nor a PK and a cursor that does not decode.
+   * with neither an `orderBy` nor a PK, and a cursor that does not decode
+   * or does not carry this entity's key shape.
    */
   private resolveCursorOrder<T>(
     entity: ClazzType<T>,
     metadata: EntityScannerMetadata,
     option: CursorPaginationOption<T>,
   ): CursorOrder<T> {
-    const pk = metadata.columns.find(
+    const pkColumns = metadata.columns.filter(
       (column: ColumnMetadata) => column.options?.primary,
     );
+    const pk = pkColumns[0];
 
     const orderByColumn = option.orderBy ?? (pk?.name as keyof T & string);
     if (!orderByColumn) {
@@ -1876,7 +1882,10 @@ export class ReadExecutor {
     let cursorKey: DecodedCursorKey | null = null;
     if (option.cursor) {
       cursorKey = decodeCursorKey(option.cursor);
-      if (cursorKey === null) {
+      if (
+        cursorKey === null ||
+        !cursorFitsKeyset({ pkColumns: pkColumns.map((col) => col.name) }, cursorKey)
+      ) {
         throw new InvalidQueryError(
           "Invalid cursor value.",
           "Ensure the cursor string was returned from a previous findWithCursor() call.",
@@ -1884,7 +1893,7 @@ export class ReadExecutor {
       }
     }
 
-    return { pk, orderByColumn, direction, pageSize, cursorKey };
+    return { pkColumns, orderByColumn, direction, pageSize, cursorKey };
   }
 
   /**
@@ -1923,11 +1932,11 @@ export class ReadExecutor {
       propToCol.get(order.orderByColumn) ?? order.orderByColumn,
       order.orderByColumn,
     );
-    const dbPkColumn = order.pk?.name as string | undefined;
+    const dbPkColumns = order.pkColumns.map((col) => col.name);
     const keyset: KeysetPlan = {
       orderColumn: dbOrderByColumn,
-      pkColumn: dbPkColumn,
-      isPkOrder: !dbPkColumn || dbOrderByColumn === dbPkColumn,
+      pkColumns: dbPkColumns,
+      isPkOrder: dbPkColumns.length === 0 || dbOrderByColumn === dbPkColumns[0],
       direction: order.direction,
       pageSize: order.pageSize,
       cursor: order.cursorKey,

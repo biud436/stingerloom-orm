@@ -236,7 +236,7 @@ async function getPosts(req: Request, res: Response) {
 - Real-time feeds where rows are constantly inserted
 - Performance must remain consistent regardless of page depth
 
-> **Hint** Cursor pagination requires an ordered, unique column (typically the primary key). It does not support jumping to arbitrary pages -- the client must paginate forward sequentially.
+> **Hint** Cursor pagination orders by one column and breaks ties by the primary key, every column of a composite key included, so the order column may repeat values. It does not support jumping to arbitrary pages -- the client must paginate forward sequentially.
 
 `findWithCursor()` applies the same filters as `find()`: soft-deleted rows are excluded unless you pass `withDeleted: true`, and paging a Single-Table-Inheritance child class returns only that subtype's rows (the discriminator predicate is added automatically).
 
