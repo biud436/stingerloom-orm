@@ -285,6 +285,26 @@ DELETE FROM `user` WHERE `id` IN (?, ?, ?)
 -- Parameters: [1, 2, 3]
 ```
 
+### 복합 기본 키
+
+기본 키 컬럼이 둘 이상인 엔티티에는 행마다 모든 키 컬럼을 담은 객체를 하나씩 넘깁니다.
+
+```typescript
+await em.deleteMany(OrderLine, [
+  { orderId: 1, lineNo: 2 },
+  { orderId: 2, lineNo: 1 },
+]);
+```
+
+```sql
+-- PostgreSQL
+DELETE FROM "order_line"
+WHERE (("order_id" = $1 AND "line_no" = $2) OR ("order_id" = $3 AND "line_no" = $4))
+-- Parameters: [1, 2, 2, 1]
+```
+
+키 컬럼은 프로퍼티 이름으로도, 컬럼 이름으로도 적을 수 있습니다. 키가 아닌 프로퍼티는 무시하므로 조회해 온 엔티티를 그대로 넘겨도 됩니다. 스칼라 id는 `InvalidQueryError`를 던집니다. 키의 일부만 가리키는 값이라, 그대로 지우면 그 값을 공유하는 행이 전부 삭제되기 때문이에요. 키 컬럼이 하나라도 빠진 객체도 같은 이유로 거부합니다.
+
 ::: tip
 PK가 아닌 조건으로 삭제하려면 WHERE 절과 함께 `delete()`를 사용하세요:
 ```typescript

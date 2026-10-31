@@ -145,10 +145,12 @@ export abstract class BaseEntityManager {
 
   /**
    * Bulk-deletes multiple entities by a list of PK values.
-   * Runs a single `DELETE FROM table WHERE pk IN (?, ?, ...)` query.
+   * Runs a single `DELETE FROM table WHERE pk IN (?, ?, ...)` query, or
+   * `(a = ? AND b = ?) OR …` for a composite key.
    *
    * @param entity Entity class
-   * @param ids Array of PK values to delete
+   * @param ids Array of PK values to delete — for a composite key, one
+   *   object per row with every key column (a scalar is rejected)
    * @returns DeleteResult containing the number of affected rows
    */
   abstract deleteMany<T>(

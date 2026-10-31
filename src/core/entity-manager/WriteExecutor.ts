@@ -19,6 +19,7 @@ import {
 import { EntityMetadataNotFoundError } from "../../errors/EntityMetadataNotFoundError";
 import { EntityNotFoundError } from "../../errors/EntityNotFoundError";
 import { InvalidQueryError } from "../../errors/InvalidQueryError";
+import { assertCompositeKey, pickCompositeKey } from "./CompositeKey";
 import { OptimisticLockError } from "../../errors/OptimisticLockError";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
 import { DeleteWithoutConditionsError } from "../../errors/DeleteWithoutConditionsError";
@@ -3601,30 +3602,25 @@ export class WriteExecutor {
       return { affected: 0 };
     }
 
-    for (const id of ids) {
-      if (typeof id !== "string" && typeof id !== "number" && typeof id !== "bigint") {
-        throw new InvalidQueryError(
-          `deleteMany() expects scalar primary key values (string | number | bigint), but received ${typeof id}`,
-          "Pass only primitive ID values, e.g. deleteMany(User, [1, 2, 3])",
-        );
-      }
-    }
-
     const metadata = this.resolver.resolveEntityMetadata(entity);
     if (!metadata) {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
-    const pk = metadata.columns.find(
+    const pkColumns = metadata.columns.filter(
       (column: ColumnMetadata) => column.options?.primary,
     );
-    if (!pk) {
+    if (pkColumns.length === 0) {
       throw new PrimaryKeyNotFoundError(entity.name);
     }
 
     // The criteria this bulk delete stands for, as delete() would spell it
-    // — what the events report and the cascade resolves parents from.
-    const criteria = { [this.ctx.propKey(pk)]: ids } as WhereClause<T>;
+    // — what the events report and the cascade resolves parents from — and
+    // the key predicate of the statement.
+    const { criteria, keyWhere } =
+      pkColumns.length === 1
+        ? this.scalarDeleteKeys<T>(pkColumns[0], ids)
+        : this.compositeDeleteKeys<T>(entity, metadata, pkColumns, ids);
 
     return this.ctx.executeInTransaction(async (session) => {
       await this.emitBeforeDelete(entity, criteria);
@@ -3648,17 +3644,12 @@ export class WriteExecutor {
         return { affected: joinedAffected };
       }
 
-      const placeholders = join(
-        ids.map((id) => sql`${id as string | number}`),
-        ", ",
-      );
-
       // Tenant scoping — PKs may collide across tenants (e.g. autoIncrement
       // resets per schema), so `deleteMany([1, 2])` under tenant A must not
       // affect tenant B's rows with the same IDs. A SINGLE_TABLE child is
       // scoped the same way: its siblings' keys live in the same table.
       const where = [
-        sql`${raw(this.ctx.wrap(pk.name))} IN (${placeholders})`,
+        ...keyWhere,
         this.ctx.buildTenantWhereClause(entity),
         this.stiDiscriminatorClause(entity, strategy),
       ].filter((clause): clause is Sql => clause !== null);
@@ -3675,6 +3666,67 @@ export class WriteExecutor {
 
       return { affected };
     });
+  }
+
+  /**
+   * The keys of a deleteMany on a single-column primary key: scalar values,
+   * deleted with one `IN` list.
+   */
+  private scalarDeleteKeys<T>(
+    pk: ColumnMetadata,
+    ids: unknown[],
+  ): { criteria: WhereClause<T>; keyWhere: Sql[] } {
+    for (const id of ids) {
+      if (typeof id !== "string" && typeof id !== "number" && typeof id !== "bigint") {
+        throw new InvalidQueryError(
+          `deleteMany() expects scalar primary key values (string | number | bigint), but received ${typeof id}`,
+          "Pass only primitive ID values, e.g. deleteMany(User, [1, 2, 3])",
+        );
+      }
+    }
+    const placeholders = join(
+      ids.map((id) => sql`${id as string | number}`),
+      ", ",
+    );
+    return {
+      criteria: { [this.ctx.propKey(pk)]: ids } as WhereClause<T>,
+      keyWhere: [sql`${raw(this.ctx.wrap(pk.name))} IN (${placeholders})`],
+    };
+  }
+
+  /**
+   * The keys of a deleteMany on a composite primary key: one object per row
+   * naming every key column, deleted as `(a = ? AND b = ?) OR …`. A scalar
+   * names only part of a key, and deleting by it would remove every row
+   * sharing that part, so it is rejected.
+   */
+  private compositeDeleteKeys<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    pkColumns: ColumnMetadata[],
+    ids: unknown[],
+  ): { criteria: WhereClause<T>; keyWhere: Sql[] } {
+    const propKey = (col: ColumnMetadata) => this.ctx.propKey(col);
+    const keys = ids.map((id, i) => {
+      assertCompositeKey(
+        "deleteMany",
+        entity.name,
+        pkColumns,
+        propKey,
+        id,
+        "the delete would remove rows",
+        i,
+      );
+      return pickCompositeKey(pkColumns, propKey, id as Record<string, unknown>);
+    });
+    const criteria = { OR: keys } as WhereClause<T>;
+    return {
+      criteria,
+      keyWhere: this.resolveCriteriaWhere(
+        criteria,
+        this.ctx.buildPropertyToColumnMap(metadata),
+      ),
+    };
   }
 
   /**
