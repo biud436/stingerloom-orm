@@ -383,7 +383,8 @@ export class BaseRepository<T> {
   /**
    * Deletes multiple entities by their primary key values using a single query.
    *
-   * @param ids The primary key values of entities to delete.
+   * @param ids The primary key values of entities to delete — for a
+   *   composite key, one object per row with every key column.
    * @returns A promise that resolves to the number of affected rows.
    */
   async deleteMany(ids: unknown[]): Promise<DeleteResult> {

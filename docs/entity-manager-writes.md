@@ -285,6 +285,26 @@ DELETE FROM `user` WHERE `id` IN (?, ?, ?)
 -- Parameters: [1, 2, 3]
 ```
 
+### Composite primary keys
+
+When the entity has more than one primary key column, pass one object per row with every key column:
+
+```typescript
+await em.deleteMany(OrderLine, [
+  { orderId: 1, lineNo: 2 },
+  { orderId: 2, lineNo: 1 },
+]);
+```
+
+```sql
+-- PostgreSQL
+DELETE FROM "order_line"
+WHERE (("order_id" = $1 AND "line_no" = $2) OR ("order_id" = $3 AND "line_no" = $4))
+-- Parameters: [1, 2, 2, 1]
+```
+
+A key column can be given by its property or its column name. Other properties are ignored, so entities you have loaded can be passed as they are. A scalar id throws `InvalidQueryError`: it names only part of a key, and deleting by it would remove every row that shares that part. A key with a missing column throws for the same reason.
+
 ::: tip
 If you need to delete by a condition rather than by PKs, use `delete()` with a WHERE clause:
 ```typescript
