@@ -80,7 +80,7 @@ console.log(a === b); // true — same JavaScript object
 
 `find()`와 `findOne()` 사이에서도 동작해요. `find()`가 10명의 사용자를 반환할 때, 그 중 하나(id=1)가 이미 `findOne()`으로 로드됐다면, 기존 추적 인스턴스를 그대로 재사용해요.
 
-내부적으로 Identity Map은 `"User:id=1"` 같은 키를 사용해요. 복합 primary key인 경우 `"Order:userId=1,productId=5"`가 돼요. 같은 PK를 가진 다른 객체를 `track()`하려 하면, 상태 충돌을 방지하기 위해 에러가 발생해요:
+내부적으로 Identity Map은 `"User:id=1"` 같은 키를 사용해요. 복합 primary key인 경우 `"Order:userId=1,productId=5"`가 돼요. 멀티테넌시에서 같은 primary key가 테넌트마다 다른 행을 가리키는 경우에는 키에 테넌트도 들어갑니다(`"acme|User:id=1"`). `tenant_column`, 그리고 PostgreSQL의 `search_path` / `schema_qualified`가 그렇습니다. 그래서 한 버퍼를 여러 테넌트에서 써도 행이 섞이지 않습니다. 공유 테이블(`@NonTenantEntity()`, `@Entity({ schema })`)은 모든 테넌트에서 같은 키를 씁니다. 같은 PK를 가진 다른 객체를 `track()`하려 하면, 상태 충돌을 방지하기 위해 에러가 발생해요:
 
 ```
 Identity conflict: another instance of "User" with PK (User:id=1) is already tracked

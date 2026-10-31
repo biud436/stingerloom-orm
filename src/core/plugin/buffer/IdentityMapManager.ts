@@ -14,6 +14,7 @@ import { requestedRelationNames } from "../../RelationTree";
 import { OrmError } from "../../../errors/OrmError";
 import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import { MetadataContext } from "../../../metadata/MetadataContext";
+import { SchemaQualifiedStrategy, SearchPathStrategy } from "../../TenantQueryStrategy";
 import { InheritanceResolver } from "../../InheritanceResolver";
 import { PluginContext } from "../PluginContext";
 import { EntityState } from "./EntityUnitState";
@@ -342,12 +343,13 @@ export class IdentityMapManager {
    * STI/TPT row is keyed identically whether it was looked up through the
    * hierarchy root or tracked from its concrete `instance.constructor`.
    *
-   * When the `"tenant_column"` strategy is active the key is prefixed with the
-   * tenant (e.g. `"acme|User:id=1"`) so that the same PK value belonging to
-   * different tenants cannot collide in the Identity Map. The prefix is read
-   * from the instance's tenant column value when available, falling back to
-   * the current `MetadataContext` tenant. `@NonTenantEntity` classes are
-   * unprefixed.
+   * When rows differ per tenant the key is prefixed with the tenant (e.g.
+   * `"acme|User:id=1"`) so that the same PK value belonging to different
+   * tenants cannot collide in the Identity Map — see {@link tenantKeying}.
+   * Under `"tenant_column"` the prefix is read from the instance's tenant
+   * column value when available, falling back to the current
+   * `MetadataContext` tenant; under the schema strategies it is the current
+   * tenant. `@NonTenantEntity` classes are unprefixed.
    */
   buildIdentityKey(
     entityClass: ClazzType<any>,
@@ -375,10 +377,48 @@ export class IdentityMapManager {
   }
 
   /**
+   * How a row of `entityClass` is told apart per tenant, which decides
+   * whether its identity key names the tenant:
+   *
+   * - `"column"` — `tenant_column`: one table holds every tenant's rows,
+   *   told apart by the tenant column.
+   * - `"schema"` — `search_path` / `schema_qualified` on PostgreSQL: each
+   *   tenant reads its own schema, so one PK value names a different row per
+   *   tenant while one EntityManager (and buffer) serves them all.
+   * - `null` — rows are shared: a `@NonTenantEntity`, a table pinned to a
+   *   schema, another strategy, or the schema strategies on MySQL / SQLite,
+   *   where they do not change which table a query reads.
+   */
+  private tenantKeying(entityClass: ClazzType<any>): "column" | "schema" | null {
+    if (isNonTenantEntity(entityClass)) return null;
+    if ((this.ctx.em.getTenantColumnConfig?.() ?? null) !== null) return "column";
+    if (!this.ctx.isPostgres()) return null;
+    const strategy = this.ctx.em.getTenantStrategy?.();
+    if (
+      !(strategy instanceof SearchPathStrategy) &&
+      !(strategy instanceof SchemaQualifiedStrategy)
+    ) {
+      return null;
+    }
+    if (this.ctx.em.resolveEntitySchema?.(entityClass) !== undefined) return null;
+    return "schema";
+  }
+
+  /**
+   * The `"<tenant>|"` prefix under the schema strategies: the current tenant,
+   * or "" in the default (`"public"`) context, which reads the default schema
+   * with or without an explicit `run("public", ...)`.
+   */
+  private schemaTenantPrefix(): string {
+    const tenant = MetadataContext.getCurrentTenant();
+    return tenant === "public" ? "" : `${tenant}|`;
+  }
+
+  /**
    * Compute the `"<tenant>|"` key prefix for an entity instance.
    *
-   * Returns "" when the tenant_column strategy is inactive or the entity is
-   * `@NonTenantEntity`. Uses the instance's own tenant column value when
+   * Returns "" when rows of the entity are shared (see {@link tenantKeying}).
+   * Under `tenant_column`, uses the instance's own tenant column value when
    * populated (so `runUnscoped()` loads from multiple tenants stay distinct)
    * and falls back to the current `MetadataContext` tenant otherwise.
    */
@@ -386,9 +426,10 @@ export class IdentityMapManager {
     entityClass: ClazzType<any>,
     instance: EntityInstance,
   ): string {
-    const config = this.ctx.em.getTenantColumnConfig?.() ?? null;
-    if (config === null) return "";
-    if (isNonTenantEntity(entityClass)) return "";
+    const keying = this.tenantKeying(entityClass);
+    if (keying === null) return "";
+    if (keying === "schema") return this.schemaTenantPrefix();
+    const config = this.ctx.em.getTenantColumnConfig!()!;
 
     const userDeclared = getTenantColumnMetadata(entityClass);
     const colName = userDeclared?.name ?? userDeclared?.propertyKey ?? config.name;
@@ -412,9 +453,9 @@ export class IdentityMapManager {
   private resolveTenantPrefixFromContext(
     entityClass: ClazzType<any>,
   ): string | null {
-    const config = this.ctx.em.getTenantColumnConfig?.() ?? null;
-    if (config === null) return "";
-    if (isNonTenantEntity(entityClass)) return "";
+    const keying = this.tenantKeying(entityClass);
+    if (keying === null) return "";
+    if (keying === "schema") return this.schemaTenantPrefix();
     if (MetadataContext.isUnscoped()) return null;
     return `${MetadataContext.getCurrentTenant()}|`;
   }

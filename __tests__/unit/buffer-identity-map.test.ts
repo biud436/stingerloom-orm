@@ -4,6 +4,12 @@ import { IdentityMapManager } from "../../src/core/plugin/buffer/IdentityMapMana
 import { PluginContext } from "../../src/core/plugin/PluginContext";
 import { COLUMN_TOKEN } from "../../src/decorators/Column";
 import { ENTITY_TOKEN } from "../../src/decorators/Entity";
+import { MetadataContext } from "../../src/metadata/MetadataContext";
+import {
+  SearchPathStrategy,
+  SchemaQualifiedStrategy,
+  TenantColumnStrategy,
+} from "../../src/core/TenantQueryStrategy";
 
 // ── Test Entity Definitions ─────────────────────────────────────
 
@@ -203,6 +209,65 @@ describe("IdentityMapManager", () => {
       expect(() => mgr.buildIdentityKey(User, user, ["id"])).toThrow(
         /PK column "id" is undefined/,
       );
+    });
+  });
+
+  describe("buildIdentityKey() under the schema tenant strategies", () => {
+    function managerFor(options: { postgres: boolean; strategy: unknown; pinned?: string }) {
+      return new IdentityMapManager({
+        ...mockCtx,
+        isPostgres: jest.fn().mockReturnValue(options.postgres),
+        em: {
+          getTenantColumnConfig: () => null,
+          getTenantStrategy: () => options.strategy,
+          resolveEntitySchema: () => options.pinned,
+        } as any,
+      });
+    }
+    const user = () => Object.assign(new User(), { id: 7, name: "Alice" });
+
+    it("names the tenant on PostgreSQL, where each tenant reads its own schema", () => {
+      for (const strategy of [new SearchPathStrategy(), new SchemaQualifiedStrategy()]) {
+        const key = MetadataContext.run("acme", () =>
+          managerFor({ postgres: true, strategy }).buildIdentityKey(User, user(), ["id"]),
+        );
+        expect(key).toBe("acme|User:id=7");
+      }
+    });
+
+    it("keeps the plain key in the default context", () => {
+      const key = managerFor({ postgres: true, strategy: new SearchPathStrategy() }).buildIdentityKey(
+        User,
+        user(),
+        ["id"],
+      );
+      expect(key).toBe("User:id=7");
+    });
+
+    it("keeps the plain key for a pinned table and off PostgreSQL", () => {
+      const pinned = MetadataContext.run("acme", () =>
+        managerFor({ postgres: true, strategy: new SearchPathStrategy(), pinned: "public" })
+          .buildIdentityKey(User, user(), ["id"]),
+      );
+      const sqlite = MetadataContext.run("acme", () =>
+        managerFor({ postgres: false, strategy: new SearchPathStrategy() })
+          .buildIdentityKey(User, user(), ["id"]),
+      );
+      const otherStrategy = MetadataContext.run("acme", () =>
+        managerFor({ postgres: true, strategy: new TenantColumnStrategy() })
+          .buildIdentityKey(User, user(), ["id"]),
+      );
+
+      expect([pinned, sqlite, otherStrategy]).toEqual(["User:id=7", "User:id=7", "User:id=7"]);
+    });
+
+    it("probes the first-level cache with the same key", () => {
+      const key = MetadataContext.run("acme", () =>
+        managerFor({ postgres: true, strategy: new SchemaQualifiedStrategy() }).tryBuildCacheKey(User, {
+          where: { id: 7 },
+        } as any),
+      );
+      expect(key).toBe("acme|User:id=7");
     });
   });
 
