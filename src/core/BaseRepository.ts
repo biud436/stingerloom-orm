@@ -2,10 +2,15 @@
 import { ClazzType } from "../utils";
 import {
   FindOption,
+  RelationsObject,
+  RelationsOption,
   UpdateData,
   UpdateManyOptions,
   WhereClause,
+  WithCountOption,
 } from "../dialects/FindOption";
+import { ISelectOption } from "../dialects/ISelectOption";
+import type { FindResult, RelationsFindOption, SelectFindOption } from "../types/FindResult";
 import { EntityManager } from "./EntityManager";
 import { DeepPartial } from "../types/DeepPartial";
 import { DeleteResult } from "../types/DeleteResult";
@@ -123,9 +128,19 @@ export class BaseRepository<T> {
   /**
    * Retrieves entities based on the specified find options.
    *
+   * A `select`, or a `select` in a `relations` entry, narrows the result
+   * type (see {@link FindResult}).
+   *
    * @param findOption The options to find entities.
    * @returns A promise that resolves to the result of the find operation.
    */
+  find<
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(findOption: SelectFindOption<T, S, R, W>): Promise<FindResult<T, S, R, W>[]>;
+  find<R extends RelationsObject<T>>(findOption: RelationsFindOption<T, R>): Promise<FindResult<T, undefined, R>[]>;
+  find(findOption?: FindOption<T>): Promise<T[]>;
   async find(findOption?: FindOption<T>): Promise<T[]> {
     return await this.em.find<T>(this.entity, findOption);
   }
@@ -168,6 +183,13 @@ export class BaseRepository<T> {
    * @param findOption Specifies the conditions for the entity to be retrieved.
    * @returns A promise that resolves to the result of the findOne operation.
    */
+  findOne<
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(findOption: SelectFindOption<T, S, R, W>): Promise<FindResult<T, S, R, W> | null>;
+  findOne<R extends RelationsObject<T>>(findOption: RelationsFindOption<T, R>): Promise<FindResult<T, undefined, R> | null>;
+  findOne(findOption: FindOption<T>): Promise<T | null>;
   async findOne(findOption: FindOption<T>): Promise<T | null> {
     return await this.em.findOne<T>(this.entity, findOption);
   }
@@ -190,6 +212,13 @@ export class BaseRepository<T> {
    * @returns A promise that resolves to the found entity.
    * @throws EntityNotFoundError if no entity matches.
    */
+  findOneOrFail<
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(findOption: SelectFindOption<T, S, R, W>): Promise<FindResult<T, S, R, W>>;
+  findOneOrFail<R extends RelationsObject<T>>(findOption: RelationsFindOption<T, R>): Promise<FindResult<T, undefined, R>>;
+  findOneOrFail(findOption: FindOption<T>): Promise<T>;
   async findOneOrFail(findOption: FindOption<T>): Promise<T> {
     return await this.em.findOneOrFail<T>(this.entity, findOption);
   }
@@ -213,6 +242,10 @@ export class BaseRepository<T> {
    * @param option Cursor pagination options.
    * @returns A promise that resolves to the paginated result.
    */
+  findWithCursor<R extends RelationsObject<T>>(
+    option: CursorPaginationOption<T> & { relations: R },
+  ): Promise<CursorPaginationResult<FindResult<T, undefined, R>>>;
+  findWithCursor(option?: CursorPaginationOption<T>): Promise<CursorPaginationResult<T>>;
   async findWithCursor(
     option?: CursorPaginationOption<T>,
   ): Promise<CursorPaginationResult<T>> {
@@ -225,6 +258,17 @@ export class BaseRepository<T> {
    * @param option Page pagination options.
    * @returns A promise that resolves to the paginated result.
    */
+  findWithPage<
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    option: PagePaginationOption<T> & { select: S; relations?: R; withCount?: W },
+  ): Promise<PagePaginationResult<FindResult<T, S, R, W>>>;
+  findWithPage<R extends RelationsObject<T>>(
+    option: PagePaginationOption<T> & { relations: R },
+  ): Promise<PagePaginationResult<FindResult<T, undefined, R>>>;
+  findWithPage(option?: PagePaginationOption<T>): Promise<PagePaginationResult<T>>;
   async findWithPage(
     option?: PagePaginationOption<T>,
   ): Promise<PagePaginationResult<T>> {
@@ -238,6 +282,15 @@ export class BaseRepository<T> {
    * @param findOption The options to find entities.
    * @returns A promise that resolves to a tuple of [entities, totalCount].
    */
+  findAndCount<
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(findOption: SelectFindOption<T, S, R, W>): Promise<[FindResult<T, S, R, W>[], number]>;
+  findAndCount<R extends RelationsObject<T>>(
+    findOption: RelationsFindOption<T, R>,
+  ): Promise<[FindResult<T, undefined, R>[], number]>;
+  findAndCount(findOption?: FindOption<T>): Promise<[T[], number]>;
   async findAndCount(findOption?: FindOption<T>): Promise<[T[], number]> {
     return await this.em.findAndCount<T>(this.entity, findOption);
   }
@@ -246,6 +299,19 @@ export class BaseRepository<T> {
    * Returns an AsyncGenerator that yields entities in batches.
    * Suitable for processing large datasets without loading all rows into memory.
    */
+  stream<
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    options: SelectFindOption<T, S, R, W>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, S, R, W>, void, undefined>;
+  stream<R extends RelationsObject<T>>(
+    options: RelationsFindOption<T, R>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, undefined, R>, void, undefined>;
+  stream(options?: FindOption<T>, batchSize?: number): AsyncGenerator<T, void, undefined>;
   async *stream(options?: FindOption<T>, batchSize?: number): AsyncGenerator<T, void, undefined> {
     yield* this.em.stream<T>(this.entity, options, batchSize);
   }
@@ -254,6 +320,19 @@ export class BaseRepository<T> {
    * Returns an AsyncGenerator that yields arrays of entities in batches.
    * Each yielded value is T[] (a full batch), suitable for batch processing.
    */
+  streamBatch<
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    options: SelectFindOption<T, S, R, W>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, S, R, W>[], void, undefined>;
+  streamBatch<R extends RelationsObject<T>>(
+    options: RelationsFindOption<T, R>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, undefined, R>[], void, undefined>;
+  streamBatch(options?: FindOption<T>, batchSize?: number): AsyncGenerator<T[], void, undefined>;
   async *streamBatch(options?: FindOption<T>, batchSize?: number): AsyncGenerator<T[], void, undefined> {
     yield* this.em.streamBatch<T>(this.entity, options, batchSize);
   }

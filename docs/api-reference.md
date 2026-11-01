@@ -26,7 +26,7 @@ const em = new EntityManager();
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `find` | `<T>(entity, option?): Promise<T[]>` | List query |
+| `find` | `<T>(entity, option?): Promise<T[]>` | List query; a `select`, or a `select` in a `relations` entry, narrows the result to `FindResult` |
 | `findBy` | `<T>(entity, where): Promise<T[]>` | Filter-first list query (sugar over `find({ where })`) |
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | Single record query |
 | `findOneBy` | `<T>(entity, where): Promise<T \| null>` | Filter-first single query (sugar over `findOne({ where })`) |
@@ -239,7 +239,7 @@ Protected fields available for subclasses: `entity` (the entity class) and `em` 
 
 ```typescript
 interface FindOption<T> {
-  select?: (keyof T)[] | Partial<Record<keyof T, boolean>>;
+  select?: readonly (keyof T)[] | { [K in keyof T]?: boolean };  // narrows the result type
   where?: WhereClause<T> | WhereClause<T>[];  // single or array (OR between groups)
   limit?: number | [number, number];
   skip?: number;
@@ -1381,6 +1381,8 @@ const rows: Row[] = await em.query(shape)`SELECT ...`;
 | Export | Description |
 |--------|-------------|
 | `ClazzType<T>` | `new (...args: any[]) => T` |
+| `FindResult<T, S, R, W>` | Each entity a read returns, narrowed by its `select` (S), `relations` (R) and `withCount` (W): the selected properties, loaded relations, written counts and methods. A `relations` entry with a `select` narrows that relation. Anything else is `T` |
+| `SelectFindOption<T, S, R, W>` / `RelationsFindOption<T, R>` | The option shapes the read methods narrow on: `FindOption<T>` with a `select`, or with an object-form `relations` |
 | `EntityResult<T>` | **Deprecated** — was `T \| T[]`, replaced by `T[]` for `find()` and `T` for `save()` |
 | `DeepPartial<T>` | Deep partial type |
 | `Relation<T>` | Identity wrapper for single-valued relation properties — erases `design:type` to `Object` so mutually-referencing entities load under ESM (see [Relations](./relations.md)) |

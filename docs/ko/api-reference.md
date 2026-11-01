@@ -26,7 +26,7 @@ const em = new EntityManager();
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
-| `find` | `<T>(entity, option?): Promise<T[]>` | 목록 조회 |
+| `find` | `<T>(entity, option?): Promise<T[]>` | 목록 조회. `select`나 `relations` 항목의 `select`가 있으면 결과를 `FindResult`로 좁힘 |
 | `findBy` | `<T>(entity, where): Promise<T[]>` | 필터 우선 목록 조회 (`find({ where })`의 단축형) |
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | 단건 조회 |
 | `findOneBy` | `<T>(entity, where): Promise<T \| null>` | 필터 우선 단건 조회 (`findOne({ where })`의 단축형) |
@@ -239,7 +239,7 @@ const userRepo = BaseRepository.of(User, em);
 
 ```typescript
 interface FindOption<T> {
-  select?: (keyof T)[] | Partial<Record<keyof T, boolean>>;
+  select?: readonly (keyof T)[] | { [K in keyof T]?: boolean };  // 결과 타입을 좁힘
   where?: WhereClause<T> | WhereClause<T>[];  // single or array (OR between groups)
   limit?: number | [number, number];
   skip?: number;
@@ -1378,6 +1378,8 @@ const rows: Row[] = await em.query(shape)`SELECT ...`;
 | Export | 설명 |
 |--------|------|
 | `ClazzType<T>` | `new (...args: any[]) => T` |
+| `FindResult<T, S, R, W>` | 조회가 돌려주는 엔티티의 타입을 `select`(S), `relations`(R), `withCount`(W)로 좁힌 것: 선택한 프로퍼티, 로드한 관계, 써 넣은 개수, 메서드. `select`가 있는 `relations` 항목은 그 관계를 좁힙니다. 그 밖에는 `T` |
+| `SelectFindOption<T, S, R, W>` / `RelationsFindOption<T, R>` | 조회 메서드가 결과를 좁히는 옵션 모양: `select`가 있는 `FindOption<T>`, 또는 객체 형식 `relations`가 있는 `FindOption<T>` |
 | `EntityResult<T>` | **Deprecated** -- `T \| T[]`였지만, `find()`는 `T[]`, `save()`는 `T`로 대체됐어요 |
 | `DeepPartial<T>` | Deep partial 타입 |
 | `Relation<T>` | 단수 관계 프로퍼티용 identity 래퍼 — `design:type`을 `Object`로 지워 상호 참조 엔티티가 ESM에서 로드되게 합니다 ([관계](./relations.md) 참고) |

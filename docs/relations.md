@@ -1193,6 +1193,13 @@ They stay on the returned objects, like the key a read's own `select` gets for `
 
 `select` names the related entity's columns. A name that is not one throws `InvalidQueryError` before any statement runs, and so does a `select` that names nothing. To load a relation of the related entity, nest it under `relations` with its own `select`.
 
+The result type follows it: the relation is typed with the selected properties and the related entity's methods, at any depth, and keeps the declared `null`. A lazy (`Promise`-typed) relation keeps its declared type.
+
+```typescript
+posts[0].author?.name;   // string
+posts[0].author?.email;  // compile error: not selected
+```
+
 ### Counting Related Rows (withCount)
 
 "Each post with its number of comments" should not load every comment. `withCount` writes the number of rows a collection relation (`@OneToMany`, `@ManyToMany`) holds onto each entity the read returns. Key it by the property the count goes to — a `number` property the entity declares besides its columns — and name the relation, or pass `{ relation, where, withDeleted }` to count only some of its rows:

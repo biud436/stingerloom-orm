@@ -417,7 +417,8 @@ describe("[Integration] SQLite: find() select without the primary key + deferred
       });
 
       expect(row).not.toBeNull();
-      expect(row!.id).toBe(1);
+      // The key the read adds is on the object, not in the narrowed type.
+      expect((row as FsrOwner).id).toBe(1);
       expect(labelsOf(row!.items, "label")).toEqual(["i1", "i2"]);
     });
 
@@ -450,7 +451,7 @@ describe("[Integration] SQLite: find() select without the primary key + deferred
         { select: ["name"], relations: ["items"], orderBy: { id: "ASC" } },
         1,
       )) {
-        seen.push(owner);
+        seen.push(owner as FsrOwner);
       }
 
       expect(seen.map((o) => o.id)).toEqual([1, 2]);

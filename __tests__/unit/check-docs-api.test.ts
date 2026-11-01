@@ -154,6 +154,12 @@ const counts = await em.forEachTenant(async (tenantEm) => tenantEm.count(User));
 const u = qAlias(User, "u");
 const rows = await em.find(User, { where: { isActive: true }, take: 10 });
 `),
+        // A read without select resolves to the overload that returns the
+        // entity, not to the narrowing one listed first.
+        fence(`
+const user = await em.findOneOrFail(User, { where: { id: 1 } });
+console.log(user.name);
+`),
         "<!-- check-docs-api: skip -->",
         "",
         fence(`
