@@ -72,7 +72,7 @@ const users = await em.find(User, {
 
 ### 선택하지 않은 컬럼은 어떻게 되나요?
 
-결과 타입이 `select`를 따릅니다. 반환된 객체마다 선택한 프로퍼티와 엔티티의 메서드만 타입에 남으므로(객체는 여전히 `User` 인스턴스입니다), 빼놓은 컬럼을 읽으면 조용히 `undefined`가 나오는 대신 컴파일 에러가 납니다.
+결과 타입에는 고른 프로퍼티와 엔티티의 메서드만 남습니다. 객체는 여전히 `User` 인스턴스지만, 고르지 않은 컬럼을 읽으려 하면 `undefined`를 받는 게 아니라 컴파일 에러가 납니다.
 
 ```typescript
 const users = await em.find(User, { select: ["id", "name"] });
@@ -82,9 +82,9 @@ users[0].name;      // string
 users[0].password;  // 컴파일 에러: 선택하지 않은 컬럼
 ```
 
-객체 형식도 같은 방식으로 좁혀지고(`{ id: true, name: true }`, `false`인 항목은 빠집니다), `findOne()`, `findOneOrFail()`, `findAndCount()`, `findWithPage()`, `stream()`, `streamBatch()`와 리포지토리의 같은 메서드도 마찬가지입니다. 모든 프로퍼티를 적은 `select`는 엔티티 타입을 그대로 돌려줘요. 조회가 로드하는 관계와 `withCount`가 써 넣는 개수는 타입에 남고, 좁혀진 타입은 `FindResult<T, S, R, W>`로 export됩니다.
+객체 형식도 같은 방식으로 좁혀지고(`{ id: true, name: true }`, `false`인 항목은 빠집니다), `findOne()`, `findOneOrFail()`, `findAndCount()`, `findWithPage()`, `stream()`, `streamBatch()`와 리포지토리의 같은 메서드도 마찬가지입니다. 프로퍼티를 전부 적으면 엔티티 타입이 그대로 나와요. 함께 로드한 관계와 `withCount`로 센 개수도 타입에 남습니다. 좁혀진 타입은 `FindResult<T, S, R, W>`라는 이름으로 export됩니다.
 
-옵션을 그냥 `FindOption<User>`로 타입 지정했거나 그 옵션을 그대로 넘기는 제네릭 코드는 계속 `User[]`를 돌려받습니다. 타입만 봐서는 어떤 컬럼을 골랐는지 알 수 없기 때문입니다.
+옵션을 `FindOption<User>` 타입으로 선언했거나, 받은 옵션을 그대로 넘기는 제네릭 코드는 계속 `User[]`를 돌려받습니다. 타입만으로는 어떤 컬럼을 골랐는지 알 수 없으니까요.
 
 ```typescript
 function load<T>(entity: ClazzType<T>, options: FindOption<T>): Promise<T[]> {
@@ -92,7 +92,7 @@ function load<T>(entity: ClazzType<T>, options: FindOption<T>): Promise<T[]> {
 }
 ```
 
-조회가 스스로 추가하는 컬럼(아래에서 설명하는, 관계를 짝짓는 데 쓰는 기본 키)은 런타임 객체에는 있지만 좁혀진 타입에는 없습니다.
+관계를 짝짓느라 ORM이 따로 읽는 기본 키(아래 참고)는 객체에는 들어 있지만 좁혀진 타입에는 없습니다.
 
 ### select와 relations 함께 쓰기
 

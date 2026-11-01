@@ -209,7 +209,7 @@ INSERT INTO "t" DEFAULT VALUES
 |---|---|
 | `"warn"` (기본값) | 쓰기는 실행됩니다. 키는 EntityManager 수명 동안 **엔티티·키당 한 번** 로그로 남고, 호출한 메서드와 가장 가까운 허용 키를 알려줘요. |
 | `"throw"` | SQL을 만들기 전에 `InvalidQueryError`로 거절합니다. 조회 `where`의 오타가 던지는 것과 같은 에러예요. 경고가 다 정리된 뒤에 권장합니다. |
-| `"ignore"` | 이전 동작 그대로, 미지 키를 조용히 버립니다. |
+| `"ignore"` | 예전처럼 모르는 키를 아무 경고 없이 버립니다. |
 
 ```typescript
 await DatabaseClient.getInstance().connect({
@@ -238,7 +238,7 @@ DB 컬럼명도 보고 대상입니다. INSERT는 그 키를 읽지 않기 때�
 [WriteInput] Relation "posts" in the data passed to save() for entity "User" holds a new row (no primary key value), but the @OneToMany has no cascade ["insert"], so the row is not written. Add cascade: ["insert"] to the relation, or save the row on its own first. ...
 ```
 
-키를 가진 관계 객체는 기존 행을 가리키므로 보고하지 않습니다. 그래서 관계와 함께 읽어 온 엔티티를 다시 저장해도 조용합니다.
+키를 가진 관계 객체는 기존 행을 가리키므로 보고하지 않습니다. 그래서 관계와 함께 읽어 온 엔티티를 다시 저장해도 경고가 나지 않습니다.
 
 `update()` / `updateMany()`는 기존 계약을 유지해 정책과 무관하게 `data`나 `where`의 미지 키에서 예외를 던집니다. `create()`, `merge()`, `preload()`는 영속화하지 않으므로 키를 인스턴스에 그대로 두고, 뒤따르는 쓰기가 보고합니다.
 
@@ -969,7 +969,7 @@ await em.createInsertBuilder(Reading)
 
 술어를 통과하지 못한 행은 그대로 남습니다. 그래서 오래된 배치를 다시 재생해도 데이터가 뒤로 가는 일이 없어요. 읽고-고치고-되쓰는 왕복 없이 쓰기가 멱등이 됩니다.
 
-PostgreSQL과 SQLite 전용입니다. `ON DUPLICATE KEY UPDATE`에는 `WHERE`가 없으므로 MySQL에서는 술어를 조용히 버리는 대신 예외를 던집니다. MySQL에서 같은 의도를 표현하려면 조건을 `iff()`로 각 대입 값 안에 접어 넣으세요. `CASE` 식으로 렌더링되어 세 다이얼렉트 모두에서 동작합니다.
+PostgreSQL과 SQLite 전용입니다. `ON DUPLICATE KEY UPDATE`에는 `WHERE`가 없으므로 MySQL에서는 술어를 무시하지 않고 예외를 던집니다. MySQL에서 같은 의도를 표현하려면 조건을 `iff()`로 각 대입 값 안에 접어 넣으세요. `CASE` 식으로 렌더링되어 세 다이얼렉트 모두에서 동작합니다.
 
 ```typescript
 import { iff } from "@stingerloom/orm";
