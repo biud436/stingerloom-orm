@@ -76,7 +76,7 @@ Each of these was previously a silent wrong answer, or a failure far from its ca
 | `attachRelation()` to a row outside the current tenant under `tenant_column` | Linked it | `EntityNotFoundError` (`detachRelation()` returns `{ affected: 0 }`) |
 | `createDialectExpression()` / `createColumnDefinitionBuilder()` with an unknown dialect name | `undefined`, then a `TypeError` far away | `OrmError(ORM_UNSUPPORTED_DATABASE)` |
 
-Two new connection-level policies report writes that drop data, as a warning by default:
+A new connection-level policy reports writes that drop data, as a warning by default:
 
 - **`unknownWriteKeys`** — a key in a `save()` / `insertMany()` / `upsert()` payload that names no column (`firstNam`) used to be left out of the statement. It is logged once per entity and key with the closest name. `"throw"` rejects the write, `"ignore"` keeps the old behavior.
 - A related row that no write persists (`save(User, { posts: [{ title }] })` with no cascade on `posts`, or any related row passed to a bulk write) is reported under the same policy.

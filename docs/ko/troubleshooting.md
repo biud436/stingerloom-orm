@@ -484,7 +484,7 @@ OrmError: Invalid relation mapping (connection "default"):
 
 기본 키 값이 없는 관계 객체는 새 행이고, 새 행은 save 캐스케이드만 씁니다. 관계에 `cascade: ["insert"]`(또는 `"update"`)가 없으면 `save()`는 사용자만 쓰고 게시글은 빠집니다. `insertMany()`, `upsert()`, `insertIgnore()`, `batchUpsert()`는 캐스케이드를 실행하지 않으므로 cascade 설정과 무관하게 새 관계 행을 보고합니다. 캐스케이드를 추가하거나, 관계 행을 먼저 따로 저장하세요.
 
-키를 가진 관계 객체는 보고하지 않습니다. 관계와 함께 읽어 온 엔티티를 다시 저장하는 경우가 그렇습니다. 보고는 `unknownWriteKeys` 정책을 따릅니다. 기본값에서는 엔티티와 관계마다 한 번 로그를 남기고, `"throw"`면 `InvalidQueryError`로 거절하며, `"ignore"`면 조용히 넘어갑니다.
+키를 가진 관계 객체는 보고하지 않습니다. 관계와 함께 읽어 온 엔티티를 다시 저장하는 경우가 그렇습니다. 보고는 `unknownWriteKeys` 정책을 따릅니다. 기본값에서는 엔티티와 관계마다 한 번 로그를 남기고, `"throw"`면 `InvalidQueryError`로 거절하며, `"ignore"`면 아무것도 남기지 않습니다.
 
 ### 순환 관계 오류
 
