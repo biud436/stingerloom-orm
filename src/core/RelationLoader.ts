@@ -22,7 +22,7 @@ import type {
   OneToManyMetadata,
   OneToOneMetadata,
 } from "../decorators";
-import type { RelationQueryOptions, RelationTree } from "./RelationTree";
+import type { RelationQueryOptions, RelationTree, RelationTreeNode } from "./RelationTree";
 import type { RelationCountSpec } from "./RelationCount";
 import { relationTargetOf } from "./RelationNameValidator";
 import { resolveWhereClause } from "./WhereResolver";
@@ -105,6 +105,7 @@ export class RelationLoader {
     RelatedEntity: ClazzType<any>,
     relatedMetadata: { name?: string; columns: ColumnMetadata[] },
     subclasses = true,
+    relation?: RelationTreeNode,
   ): {
     columns: string[];
     from: Sql | string;
@@ -138,7 +139,7 @@ export class RelationLoader {
     }
     const tableName = relatedMetadata.name ?? RelatedEntity.name;
     return {
-      columns: this.relatedColumns(RelatedEntity, relatedMetadata, subclasses).map((name) =>
+      columns: this.relatedColumns(RelatedEntity, relatedMetadata, subclasses, relation).map((name) =>
         this.ctx.wrap(name),
       ),
       ...this.relatedTable(RelatedEntity, tableName, subclasses),
@@ -186,16 +187,18 @@ export class RelationLoader {
 
   /**
    * The columns a batched read selects of `RelatedEntity`: those find()
-   * reads of it ({@link readColumns}), plus — with `subclasses`, for the
-   * root of a JOINED hierarchy — each subclass's own columns under the names
-   * {@link relatedTable} gives them.
+   * reads of it ({@link readColumns}) — or those the `select` of `relation`
+   * keeps — plus, with `subclasses`, for the root of a JOINED hierarchy,
+   * each subclass's own columns under the names {@link relatedTable} gives
+   * them.
    */
   private relatedColumns(
     RelatedEntity: ClazzType<any>,
     relatedMetadata: { name?: string; columns: ColumnMetadata[] },
     subclasses = true,
+    relation?: RelationTreeNode,
   ): readonly string[] {
-    const columns = this.readColumns(RelatedEntity, relatedMetadata);
+    const columns = this.readColumns(RelatedEntity, relatedMetadata, relation);
     if (!subclasses || !isJoinedPolymorphicRoot(this.ctx.getInheritanceResolver(), RelatedEntity)) {
       return columns;
     }
@@ -271,11 +274,16 @@ export class RelationLoader {
   private readColumns(
     RelatedEntity: ClazzType<any>,
     relatedMetadata: { name?: string; columns: ColumnMetadata[] },
+    relation?: RelationTreeNode,
   ): readonly string[] {
-    return this.ctx.getReadColumnNames(RelatedEntity, {
-      name: relatedMetadata.name ?? RelatedEntity.name,
-      columns: relatedMetadata.columns,
-    });
+    return this.ctx.getReadColumnNames(
+      RelatedEntity,
+      {
+        name: relatedMetadata.name ?? RelatedEntity.name,
+        columns: relatedMetadata.columns,
+      },
+      relation,
+    );
   }
 
   /** The query options `tree` gives the relation `name`, if any. */
@@ -606,9 +614,12 @@ export class RelationLoader {
       const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
       const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
-        const selectCols = this.relatedColumns(RelatedEntity, relatedMetadata).map(
-          (name) => this.ctx.wrap(name),
-        );
+        const selectCols = this.relatedColumns(
+          RelatedEntity,
+          relatedMetadata,
+          true,
+          tree?.nodes.get(propertyKey),
+        ).map((name) => this.ctx.wrap(name));
         const whereConditions: Sql[] = [
           Conditions.in(this.ctx.wrap(relatedPk.name), ids),
         ];
@@ -686,13 +697,15 @@ export class RelationLoader {
       fkAlias: string;
       shape: RelationQueryOptions | undefined;
       withDeleted: boolean | undefined;
+      /** The relation's node, whose `select` narrows the columns read. */
+      node: RelationTreeNode | undefined;
     },
     parentIds: unknown[],
     existingSession?: TransactionSessionManager,
   ): Promise<Map<unknown, any[]>> {
     const { RelatedEntity, relatedMetadata, fkColumn, fkAlias, shape, withDeleted } = read;
     const relatedTableName = relatedMetadata.name ?? RelatedEntity.name;
-    const source = this.relatedRowSource(RelatedEntity, relatedMetadata);
+    const source = this.relatedRowSource(RelatedEntity, relatedMetadata, true, read.node);
 
     const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
       const qb = RawQueryBuilderFactory.create();
@@ -858,6 +871,7 @@ export class RelationLoader {
           fkAlias,
           shape: options,
           withDeleted: relationWithDeleted,
+          node: tree?.nodes.get(rel.propertyKey),
         },
         parentIds,
         existingSession,
@@ -937,9 +951,12 @@ export class RelationLoader {
 
       const executeQuery = (ids: unknown[]) => async (session: TransactionSessionManager) => {
         const qb = RawQueryBuilderFactory.create();
-        const selectCols = this.relatedColumns(RelatedEntity, relatedMetadata).map(
-          (name) => `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(name)}`,
-        );
+        const selectCols = this.relatedColumns(
+          RelatedEntity,
+          relatedMetadata,
+          true,
+          tree?.nodes.get(rel.propertyKey),
+        ).map((name) => `${this.ctx.wrap(relatedTableName)}.${this.ctx.wrap(name)}`);
         const parentKey = `${this.ctx.wrap(joinInfo.joinTableName)}.${this.ctx.wrap(joinInfo.joinColumn)}`;
         selectCols.push(`${parentKey} AS ${this.ctx.wrap(fkAlias)}`);
         const qualify = this.relatedColumnRef(
@@ -1140,6 +1157,7 @@ export class RelationLoader {
             shape: undefined,
             withDeleted:
               RelationLoader.optionsOf(tree, rel.propertyKey)?.withDeleted ?? withDeleted,
+            node: tree?.nodes.get(rel.propertyKey),
           },
           parentIds,
           existingSession,

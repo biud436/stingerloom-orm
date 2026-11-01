@@ -1162,6 +1162,37 @@ Paging ranks each parent's rows by `orderBy`, then by every column of the relate
 
 The options are checked before any statement runs: a `where` / `orderBy` key that is not a column of the related entity throws `InvalidQueryError`, and `where`, `orderBy`, `take` or `skip` on a single-valued relation (`@ManyToOne`, `@OneToOne`) is rejected — filter the read itself for those.
 
+### Choosing a Relation's Columns
+
+`select` in a relation's entry reads only the columns you name of the related entity, in the same two forms the read's own `select` takes. It works on every relation kind, single-valued ones included, and at any depth:
+
+```typescript
+const posts = await em.find(Post, {
+  relations: {
+    author: { select: ["name"] },
+    comments: { select: { body: true, score: true }, orderBy: { score: "DESC" }, take: 3 },
+  },
+});
+// posts[0].author   → User { id: 7, name: "Alice" }
+// posts[0].comments → [Comment { id: 31, body: "...", score: 12 }, ...]
+```
+
+```sql
+SELECT "post"."id", "post"."title", ..., "author"."id" AS "author_id", "author"."name" AS "author_name"
+FROM "post" LEFT JOIN "user" AS "author" ON "post"."author_id" = "author"."id";
+SELECT "id", "body", "score_points", "post_id" AS "__stg_o2m_fk" FROM "comment" WHERE ...;
+```
+
+Some columns are read whatever `select` says, because the read needs them:
+
+- the related entity's primary key: it tells a JOINed row from a missing one, and relations nested under it are matched by it;
+- the join column of each to-one relation loaded under it: `author: { select: ["name"], relations: { team: true } }` reads the author's `team_id`;
+- the discriminator of an inheritance hierarchy, so each row is still built as its subclass.
+
+They stay on the returned objects, like the key a read's own `select` gets for `relations`. A related entity whose rows come from the UNION of a `TABLE_PER_CLASS` hierarchy reads every column, and the root of a `JOINED` hierarchy reads each subclass's own columns, as `find()` on those entities does.
+
+`select` names the related entity's columns. A name that is not one throws `InvalidQueryError` before any statement runs, and so does a `select` that names nothing. To load a relation of the related entity, nest it under `relations` with its own `select`.
+
 ### Counting Related Rows (withCount)
 
 "Each post with its number of comments" should not load every comment. `withCount` writes the number of rows a collection relation (`@OneToMany`, `@ManyToMany`) holds onto each entity the read returns. Key it by the property the count goes to — a `number` property the entity declares besides its columns — and name the relation, or pass `{ relation, where, withDeleted }` to count only some of its rows:

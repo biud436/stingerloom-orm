@@ -801,12 +801,12 @@ for (const rel of relations) {
 | 옵션 | 타입 | 설명 |
 |-----|------|-----|
 | `where` | `WhereClause<T>` | WHERE 조건. 각 키-값 쌍이 AND 조건이 돼요. |
-| `select` | `(keyof T)[]` 또는 `Record<keyof T, boolean>` | 선택할 컬럼. 생략하면 `SELECT *`. |
+| `select` | `readonly (keyof T)[]` 또는 `{ [K in keyof T]?: boolean }` | 선택할 컬럼. 생략하면 `SELECT *`. 관계의 컬럼은 `relations`의 해당 항목에 적은 `select`로 고릅니다. |
 | `orderBy` | `Record<keyof T, "ASC" \| "DESC">` | 정렬 순서. 키가 여러 개면 다중 컬럼 정렬. |
 | `limit` | `number` 또는 `[offset, count]` | 직접 LIMIT 지정. 페이지네이션에는 `skip`/`take` 권장. |
 | `skip` | `number` | 페이지네이션 오프셋. `take`와 함께 사용. |
 | `take` | `number` | 최대 반환 행 수. `skip`과 함께 사용. |
-| `relations` | `(keyof T \| string)[]` 또는 `RelationsObject<T>` | 로드할 관계 프로퍼티. 점으로 이은 경로(`"comments.author"`)나 객체 형식(`{ comments: { relations: { author: true } } }`)으로 관련 엔티티의 관계까지 로드합니다 — [중첩 관계](./relations.md#중첩-관계) 참고. 객체 형식에서 컬렉션 관계는 `where`, `orderBy`, 부모별 `take` / `skip`도 받고, 모든 관계에 개별 `withDeleted`를 줄 수 있어요 — [관계 필터링, 정렬, 개수 제한](./relations.md#관계-필터링-정렬-개수-제한) 참고. 어떤 관계와도 매칭되지 않는 이름은 유효한 관계 목록과 함께 `InvalidQueryError`를 던지며, 중첩 단계라면 경로도 함께 알려줘요. |
+| `relations` | `(keyof T \| string)[]` 또는 `RelationsObject<T>` | 로드할 관계 프로퍼티. 점으로 이은 경로(`"comments.author"`)나 객체 형식(`{ comments: { relations: { author: true } } }`)으로 관련 엔티티의 관계까지 로드합니다 — [중첩 관계](./relations.md#중첩-관계) 참고. 객체 형식에서 컬렉션 관계는 `where`, `orderBy`, 부모별 `take` / `skip`도 받고, 모든 관계에 개별 `withDeleted`와 `select`를 줄 수 있어요 — [관계 필터링, 정렬, 개수 제한](./relations.md#관계-필터링-정렬-개수-제한), [관계의 컬럼 고르기](./relations.md#관계의-컬럼-고르기) 참고. 어떤 관계와도 매칭되지 않는 이름은 유효한 관계 목록과 함께 `InvalidQueryError`를 던지며, 중첩 단계라면 경로도 함께 알려줘요. |
 | `withCount` | `WithCountOption<T>` | 컬렉션 관계의 행 개수를 세어 엔티티마다 써 넣습니다. `{ commentCount: "comments" }`처럼 쓰고, 일부만 세려면 `{ approvedCount: { relation: "comments", where: { approved: true } } }`. 개수마다 배치 문장 하나이고, 관련 행이 없으면 0 — [관련 행 개수 세기](./relations.md#관련-행-개수-세기-withcount) 참고. |
 | `withDeleted` | `boolean` | soft-delete된 엔티티(`@DeletedAt`) 포함 여부. 기본값: `false`. |
 | `groupBy` | `(keyof T)[]` | GROUP BY 컬럼. |

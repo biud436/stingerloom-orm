@@ -404,7 +404,7 @@ export function relationFilterTargetOf(
 }
 
 /**
- * Rejects a `where` / `orderBy` key in a relation's options under
+ * Rejects a `select` / `where` / `orderBy` key in a relation's options under
  * `relations` that names no column of the related entity — the guard the
  * read's own options get — before any statement runs, at every level of
  * the tree. Shared by every read that takes the object form, `explain()`
@@ -420,10 +420,10 @@ export function validateRelationOptionIdentifiers(
   for (const node of tree.nodes.values()) {
     const target = relationTargetOf(entity, node.name, resolver);
     if (!target) continue;
-    const { where, orderBy } = node.options ?? {};
-    const metadata = where !== undefined || orderBy ? resolver.resolveEntityMetadata(target) : undefined;
+    const { select, where, orderBy } = node.options ?? {};
+    const metadata = select || where !== undefined || orderBy ? resolver.resolveEntityMetadata(target) : undefined;
     if (metadata) {
-      validateReadIdentifiers({ where, orderBy }, undefined, relationAwareScope(ctx, resolver, target, metadata));
+      validateReadIdentifiers({ where, orderBy }, select, relationAwareScope(ctx, resolver, target, metadata));
     }
     validateRelationCountIdentifiers(ctx, resolver, target, node.options?.withCount);
     validateRelationOptionIdentifiers(ctx, resolver, target, node.children);

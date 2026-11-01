@@ -57,6 +57,8 @@ describe("validateReadOptionShape", () => {
     ["a string orderBy", { orderBy: "title" }, `'orderBy' must be an object keyed by property, such as { createdAt: "DESC" }, got "title".`],
     ["an unknown direction", { orderBy: { title: "UP" } }, `'orderBy.title' must be "ASC" or "DESC", got "UP".`],
     ["a string select", { select: "title" }, `'select' must be an array of property names or an object keyed by property, got "title".`],
+    ["a nested options object in select", { select: { author: { select: ["name"] } } }, "'select.author' must be true or false, got an object. Pick a relation's columns in relations: { author: { select: [...] } }."],
+    ["a string flag in select", { select: { title: "yes" } }, `'select.title' must be true or false, got "yes".`],
     ["a string groupBy", { groupBy: "title" }, `'groupBy' must be an array of property names, got "title".`],
     ["a scalar where", { where: 5 }, "'where' must be an object or an array of objects, got 5."],
     ["a string withDeleted", { withDeleted: "yes" }, `'withDeleted' must be a boolean, got "yes".`],

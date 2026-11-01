@@ -6,6 +6,7 @@ import type { InheritanceResolver } from "./InheritanceResolver";
 import type { EntityEventEmitter } from "./EntityEventEmitter";
 import type { RelationLoader } from "./RelationLoader";
 import type { AggregateQueryHandler } from "./AggregateQueryHandler";
+import type { RelationTreeNode } from "./RelationTree";
 import { ClazzType, Logger } from "../utils";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
@@ -153,10 +154,14 @@ export interface EntityManagerInternals {
    * `find()` does: every @Column, the join column of each ManyToOne / owning
    * OneToOne that has no @Column of its own, and every @ComputedColumn.
    * Cached per metadata view like the read path's column plan.
+   *
+   * `relation`, the node a relation read loads `entity` for, narrows the
+   * list to its `select` and the columns the read needs whatever it says.
    */
   getReadColumnNames<T>(
     entity: ClazzType<T>,
     metadata: { name: string; columns: ColumnMetadata[] },
+    relation?: RelationTreeNode,
   ): readonly string[];
   /**
    * Validates WHERE-criteria keys against the entity's known property/column

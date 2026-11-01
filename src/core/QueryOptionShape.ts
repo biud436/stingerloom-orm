@@ -113,6 +113,17 @@ const isSelect: OptionRule = (value, path, problems) => {
     problems.push(
       `'${path}' must be an array of property names or an object keyed by property, got ${showValue(value)}.`,
     );
+    return;
+  }
+  // The object form used to take a nested options object per property too,
+  // and dropped it without a word.
+  for (const [key, flag] of Object.entries(value)) {
+    if (flag === undefined || typeof flag === "boolean") continue;
+    problems.push(
+      isPlainObject(flag)
+        ? `'${path}.${key}' must be true or false, got an object. Pick a relation's columns in relations: { ${key}: { select: [...] } }.`
+        : `'${path}.${key}' must be true or false, got ${showValue(flag)}.`,
+    );
   }
 };
 

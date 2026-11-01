@@ -93,6 +93,17 @@ SELECT ... FROM "post" WHERE "author_id" IN (1, 2);  -- the ids read above
 
 The key is added for `select: { id: false, name: true }` too, and a composite key adds every key column. ManyToOne relations and the owning side of OneToOne are JOINed into the same statement, so they add nothing. An empty `select` (`[]`, `{}`, `{ id: false }`) is still an error — it asks for no columns at all, and the key is not a substitute for the columns you meant to name.
 
+To read only some columns of the related entities too, give the relation its own `select` in the object form of `relations` — see [Choosing a Relation's Columns](./relations.md#choosing-a-relation-s-columns):
+
+```typescript
+const posts = await em.find(Post, {
+  select: ["title"],
+  relations: { author: { select: ["name"] } },
+});
+```
+
+The object form of `select` takes `true` or `false` per property. A nested object there (`select: { author: { ... } }`) throws `InvalidQueryError` and points at the relation's own `select`.
+
 Reads that collapse rows can't be combined with those relations, because a collapsed row has no single parent to match related rows to. Both forms throw `InvalidQueryError` before any SQL runs:
 
 - a `groupBy` that doesn't name every primary-key column — whatever `select` says, since the grouped row carries the key of one arbitrary member of the group;

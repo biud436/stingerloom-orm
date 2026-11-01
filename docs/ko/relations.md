@@ -1162,6 +1162,37 @@ ORDER BY "__stg_paged"."__stg_o2m_fk", "__stg_paged"."__stg_rn";
 
 옵션은 쿼리를 실행하기 전에 검사합니다. 관련 엔티티의 컬럼이 아닌 `where` / `orderBy` 키는 `InvalidQueryError`를 던지고, 단일 값 관계(`@ManyToOne`, `@OneToOne`)에 `where`, `orderBy`, `take`, `skip`을 주면 거부합니다. 그런 조건은 조회 자체에 거세요.
 
+### 관계의 컬럼 고르기
+
+관계 항목에 `select`를 적으면 관련 엔티티의 컬럼 중 적은 것만 읽습니다. 형식은 조회 자체의 `select`와 같은 두 가지입니다. 단일 값 관계를 포함해 모든 관계 종류에서, 어느 깊이에서든 쓸 수 있어요.
+
+```typescript
+const posts = await em.find(Post, {
+  relations: {
+    author: { select: ["name"] },
+    comments: { select: { body: true, score: true }, orderBy: { score: "DESC" }, take: 3 },
+  },
+});
+// posts[0].author   → User { id: 7, name: "Alice" }
+// posts[0].comments → [Comment { id: 31, body: "...", score: 12 }, ...]
+```
+
+```sql
+SELECT "post"."id", "post"."title", ..., "author"."id" AS "author_id", "author"."name" AS "author_name"
+FROM "post" LEFT JOIN "user" AS "author" ON "post"."author_id" = "author"."id";
+SELECT "id", "body", "score_points", "post_id" AS "__stg_o2m_fk" FROM "comment" WHERE ...;
+```
+
+다음 컬럼은 조회에 꼭 필요하므로 `select`에 없어도 읽습니다.
+
+- 관련 엔티티의 기본 키: JOIN된 행과 없는 행을 구분하고, 그 아래 중첩된 관계를 이 키로 짝짓습니다.
+- 그 아래에서 로드하는 to-one 관계의 조인 컬럼: `author: { select: ["name"], relations: { team: true } }`는 작성자의 `team_id`도 읽습니다.
+- 상속 계층의 판별자 컬럼: 각 행을 여전히 해당 서브클래스로 만들기 위해서입니다.
+
+이렇게 읽은 컬럼은 조회 자체의 `select`가 `relations` 때문에 기본 키를 추가할 때와 마찬가지로 반환된 객체에 남아요. `TABLE_PER_CLASS` 계층의 UNION에서 행을 읽는 관련 엔티티는 모든 컬럼을 읽고, `JOINED` 계층의 루트는 서브클래스마다 자기 컬럼을 읽습니다. 그 엔티티에 `find()`를 했을 때와 같습니다.
+
+`select`에는 관련 엔티티의 컬럼을 적습니다. 컬럼이 아닌 이름을 적거나 아무것도 적지 않으면 쿼리를 실행하기 전에 `InvalidQueryError`를 던집니다. 관련 엔티티의 관계까지 로드하려면 `relations` 아래에 중첩하고 거기에 따로 `select`를 적으면 됩니다.
+
 ### 관련 행 개수 세기 (withCount)
 
 "글마다 댓글 수"를 보려고 댓글을 전부 읽어 올 필요는 없습니다. `withCount`는 컬렉션 관계(`@OneToMany`, `@ManyToMany`)가 가진 행의 개수를 조회 결과의 엔티티마다 써 넣습니다. 키는 개수를 담을 속성(엔티티가 컬럼과 별도로 선언한 `number` 속성)이고, 값은 관계 이름입니다. 일부 행만 세려면 `{ relation, where, withDeleted }`를 넘기면 돼요.
