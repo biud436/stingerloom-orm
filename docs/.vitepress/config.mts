@@ -24,6 +24,7 @@ function sidebarEn() {
       items: [
         { text: "Getting Started", link: "/getting-started" },
         { text: "Configuration", link: "/configuration" },
+        { text: "Upgrading to 3.0", link: "/upgrade-3.0" },
         { text: "Upgrading to 2.0", link: "/upgrade-2.0" },
       ],
     },
@@ -170,6 +171,7 @@ function sidebarKo() {
       items: [
         { text: "시작하기", link: "/ko/getting-started" },
         { text: "설정", link: "/ko/configuration" },
+        { text: "3.0 업그레이드", link: "/ko/upgrade-3.0" },
         { text: "2.0 업그레이드", link: "/ko/upgrade-2.0" },
       ],
     },
