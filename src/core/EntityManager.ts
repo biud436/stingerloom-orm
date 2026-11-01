@@ -6,7 +6,17 @@ import { DatabaseClient } from "../DatabaseClient";
 import { ISqlDriver } from "../dialects/SqlDriver";
 import { IDatabaseType } from "../dialects/mysql/MySqlConnector";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
-import { FindOption, LockMode, UpdateData, UpdateManyOptions, WhereClause } from "../dialects/FindOption";
+import {
+  FindOption,
+  LockMode,
+  RelationsObject,
+  RelationsOption,
+  UpdateData,
+  UpdateManyOptions,
+  WhereClause,
+  WithCountOption,
+} from "../dialects/FindOption";
+import type { FindResult, RelationsFindOption, SelectFindOption } from "../types/FindResult";
 import { resolveWhereClause } from "./WhereResolver";
 import { ISelectOption } from "../dialects/ISelectOption";
 import { IDataSource } from "../dialects/IDataSource";
@@ -914,6 +924,24 @@ export class EntityManager implements BaseEntityManager {
 
   // ── CRUD: Read ────────────────────────────────────────────
 
+  /**
+   * Retrieves the first entity matching the options, or null. A `select`, or
+   * a `select` in a `relations` entry, narrows the result type (see
+   * {@link FindResult}).
+   */
+  findOne<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    findOption: SelectFindOption<T, S, R, W>,
+  ): Promise<FindResult<T, S, R, W> | null>;
+  findOne<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    findOption: RelationsFindOption<T, R>,
+  ): Promise<FindResult<T, undefined, R> | null>;
+  findOne<T>(entity: ClazzType<T>, findOption: FindOption<T>): Promise<T | null>;
   async findOne<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
@@ -974,6 +1002,19 @@ export class EntityManager implements BaseEntityManager {
    * const user = await em.findOneOrFail(User, { where: { id: 1 } });
    * ```
    */
+  findOneOrFail<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    findOption: SelectFindOption<T, S, R, W>,
+  ): Promise<FindResult<T, S, R, W>>;
+  findOneOrFail<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    findOption: RelationsFindOption<T, R>,
+  ): Promise<FindResult<T, undefined, R>>;
+  findOneOrFail<T>(entity: ClazzType<T>, findOption: FindOption<T>): Promise<T>;
   async findOneOrFail<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
@@ -1009,6 +1050,29 @@ export class EntityManager implements BaseEntityManager {
     return result;
   }
 
+  /**
+   * Retrieves every entity matching the options. A `select`, or a `select`
+   * in a `relations` entry, narrows the result type (see {@link FindResult}).
+   *
+   * @example
+   * ```ts
+   * const users = await em.find(User, { select: ["id", "name"] });
+   * //    ^? Pick<User, "id" | "name">[]
+   * ```
+   */
+  find<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    findOption: SelectFindOption<T, S, R, W>,
+  ): Promise<FindResult<T, S, R, W>[]>;
+  find<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    findOption: RelationsFindOption<T, R>,
+  ): Promise<FindResult<T, undefined, R>[]>;
+  find<T>(entity: ClazzType<T>, findOption?: FindOption<T>): Promise<T[]>;
   async find<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
@@ -1065,6 +1129,18 @@ export class EntityManager implements BaseEntityManager {
     return this.readExecutor.pluck(entity, column, where);
   }
 
+  /**
+   * Retrieves one keyset page. A `select` in a `relations` entry narrows
+   * that relation's type (see {@link FindResult}).
+   */
+  findWithCursor<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    option: CursorPaginationOption<T> & { relations: R },
+  ): Promise<CursorPaginationResult<FindResult<T, undefined, R>>>;
+  findWithCursor<T>(
+    entity: ClazzType<T>,
+    option?: CursorPaginationOption<T>,
+  ): Promise<CursorPaginationResult<T>>;
   async findWithCursor<T>(
     entity: ClazzType<T>,
     option: CursorPaginationOption<T> = {},
@@ -1073,6 +1149,24 @@ export class EntityManager implements BaseEntityManager {
     return this.readExecutor.findWithCursor(entity, option);
   }
 
+  /**
+   * Retrieves the matching entities and their total count, ignoring the
+   * read's paging. A `select`, or a `select` in a `relations` entry, narrows
+   * the entity type (see {@link FindResult}).
+   */
+  findAndCount<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    findOption: SelectFindOption<T, S, R, W>,
+  ): Promise<[FindResult<T, S, R, W>[], number]>;
+  findAndCount<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    findOption: RelationsFindOption<T, R>,
+  ): Promise<[FindResult<T, undefined, R>[], number]>;
+  findAndCount<T>(entity: ClazzType<T>, findOption?: FindOption<T>): Promise<[T[], number]>;
   async findAndCount<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T> = {},
@@ -1092,6 +1186,25 @@ export class EntityManager implements BaseEntityManager {
    * @param options - Find options (where, orderBy, relations, etc.)
    * @param batchSize - Number of rows per batch (default: 1000)
    */
+  stream<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    options: SelectFindOption<T, S, R, W>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, S, R, W>, void, undefined>;
+  stream<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: RelationsFindOption<T, R>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, undefined, R>, void, undefined>;
+  stream<T>(
+    entity: ClazzType<T>,
+    options?: FindOption<T>,
+    batchSize?: number,
+  ): AsyncGenerator<T, void, undefined>;
   async *stream<T>(
     entity: ClazzType<T>,
     options: FindOption<T> = {},
@@ -1119,6 +1232,25 @@ export class EntityManager implements BaseEntityManager {
    * @param options - FindOption (where, select, relations, orderBy, etc.)
    * @param batchSize - Number of rows per batch (default: 1000)
    */
+  streamBatch<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    options: SelectFindOption<T, S, R, W>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, S, R, W>[], void, undefined>;
+  streamBatch<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: RelationsFindOption<T, R>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, undefined, R>[], void, undefined>;
+  streamBatch<T>(
+    entity: ClazzType<T>,
+    options?: FindOption<T>,
+    batchSize?: number,
+  ): AsyncGenerator<T[], void, undefined>;
   async *streamBatch<T>(
     entity: ClazzType<T>,
     options: FindOption<T> = {},
@@ -1162,6 +1294,26 @@ export class EntityManager implements BaseEntityManager {
     }
   }
 
+  /**
+   * Retrieves one offset page. A `select`, or a `select` in a `relations`
+   * entry, narrows the entity type (see {@link FindResult}).
+   */
+  findWithPage<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    option: PagePaginationOption<T> & { select: S; relations?: R; withCount?: W },
+  ): Promise<PagePaginationResult<FindResult<T, S, R, W>>>;
+  findWithPage<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    option: PagePaginationOption<T> & { relations: R },
+  ): Promise<PagePaginationResult<FindResult<T, undefined, R>>>;
+  findWithPage<T>(
+    entity: ClazzType<T>,
+    option?: PagePaginationOption<T>,
+  ): Promise<PagePaginationResult<T>>;
   async findWithPage<T>(
     entity: ClazzType<T>,
     option: PagePaginationOption<T> = {},

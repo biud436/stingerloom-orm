@@ -1,6 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../utils";
-import { FindOption, UpdateData, WhereClause } from "../dialects/FindOption";
+import {
+  FindOption,
+  RelationsObject,
+  RelationsOption,
+  UpdateData,
+  WhereClause,
+  WithCountOption,
+} from "../dialects/FindOption";
+import { ISelectOption } from "../dialects/ISelectOption";
+import type { FindResult, RelationsFindOption, SelectFindOption } from "../types/FindResult";
 import { BaseRepository } from "./BaseRepository";
 import { BaseRawQueryBuilder } from "./BaseRawQueryBuilder";
 import { DeleteResult } from "../types/DeleteResult";
@@ -52,6 +61,18 @@ export abstract class BaseEntityManager {
    * @param entity
    * @param findOption
    */
+  abstract findOne<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    findOption: SelectFindOption<T, S, R, W>,
+  ): Promise<FindResult<T, S, R, W> | null>;
+  abstract findOne<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    findOption: RelationsFindOption<T, R>,
+  ): Promise<FindResult<T, undefined, R> | null>;
   abstract findOne<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
@@ -60,6 +81,18 @@ export abstract class BaseEntityManager {
   /**
    * Retrieves a single entity or throws EntityNotFoundError.
    */
+  abstract findOneOrFail<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    findOption: SelectFindOption<T, S, R, W>,
+  ): Promise<FindResult<T, S, R, W>>;
+  abstract findOneOrFail<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    findOption: RelationsFindOption<T, R>,
+  ): Promise<FindResult<T, undefined, R>>;
   abstract findOneOrFail<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
@@ -71,6 +104,18 @@ export abstract class BaseEntityManager {
    * @param entity
    * @param findOption
    */
+  abstract find<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    findOption: SelectFindOption<T, S, R, W>,
+  ): Promise<FindResult<T, S, R, W>[]>;
+  abstract find<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    findOption: RelationsFindOption<T, R>,
+  ): Promise<FindResult<T, undefined, R>[]>;
   abstract find<T>(
     entity: ClazzType<T>,
     findOption: FindOption<T>,
@@ -83,6 +128,10 @@ export abstract class BaseEntityManager {
    * @param option Cursor pagination options
    * @returns Pagination result (data, hasNextPage, nextCursor, count)
    */
+  abstract findWithCursor<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    option: CursorPaginationOption<T> & { relations: R },
+  ): Promise<CursorPaginationResult<FindResult<T, undefined, R>>>;
   abstract findWithCursor<T>(
     entity: ClazzType<T>,
     option?: CursorPaginationOption<T>,
@@ -95,6 +144,18 @@ export abstract class BaseEntityManager {
    * @param option Page pagination options (page, pageSize, where, orderBy, etc.)
    * @returns Pagination result (data, total, page, pageSize, totalPages, hasNextPage, hasPreviousPage)
    */
+  abstract findWithPage<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    option: PagePaginationOption<T> & { select: S; relations?: R; withCount?: W },
+  ): Promise<PagePaginationResult<FindResult<T, S, R, W>>>;
+  abstract findWithPage<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    option: PagePaginationOption<T> & { relations: R },
+  ): Promise<PagePaginationResult<FindResult<T, undefined, R>>>;
   abstract findWithPage<T>(
     entity: ClazzType<T>,
     option?: PagePaginationOption<T>,
@@ -108,6 +169,20 @@ export abstract class BaseEntityManager {
    * @param options Find options (where, orderBy, relations, etc.)
    * @param batchSize Number of rows per internal batch (default: 1000)
    */
+  abstract stream<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    options: SelectFindOption<T, S, R, W>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, S, R, W>, void, undefined>;
+  abstract stream<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: RelationsFindOption<T, R>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, undefined, R>, void, undefined>;
   abstract stream<T>(
     entity: ClazzType<T>,
     options?: FindOption<T>,
@@ -221,6 +296,18 @@ export abstract class BaseEntityManager {
    * @param findOption Find options
    * @returns Tuple of `[entities, totalCount]`
    */
+  abstract findAndCount<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    findOption: SelectFindOption<T, S, R, W>,
+  ): Promise<[FindResult<T, S, R, W>[], number]>;
+  abstract findAndCount<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    findOption: RelationsFindOption<T, R>,
+  ): Promise<[FindResult<T, undefined, R>[], number]>;
   abstract findAndCount<T>(
     entity: ClazzType<T>,
     findOption?: FindOption<T>,

@@ -72,7 +72,27 @@ This produces the exact same SQL. Some people find the object style more readabl
 
 ### What about unselected columns?
 
-The returned objects still have the full `User` TypeScript type, but unselected properties will be `undefined` at runtime. This means TypeScript won't warn you if you access `user.password` — it just silently returns `undefined`. If you need compile-time safety for partial selections, use the [SelectQueryBuilder](./query-builder.md) which narrows the return type to only the columns you selected.
+The result type follows `select`. Each returned object is typed with the selected properties plus the entity's methods (it is still a `User` instance), so reading a column you left out is a compile error instead of a silent `undefined`:
+
+```typescript
+const users = await em.find(User, { select: ["id", "name"] });
+//    ^? Pick<User, "id" | "name" | "greet">[]
+
+users[0].name;      // string
+users[0].password;  // compile error: not selected
+```
+
+The object form narrows the same way (`{ id: true, name: true }`; a `false` entry is left out), and so do `findOne()`, `findOneOrFail()`, `findAndCount()`, `findWithPage()`, `stream()`, `streamBatch()` and the same methods on a repository. A `select` that names every property returns the entity type itself. The relations the read loads and the counts `withCount` writes stay in the type; the narrowed type is exported as `FindResult<T, S, R, W>`.
+
+Options typed as a plain `FindOption<User>`, and generic code that forwards them, keep returning `User[]`, since the type no longer says which columns were picked:
+
+```typescript
+function load<T>(entity: ClazzType<T>, options: FindOption<T>): Promise<T[]> {
+  return em.find(entity, options);  // still T[]
+}
+```
+
+Columns the read adds on its own (the primary key a relation is matched by, see below) are on the object at runtime but not in the narrowed type.
 
 ### select with relations
 

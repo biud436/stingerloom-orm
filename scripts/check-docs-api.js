@@ -364,6 +364,25 @@ function checkBlock(report, block, scope) {
       return [];
     }
     if (spread) return matching;
+    // Overload resolution: a signature whose options parameter requires a
+    // key the sample's object literal leaves out (`select` on the narrowing
+    // overload of find()) is not the one the compiler picks.
+    const resolved = matching.filter((signature) =>
+      args.every((arg, index) => {
+        if (!ts.isObjectLiteralExpression(arg)) return true;
+        const param = signature.getParameters()[index];
+        if (!param) return true;
+        const given = new Set(
+          arg.properties.map((prop) =>
+            prop.name && (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name)) ? prop.name.text : undefined,
+          ),
+        );
+        if (arg.properties.some((prop) => ts.isSpreadAssignment(prop))) return true;
+        return checker
+          .getPropertiesOfType(typeOfSymbol(param))
+          .every((prop) => prop.flags & ts.SymbolFlags.Optional || given.has(prop.getName()));
+      }),
+    );
     args.forEach((arg, index) => {
       const isFunction = ts.isArrowFunction(arg) || ts.isFunctionExpression(arg);
       if (!ts.isObjectLiteralExpression(arg) && !isFunction) return;
@@ -402,7 +421,7 @@ function checkBlock(report, block, scope) {
         }
       }
     });
-    return matching;
+    return resolved.length > 0 ? resolved : matching;
   };
 
   const returnOf = (signatures, receiver) => {

@@ -1193,6 +1193,13 @@ SELECT "id", "body", "score_points", "post_id" AS "__stg_o2m_fk" FROM "comment" 
 
 `select`에는 관련 엔티티의 컬럼을 적습니다. 컬럼이 아닌 이름을 적거나 아무것도 적지 않으면 쿼리를 실행하기 전에 `InvalidQueryError`를 던집니다. 관련 엔티티의 관계까지 로드하려면 `relations` 아래에 중첩하고 거기에 따로 `select`를 적으면 됩니다.
 
+결과 타입도 이를 따릅니다. 관계는 어느 깊이에서든 선택한 프로퍼티와 관련 엔티티의 메서드로 타입이 좁혀지고, 선언된 `null`은 그대로 남아요. 지연 로딩(`Promise` 타입) 관계는 선언된 타입을 유지합니다.
+
+```typescript
+posts[0].author?.name;   // string
+posts[0].author?.email;  // 컴파일 에러: 선택하지 않은 컬럼
+```
+
 ### 관련 행 개수 세기 (withCount)
 
 "글마다 댓글 수"를 보려고 댓글을 전부 읽어 올 필요는 없습니다. `withCount`는 컬렉션 관계(`@OneToMany`, `@ManyToMany`)가 가진 행의 개수를 조회 결과의 엔티티마다 써 넣습니다. 키는 개수를 담을 속성(엔티티가 컬럼과 별도로 선언한 `number` 속성)이고, 값은 관계 이름입니다. 일부 행만 세려면 `{ relation, where, withDeleted }`를 넘기면 돼요.

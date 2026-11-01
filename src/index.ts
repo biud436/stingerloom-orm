@@ -615,6 +615,7 @@ export { DeepPartial } from "./types/DeepPartial";
 export { DeleteResult } from "./types/DeleteResult";
 export { DriverQueryOptions } from "./types/DriverQueryOptions";
 export { EntityResult } from "./types/EntityResult";
+export { FindResult, RelationsFindOption, SelectFindOption } from "./types/FindResult";
 export { OrderByOption, SortDirection } from "./types/OrderByOption";
 export { QueryResult } from "./types/QueryResult";
 export { Relation } from "./types/Relation";

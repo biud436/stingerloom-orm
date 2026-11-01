@@ -9,7 +9,16 @@ import { DatabaseClientOptions } from "./DatabaseClientOptions";
 import { EntityManager, TransactionOptions } from "./EntityManager";
 import { BaseRepository } from "./BaseRepository";
 import { TenantConnectionRouter } from "./TenantConnectionRouter";
-import { FindOption, UpdateData, WhereClause } from "../dialects/FindOption";
+import {
+  FindOption,
+  RelationsObject,
+  RelationsOption,
+  UpdateData,
+  WhereClause,
+  WithCountOption,
+} from "../dialects/FindOption";
+import { ISelectOption } from "../dialects/ISelectOption";
+import type { FindResult, RelationsFindOption, SelectFindOption } from "../types/FindResult";
 import { CursorPaginationOption, CursorPaginationResult } from "./CursorPagination";
 import { PagePaginationOption, PagePaginationResult } from "./PagePagination";
 import { DeleteResult } from "../types/DeleteResult";
@@ -285,14 +294,44 @@ export class MultiTenantEntityManager {
 
   // ── CRUD delegation ────────────────────────────────────────────────
 
+  find<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(entity: ClazzType<T>, options: SelectFindOption<T, S, R, W>): Promise<FindResult<T, S, R, W>[]>;
+  find<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: RelationsFindOption<T, R>,
+  ): Promise<FindResult<T, undefined, R>[]>;
+  find<T>(entity: ClazzType<T>, options?: FindOption<T>): Promise<T[]>;
   async find<T>(entity: ClazzType<T>, options?: FindOption<T>): Promise<T[]> {
     return (await this.pickEm()).find(entity, options);
   }
 
+  findOne<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(entity: ClazzType<T>, options: SelectFindOption<T, S, R, W>): Promise<FindResult<T, S, R, W> | null>;
+  findOne<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: RelationsFindOption<T, R>,
+  ): Promise<FindResult<T, undefined, R> | null>;
+  findOne<T>(entity: ClazzType<T>, options: FindOption<T>): Promise<T | null>;
   async findOne<T>(entity: ClazzType<T>, options: FindOption<T>): Promise<T | null> {
     return (await this.pickEm()).findOne(entity, options);
   }
 
+  findOneOrFail<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(entity: ClazzType<T>, options: SelectFindOption<T, S, R, W>): Promise<FindResult<T, S, R, W>>;
+  findOneOrFail<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: RelationsFindOption<T, R>,
+  ): Promise<FindResult<T, undefined, R>>;
+  findOneOrFail<T>(entity: ClazzType<T>, options: FindOption<T>): Promise<T>;
   async findOneOrFail<T>(entity: ClazzType<T>, options: FindOption<T>): Promise<T> {
     return (await this.pickEm()).findOneOrFail(entity, options);
   }
@@ -305,6 +344,16 @@ export class MultiTenantEntityManager {
     return (await this.pickEm()).findByPKs(entity, pks);
   }
 
+  findAndCount<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(entity: ClazzType<T>, options: SelectFindOption<T, S, R, W>): Promise<[FindResult<T, S, R, W>[], number]>;
+  findAndCount<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: RelationsFindOption<T, R>,
+  ): Promise<[FindResult<T, undefined, R>[], number]>;
+  findAndCount<T>(entity: ClazzType<T>, options?: FindOption<T>): Promise<[T[], number]>;
   async findAndCount<T>(
     entity: ClazzType<T>,
     options?: FindOption<T>,
@@ -312,6 +361,19 @@ export class MultiTenantEntityManager {
     return (await this.pickEm()).findAndCount(entity, options);
   }
 
+  findWithPage<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    options: PagePaginationOption<T> & { select: S; relations?: R; withCount?: W },
+  ): Promise<PagePaginationResult<FindResult<T, S, R, W>>>;
+  findWithPage<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: PagePaginationOption<T> & { relations: R },
+  ): Promise<PagePaginationResult<FindResult<T, undefined, R>>>;
+  findWithPage<T>(entity: ClazzType<T>, options: PagePaginationOption<T>): Promise<PagePaginationResult<T>>;
   async findWithPage<T>(
     entity: ClazzType<T>,
     options: PagePaginationOption<T>,
@@ -319,6 +381,11 @@ export class MultiTenantEntityManager {
     return (await this.pickEm()).findWithPage(entity, options);
   }
 
+  findWithCursor<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: CursorPaginationOption<T> & { relations: R },
+  ): Promise<CursorPaginationResult<FindResult<T, undefined, R>>>;
+  findWithCursor<T>(entity: ClazzType<T>, options: CursorPaginationOption<T>): Promise<CursorPaginationResult<T>>;
   async findWithCursor<T>(
     entity: ClazzType<T>,
     options: CursorPaginationOption<T>,
@@ -326,6 +393,21 @@ export class MultiTenantEntityManager {
     return (await this.pickEm()).findWithCursor(entity, options);
   }
 
+  stream<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    options: SelectFindOption<T, S, R, W>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, S, R, W>>;
+  stream<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: RelationsFindOption<T, R>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, undefined, R>>;
+  stream<T>(entity: ClazzType<T>, options?: FindOption<T>, batchSize?: number): AsyncGenerator<T>;
   async *stream<T>(
     entity: ClazzType<T>,
     options?: FindOption<T>,
@@ -335,6 +417,21 @@ export class MultiTenantEntityManager {
     yield* em.stream(entity, options, batchSize);
   }
 
+  streamBatch<T,
+    S extends ISelectOption<T>,
+    R extends RelationsOption<T> | undefined = undefined,
+    W extends WithCountOption<T> | undefined = undefined,
+  >(
+    entity: ClazzType<T>,
+    options: SelectFindOption<T, S, R, W>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, S, R, W>[]>;
+  streamBatch<T, R extends RelationsObject<T>>(
+    entity: ClazzType<T>,
+    options: RelationsFindOption<T, R>,
+    batchSize?: number,
+  ): AsyncGenerator<FindResult<T, undefined, R>[]>;
+  streamBatch<T>(entity: ClazzType<T>, options?: FindOption<T>, batchSize?: number): AsyncGenerator<T[]>;
   async *streamBatch<T>(
     entity: ClazzType<T>,
     options?: FindOption<T>,
