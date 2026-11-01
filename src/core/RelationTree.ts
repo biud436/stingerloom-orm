@@ -15,6 +15,8 @@ import {
  * against its columns when the relation is loaded.
  */
 export interface RelationQueryOptions {
+  /** The related entity's properties to read; undefined reads every column. */
+  readonly select?: readonly string[];
   readonly where?: unknown;
   readonly orderBy?: Readonly<Record<string, "ASC" | "DESC">>;
   readonly take?: number;
@@ -60,6 +62,7 @@ interface MutableTree {
 
 /** Option keys a relation accepts in the object form of `relations`. */
 const RELATION_OPTION_KEYS: ReadonlySet<string> = new Set([
+  "select",
   "relations",
   "where",
   "orderBy",
@@ -184,8 +187,9 @@ function parseQueryOptions(
   spec: Record<string, unknown>,
   path: string,
 ): RelationQueryOptions | undefined {
-  const { where, orderBy, take, skip, withDeleted, withCount } = spec;
+  const { select, where, orderBy, take, skip, withDeleted, withCount } = spec;
   const options: {
+    select?: string[];
     where?: unknown;
     orderBy?: Record<string, "ASC" | "DESC">;
     take?: number;
@@ -193,6 +197,8 @@ function parseQueryOptions(
     withDeleted?: boolean;
     withCount?: RelationCountSpec[];
   } = {};
+
+  if (select !== undefined) options.select = parseSelect(select, path);
 
   if (where !== undefined) {
     const clauses = Array.isArray(where) ? where : [where];
@@ -248,6 +254,51 @@ function parseQueryOptions(
   if (counts) options.withCount = counts;
 
   return Object.keys(options).length > 0 ? options : undefined;
+}
+
+/**
+ * The property names a relation's `select` reads — the list it gives, or
+ * the `true` keys of its object form. One that reads nothing is rejected:
+ * the related entities would come back as bare keys.
+ */
+function parseSelect(select: unknown, path: string): string[] {
+  const example = `Write { ${lastSegment(path)}: { select: ["id", "name"] } }.`;
+  let names: string[];
+  if (Array.isArray(select)) {
+    if (!select.every((name) => typeof name === "string")) {
+      throw new InvalidQueryError(
+        `"select" of relation "${path}" in "relations" must list property names, got ${describe(select.find((name) => typeof name !== "string"))} in it.`,
+        example,
+      );
+    }
+    names = select;
+  } else if (isPlainObject(select)) {
+    names = [];
+    for (const [name, flag] of Object.entries(select)) {
+      if (flag === undefined || flag === false) continue;
+      if (flag !== true) {
+        throw new InvalidQueryError(
+          `"select.${name}" of relation "${path}" in "relations" must be true or false, got ${describe(flag)}.`,
+          isPlainObject(flag)
+            ? `Pick the columns of a relation nested under "${path}" in its own entry: { relations: { ${name}: { select: [...] } } }.`
+            : example,
+        );
+      }
+      names.push(name);
+    }
+  } else {
+    throw new InvalidQueryError(
+      `"select" of relation "${path}" in "relations" must be an array of property names or an object keyed by property, got ${describe(select)}.`,
+      example,
+    );
+  }
+  if (names.length === 0) {
+    throw new InvalidQueryError(
+      `"select" of relation "${path}" in "relations" names no property.`,
+      `Name the columns to read, or leave "select" out to read every column. ${example}`,
+    );
+  }
+  return names;
 }
 
 function lastSegment(path: string): string {

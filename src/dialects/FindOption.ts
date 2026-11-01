@@ -139,6 +139,22 @@ export type WithCountOption<T> = {
  */
 export interface RelationLoadOptions<R> {
   /**
+   * Reads only these columns of the related entity — property names, or an
+   * object keyed by property whose `true` entries are read, as the read's
+   * own `select` takes them. The related entity's primary key, the join
+   * column of each to-one relation loaded under it and a hierarchy's
+   * discriminator are read too, so its own relations still load.
+   *
+   * @example
+   * ```ts
+   * em.find(Post, {
+   *   relations: { author: { select: ["id", "name"] } },
+   * })
+   * ```
+   */
+  select?: ISelectOption<R>;
+
+  /**
    * Relations of the related entity to load on it, in any form `relations`
    * accepts — names, dotted paths or another object.
    *
@@ -214,16 +230,16 @@ export interface RelationLoadOptions<R> {
 
 /**
  * What to load together with a single-valued relation (`@ManyToOne`,
- * `@OneToOne`) in the object form of `relations`: the relations nested
- * under it, its own `withDeleted` and counts on the related entity.
- * `where`, `orderBy`, `take` and `skip` page a collection and are not
- * offered here.
+ * `@OneToOne`) in the object form of `relations`: the columns it reads, the
+ * relations nested under it, its own `withDeleted` and counts on the related
+ * entity. `where`, `orderBy`, `take` and `skip` page a collection and are
+ * not offered here.
  *
  * @template R - The related entity.
  */
 export type SingleRelationLoadOptions<R> = Pick<
   RelationLoadOptions<R>,
-  "relations" | "withDeleted" | "withCount"
+  "select" | "relations" | "withDeleted" | "withCount"
 >;
 
 /**
@@ -473,7 +489,15 @@ export type UpdateManyOptions<T> = {
  */
 export type FindOption<T> = {
   /**
-   * Specifies the fields to select in the query.
+   * The columns to read — property names, or an object keyed by property
+   * whose `true` entries are read. A relation's columns are picked by the
+   * `select` of its entry in `relations`.
+   *
+   * @example
+   * ```ts
+   * em.find(User, { select: ["id", "name"] })
+   * em.find(Post, { select: ["id", "title"], relations: { author: { select: ["name"] } } })
+   * ```
    */
   select?: ISelectOption<T>;
 

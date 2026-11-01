@@ -51,6 +51,7 @@ import {
   requestedRelationNames,
   resolveRelationTree,
   type RelationTree,
+  type RelationTreeNode,
 } from "../RelationTree";
 import {
   assertWhereNotVacuous,
@@ -366,12 +367,51 @@ export class ReadExecutor {
    * The physical column names a read of `entity` selects — the column plan's
    * `allColNames`. Relation loaders read related entities through it so they
    * hydrate with the same properties `find()` gives them.
+   *
+   * Given the relation node a read loads `entity` for, a `select` on it keeps
+   * only the columns {@link relationSelectColumns} names, in plan order.
    */
   readColumnNames(
     entity: ClazzType<any>,
     metadata: { name: string; columns: ColumnMetadata[] },
+    relation?: RelationTreeNode,
   ): readonly string[] {
-    return this.getColumnPlan(entity, metadata).allColNames;
+    const columns = this.getColumnPlan(entity, metadata).allColNames;
+    const select = relation?.options?.select;
+    if (!select) return columns;
+    const keep = this.relationSelectColumns(entity, metadata, select, relation.children);
+    return columns.filter((name) => keep.has(name));
+  }
+
+  /**
+   * The columns a relation's `select` reads of `entity`: those its
+   * properties name, plus the ones the read needs whatever it says — the
+   * primary key (the entity's identity, the key the relations nested under
+   * it are matched by, and what tells a JOINed row from a missing one), the
+   * join column of each to-one relation nested under it, and the
+   * discriminator each row of a hierarchy is built by.
+   */
+  private relationSelectColumns(
+    entity: ClazzType<any>,
+    metadata: { name: string; columns: ColumnMetadata[] },
+    select: readonly string[],
+    children: RelationTree | undefined,
+  ): Set<string> {
+    const propToCol = this.ctx.buildReadPropertyToColumnMap(metadata);
+    const keep = new Set(select.map((prop) => propToCol.get(prop) ?? prop));
+    for (const col of metadata.columns) {
+      if (col.options?.primary) keep.add(col.name);
+    }
+    const nested = children?.names ?? [];
+    for (const rel of this.resolver.resolveManyToOneMetadata(entity)) {
+      if (nested.includes(rel.columnName)) keep.add(rel.joinColumn ?? rel.columnName);
+    }
+    for (const rel of this.resolver.resolveOneToOneMetadata(entity)) {
+      if (rel.joinColumn && nested.includes(rel.propertyKey)) keep.add(rel.joinColumn);
+    }
+    const discriminator = this.inheritanceResolver.getDiscriminatorColumn(entity)?.name;
+    if (discriminator) keep.add(discriminator);
+    return keep;
   }
 
   /**
@@ -953,7 +993,8 @@ export class ReadExecutor {
       if (!relatedMetadata) continue;
 
       const relAlias = rel.columnName;
-      for (const name of this.relationColumnNames(RelatedEntity, relatedMetadata)) {
+      const node = op.relationTree?.nodes.get(rel.columnName);
+      for (const name of this.relationColumnNames(RelatedEntity, relatedMetadata, node)) {
         const alias = joinedColumnAlias(rel.columnName, name);
         selectMap.push(
           `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(name)} AS ${this.ctx.wrap(alias)}`,
@@ -968,7 +1009,8 @@ export class ReadExecutor {
       if (!relatedMetadata) continue;
 
       const relAlias = rel.propertyKey;
-      for (const name of this.relationColumnNames(RelatedEntity, relatedMetadata)) {
+      const node = op.relationTree?.nodes.get(rel.propertyKey);
+      for (const name of this.relationColumnNames(RelatedEntity, relatedMetadata, node)) {
         const alias = joinedColumnAlias(rel.propertyKey, name);
         selectMap.push(
           `${this.ctx.wrap(relAlias)}.${this.ctx.wrap(name)} AS ${this.ctx.wrap(alias)}`,
@@ -979,15 +1021,17 @@ export class ReadExecutor {
 
   /**
    * The columns a JOINed relation reads of `RelatedEntity`: those find()
-   * reads of it, plus — for the root of a JOINED hierarchy — each
-   * subclass's own columns, under the names {@link relationJoinSource}
-   * gives them, so the row can be built as its subclass.
+   * reads of it — or those the relation's `select` keeps — plus, for the
+   * root of a JOINED hierarchy, each subclass's own columns, under the names
+   * {@link relationJoinSource} gives them, so the row can be built as its
+   * subclass.
    */
   private relationColumnNames(
     RelatedEntity: ClazzType<any>,
     relatedMetadata: { name: string; columns: ColumnMetadata[] },
+    relation?: RelationTreeNode,
   ): readonly string[] {
-    const names = this.readColumnNames(RelatedEntity, relatedMetadata);
+    const names = this.readColumnNames(RelatedEntity, relatedMetadata, relation);
     if (!isJoinedPolymorphicRoot(this.inheritanceResolver, RelatedEntity)) return names;
     return [
       ...names,

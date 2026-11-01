@@ -93,6 +93,17 @@ SELECT ... FROM "post" WHERE "author_id" IN (1, 2);  -- 위에서 읽은 id
 
 `select: { id: false, name: true }`처럼 명시적으로 뺀 경우에도 키는 추가되고, 복합 키라면 키 컬럼 전부가 추가됩니다. ManyToOne 관계와 OneToOne의 소유 측(owning side)은 같은 쿼리에 JOIN되므로 아무것도 추가하지 않습니다. 빈 `select`(`[]`, `{}`, `{ id: false }`)는 여전히 오류입니다. 컬럼을 하나도 요청하지 않은 셈이고, 기본 키가 원래 적으려던 컬럼을 대신해 주지는 않으니까요.
 
+관련 엔티티도 일부 컬럼만 읽으려면 `relations` 객체 형식에서 관계마다 `select`를 따로 적어 주세요. 자세한 내용은 [관계의 컬럼 고르기](./relations.md#관계의-컬럼-고르기)를 보세요.
+
+```typescript
+const posts = await em.find(Post, {
+  select: ["title"],
+  relations: { author: { select: ["name"] } },
+});
+```
+
+`select` 객체 형식의 값은 프로퍼티마다 `true`나 `false`입니다. 그 자리에 객체를 중첩하면(`select: { author: { ... } }`) `InvalidQueryError`를 던지고, 관계 쪽 `select`를 쓰라고 안내합니다.
+
 행을 합치는 읽기는 이런 관계와 함께 쓸 수 없습니다. 합쳐진 행에는 자식 행을 짝지을 부모가 하나로 정해지지 않기 때문입니다. 두 경우 모두 SQL을 실행하기 전에 `InvalidQueryError`를 던집니다.
 
 - 기본 키 컬럼을 전부 적지 않은 `groupBy` -- `select`에 무엇이 적혀 있든 마찬가지입니다. 그룹으로 묶인 행이 들고 있는 키는 그 그룹 구성원 중 아무거나 하나의 키이기 때문입니다.

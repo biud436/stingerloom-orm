@@ -150,6 +150,13 @@ describe("relation query options", () => {
     expect(optionsOf(relations, "comments", "author")).toEqual({ withDeleted: false });
   });
 
+  it("reads select as property names from either form", () => {
+    expect(optionsOf({ author: { select: ["id", "name"] } }, "author")).toEqual({ select: ["id", "name"] });
+    expect(optionsOf({ author: { select: { name: true, email: false, bio: undefined } } }, "author")).toEqual({
+      select: ["name"],
+    });
+  });
+
   it("leaves a node without options undefined", () => {
     expect(optionsOf({ comments: { relations: ["author"] } }, "comments")).toBeUndefined();
     expect(optionsOf(["comments"], "comments")).toBeUndefined();
@@ -169,6 +176,11 @@ describe("relation query options", () => {
     [{ take: 1.5 }, '"take" of relation "comments"'],
     [{ skip: "2" }, '"skip" of relation "comments"'],
     [{ withDeleted: "yes" }, '"withDeleted" of relation "comments" in "relations" must be a boolean'],
+    [{ select: "body" }, '"select" of relation "comments" in "relations" must be an array of property names or an object'],
+    [{ select: ["body", 1] }, '"select" of relation "comments" in "relations" must list property names, got number 1'],
+    [{ select: [] }, '"select" of relation "comments" in "relations" names no property'],
+    [{ select: { body: false } }, '"select" of relation "comments" in "relations" names no property'],
+    [{ select: { body: "yes" } }, '"select.body" of relation "comments" in "relations" must be true or false'],
   ])("rejects a malformed option %j", (spec, message) => {
     const error = captureError(() => parse({ comments: spec }));
     expect(error).toBeInstanceOf(InvalidQueryError);
@@ -192,7 +204,10 @@ describe("relation query options", () => {
     const typo: RelationsOption<Post> = { comments: { where: { aproved: true } } };
     // @ts-expect-error — directions are "ASC" | "DESC"
     const direction: RelationsOption<Post> = { comments: { orderBy: { id: "desc" } } };
-    expect([ok, typo, direction]).toHaveLength(3);
+    const selected: RelationsOption<Post> = { comments: { select: ["id", "body"] } };
+    // @ts-expect-error — "bdy" is not a property of Comment
+    const selectTypo: RelationsOption<Post> = { comments: { select: ["bdy"] } };
+    expect([ok, typo, direction, selected, selectTypo]).toHaveLength(5);
   });
 });
 
@@ -269,6 +284,7 @@ describe("relations option typing", () => {
     const filtered: RelationsOption<User> = { team: { where: { title: "x" } } };
     // @ts-expect-error — a lazy single-valued relation is single-valued too
     const lazy: RelationsOption<User> = { lazyManager: { orderBy: { id: "ASC" } } };
-    expect([ok, paged, filtered, lazy]).toHaveLength(4);
+    const selected: RelationsOption<User> = { team: { select: { title: true } }, lazyManager: { select: ["name"] } };
+    expect([ok, paged, filtered, lazy, selected]).toHaveLength(5);
   });
 });
