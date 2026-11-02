@@ -504,24 +504,22 @@ describe("EntityManager.batchUpsert()", () => {
       expect(mockRollback).toHaveBeenCalled();
     });
 
-    it("should handle items with missing optional columns (null fallback)", async () => {
+    it("writes rows that state different columns in separate statements", async () => {
       (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
 
       await em.batchUpsert(UserEntity, [
         { id: 1, email: "a@test.com", name: "A" },
-        { id: 2, email: "b@test.com" }, // name is undefined → null
+        { id: 2, email: "b@test.com" }, // no name: the stored one stays on conflict
       ]);
 
       expect(mockCommit).toHaveBeenCalled();
-      const queryCalls = mockQuery.mock.calls;
-      const upsertCall = queryCalls.find((call: any[]) => {
-        const sqlText = call[0]?.text || String(call[0]);
-        return sqlText.includes("ON DUPLICATE KEY UPDATE");
-      });
-      expect(upsertCall).toBeDefined();
-      // Second row should have null for missing name
-      const values = upsertCall![0]?.values ?? [];
-      expect(values).toContain(null);
+      const upserts = mockQuery.mock.calls
+        .map((call: any[]) => call[0])
+        .filter((q: any) => String(q?.text ?? q).includes("ON DUPLICATE KEY UPDATE"));
+      expect(upserts).toHaveLength(2);
+      expect(upserts[0].values).toEqual([1, "a@test.com", "A"]);
+      expect(upserts[1].values).toEqual([2, "b@test.com"]);
+      expect(String(upserts[1].text ?? upserts[1])).not.toContain("`name`");
     });
   });
 

@@ -146,8 +146,8 @@ describe("[Integration] SQLite: increment/decrement edges + batchUpsert null ali
       { sku: "b", name: "Beta", note: "keep-me" },
     ] as any);
 
-    // Re-upsert: row a updates note, row b omits note (→ NULL overwrite),
-    // row d is a fresh insert without note.
+    // Re-upsert: row a updates note, row b omits note (its stored value
+    // stays, as upsert() leaves it), row d is a fresh insert without note.
     await conn.em.batchUpsert(Sku, [
       { sku: "a", name: "Alpha2", note: "new" },
       { sku: "b", name: "Beta2" },
@@ -159,7 +159,7 @@ describe("[Integration] SQLite: increment/decrement edges + batchUpsert null ali
     )) as any[];
     expect(rows).toEqual([
       { sku: "a", name: "Alpha2", note: "new" },
-      { sku: "b", name: "Beta2", note: null },
+      { sku: "b", name: "Beta2", note: "keep-me" },
       { sku: "d", name: "Delta", note: null },
     ]);
   });
