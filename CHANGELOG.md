@@ -8,6 +8,14 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ## [Unreleased]
 
+### Fixed
+
+- **A row of a multi-row INSERT that leaves out a column other rows set gets the column's default.** `saveMany()`, `insertMany()`, `insertManyAndReturn()` and `createInsertBuilder()` name a column once any row of the batch sets it, and the rows that left it out bound NULL there: a NOT NULL column with a `default` failed the whole batch, and a nullable one stored NULL instead of its default, unlike the same rows saved one at a time. Such a row now writes `DEFAULT` on PostgreSQL and MySQL, and on SQLite, which has no `DEFAULT` inside `VALUES`, the declared `default` (NULL when none is declared). An explicit `null` is still written as NULL, and when no row provides any column the rows write every column's default. `batchUpsert()` is unchanged.
+
+### Documentation
+
+- **Changes dated to 2.1 are dated to 3.0**, the release that shipped them (`entity-manager-writes`, `relations`, EN and KO, and the `unknownWriteKeys` option comment).
+
 ## [3.0.0] — 2026-11-01
 
 A major release. Reads are typed by what they load: a `select` narrows the result type, and a relation picks its own columns with a `select` of its own. More states that used to fail silently now fail loudly. The breaking changes are listed in the [3.0 upgrade guide](https://biud436.github.io/stingerloom-orm/upgrade-3.0). The short version: a `select` read's result type no longer claims every column, `em.pipe()` takes only its own options, `register()` and the read options reject values they used to ignore, `clear()` deletes with `DELETE` in the caller's transaction, after-events fire only for writes that matched a row, and schema synchronization no longer guesses renames.

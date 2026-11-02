@@ -23,11 +23,22 @@ export function renderDefaultClause(
   renderBoolean: (value: boolean) => string = (v) => ` DEFAULT ${v ? "TRUE" : "FALSE"}`,
 ): string {
   if (value === undefined) return "";
-  if (value === null) return " DEFAULT NULL";
-  if (typeof value === "number") return ` DEFAULT ${value}`;
   if (typeof value === "boolean") return renderBoolean(value);
-  if (isExpressionDefault(value)) return ` DEFAULT ${value}`;
-  return ` DEFAULT '${value.replace(/'/g, "''")}'`;
+  return ` DEFAULT ${renderDefaultValue(value)}`;
+}
+
+/**
+ * A declared default as a SQL value: the expression of a parenthesized
+ * string, a quoted literal for any other string, `TRUE` / `FALSE` for a
+ * boolean. Used where the value itself is written, such as a VALUES row on
+ * SQLite, which has no DEFAULT keyword there.
+ */
+export function renderDefaultValue(value: Exclude<ColumnDefaultValue, undefined>): string {
+  if (value === null) return "NULL";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  if (isExpressionDefault(value)) return value;
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 /**

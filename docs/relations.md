@@ -372,7 +372,7 @@ ALTER TABLE "cat" ADD CONSTRAINT "fk_cat_owner_id_a1b2c3d4"
   FOREIGN KEY ("owner_id") REFERENCES "owner" ("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ```
 
-> **Before 2.1**, `synchronize` on PostgreSQL and MySQL / MariaDB created every relation constraint with `ON DELETE NO ACTION ON UPDATE NO ACTION`, whatever the relation declared (SQLite and `migrate:generate` were not affected). A constraint created that way stays so after upgrading; check `information_schema.referential_constraints` and recreate it as above.
+> **Before 3.0**, `synchronize` on PostgreSQL and MySQL / MariaDB created every relation constraint with `ON DELETE NO ACTION ON UPDATE NO ACTION`, whatever the relation declared (SQLite and `migrate:generate` were not affected). A constraint created that way stays so after upgrading; check `information_schema.referential_constraints` and recreate it as above.
 
 ### Skipping FK Constraints (createForeignKeyConstraints)
 
@@ -697,7 +697,7 @@ await em.save(User, { id: user.id, profile: otherProfile });  // reassign
 await em.save(User, { id: user.id, profile: null });          // clear the key
 ```
 
-`save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()` and the upsert family all write it, and a payload that leaves the relation out keeps the stored key. A related instance must already have its primary key. The inverse side (`Profile.user` below) holds no column, so set the relation on the owner. Before 2.1 no write method stored the owner's key and the column stayed `NULL`; only `updateMany()` with the shadow property wrote it.
+`save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()` and the upsert family all write it, and a payload that leaves the relation out keeps the stored key. A related instance must already have its primary key. The inverse side (`Profile.user` below) holds no column, so set the relation on the owner. Before 3.0 no write method stored the owner's key and the column stayed `NULL`; only `updateMany()` with the shadow property wrote it.
 
 ### Bidirectional
 
