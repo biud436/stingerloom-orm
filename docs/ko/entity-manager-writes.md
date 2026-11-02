@@ -183,7 +183,7 @@ INSERT INTO "t" DEFAULT VALUES
 
 `saveMany()` 배치 삽입에서는 멀티 행 `VALUES`가 컬럼 목록 하나를 공유합니다. 그래서 컬럼은 **배치의 어떤 항목도 값을 주지 않았을 때만** 빠집니다. 일부 항목만 값을 준 혼합 배치에서는 컬럼이 목록에 남고, 그 컬럼을 비워 둔 행에는 컬럼의 기본값이 들어갑니다. 한 행씩 저장했을 때와 같은 결과예요. PostgreSQL과 MySQL은 `DEFAULT`를 쓰고, `VALUES` 안에 `DEFAULT`를 쓸 수 없는 SQLite는 선언된 `default` 값을 씁니다(선언이 없으면 NULL). 값을 `null`로 명시하면 그대로 NULL이 저장됩니다.
 
-`insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`도 같은 배치 규칙을 따르고, `upsert()` / `insertIgnore()`는 단일 행 규칙을 따릅니다. `batchUpsert()`도 같은 컬럼 목록을 쓰지만, 컬럼을 비워 둔 행에는 `NULL`을 바인딩합니다. `insertMany()`의 어느 행도 컬럼 값을 하나도 주지 않았다면 전체 컬럼 목록을 그대로 두고, 모든 행이 기본값을 씁니다. 3.0 이전의 `insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`는 선언된 컬럼을 전부 나열하고 빠진 값에 `NULL`을 바인딩해서, 이 경로에서는 `DEFAULT`가 적용되지 않았습니다.
+`insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`도 같은 배치 규칙을 따르고, `upsert()` / `insertIgnore()`는 단일 행 규칙을 따릅니다. `batchUpsert()`는 행들이 명시한 컬럼 집합마다 문장을 하나씩 보냅니다. 그래서 컬럼을 비워 둔 행도 `upsert()`와 똑같이, 삽입될 때는 기본값을 받고 충돌할 때는 저장된 값을 그대로 둡니다. `insertMany()`의 어느 행도 컬럼 값을 하나도 주지 않았다면 전체 컬럼 목록을 그대로 두고, 모든 행이 기본값을 씁니다. 3.0 이전의 `insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`는 선언된 컬럼을 전부 나열하고 빠진 값에 `NULL`을 바인딩해서, 이 경로에서는 `DEFAULT`가 적용되지 않았습니다.
 
 ---
 
@@ -673,7 +673,7 @@ ON DUPLICATE KEY UPDATE `name` = `new`.`__name`, `email` = `new`.`__email`
 
 ### 배치 Upsert -- batchUpsert()
 
-수백 또는 수천 행을 한 번에 upsert해야 할 때 `batchUpsert()`가 `upsert()`를 루프로 호출하는 것보다 훨씬 빨라요. 모든 행을 하나의 다중 행 `INSERT ... ON CONFLICT` 문으로 묶어서 보내요.
+수백 또는 수천 행을 한 번에 upsert해야 할 때 `batchUpsert()`가 `upsert()`를 루프로 호출하는 것보다 훨씬 빨라요. 행들을 다중 행 `INSERT ... ON CONFLICT` 문으로 묶어서 보내는데, 행들이 명시한 컬럼 집합마다 문장이 하나씩이고 대개는 하나입니다. 명시한 컬럼이 다른 행은 같은 트랜잭션 안의 다른 문장으로 가기 때문에, 컬럼을 비워 둔 행이 충돌해도 저장된 값을 NULL로 덮어쓰지 않습니다.
 
 ```typescript
 await em.batchUpsert(User, [

@@ -5122,61 +5122,95 @@ export class WriteExecutor {
     this.warnIfUpsertVersionIgnored(entity, metadata, items, "batchUpsert");
     const seeded = this.seededUpsertRows(entity, metadata, items);
 
-    // The column set is the union over the batch: an auto-increment column
-    // is named only when every item supplies a value, any other column when
-    // at least one does (items missing it bind NULL).
+    // One statement per set of stated columns, so each row is written as
+    // upsert() writes it (see groupByStatedColumns).
     const guards = this.buildUpsertGuards(entity, metadata);
-    const plan = this.buildUpsertPlan(
-      entity,
-      metadata,
-      conflictColumns,
-      (col) =>
-        col.options?.autoIncrement
-          ? seeded.every((row) => {
-              const value = fieldsOf(row)[this.ctx.propKey(col)];
-              return value !== null && value !== undefined;
-            })
-          : seeded.some(
-              (row) => fieldsOf(row)[this.ctx.propKey(col)] !== undefined,
-            ),
-      guards.tenant?.columnName ?? null,
-      (col) => items.some((item) => this.statesUpsertValue(col, item)),
-      (rel) =>
-        seeded.some(
-          (row) => this.resolveFkValue(rel, fieldsOf(row)) !== undefined,
-        ),
+    const statements = this.groupByStatedColumns(entity, metadata, items, seeded).flatMap(
+      (group) => {
+        const plan = this.buildUpsertPlan(
+          entity,
+          metadata,
+          conflictColumns,
+          (col) => this.statesUpsertValue(col, group.seeded[0]),
+          guards.tenant?.columnName ?? null,
+          (col) => this.statesUpsertValue(col, group.items[0]),
+          (rel) => this.resolveFkValue(rel, fieldsOf(group.seeded[0])) !== undefined,
+        );
+        if (!plan) return [];
+        const rows =
+          plan.wrappedUpdate.length === 0 && plan.managed.reset.length > 0
+            ? this.uniqueByConflictKey(metadata, plan, group.seeded)
+            : group.seeded;
+        return [{ plan, rows, size: group.items.length }];
+      },
     );
-    if (!plan) {
+    if (statements.length === 0) {
       return { affected: 0 };
     }
-    const rows =
-      plan.wrappedUpdate.length === 0 && plan.managed.reset.length > 0
-        ? this.uniqueByConflictKey(metadata, plan, seeded)
-        : seeded;
 
     return this.ctx.executeInTransaction(async (session) => {
-      const valueRows = rows.map((row) => {
-        const rowValues: RawValue[] = bindParams(
-          this.upsertRowValues(plan, fieldsOf(row), "batchUpsert()"),
+      let affected = 0;
+      for (const { plan, rows, size } of statements) {
+        const valueRows = rows.map((row) => {
+          const rowValues: RawValue[] = bindParams(
+            this.upsertRowValues(plan, fieldsOf(row), "batchUpsert()"),
+          );
+          return sql`(${join(rowValues, ", ")})`;
+        });
+
+        const upsertSql = this.dmlSqlBuilder.buildBatchUpsertQuery(
+          plan.tableName,
+          plan.wrappedColumns,
+          valueRows,
+          plan.wrappedConflict,
+          plan.wrappedUpdate,
+          guards.combined,
+          plan.managed,
         );
-        return sql`(${join(rowValues, ", ")})`;
-      });
 
-      const upsertSql = this.dmlSqlBuilder.buildBatchUpsertQuery(
-        plan.tableName,
-        plan.wrappedColumns,
-        valueRows,
-        plan.wrappedConflict,
-        plan.wrappedUpdate,
-        guards.combined,
-        plan.managed,
-      );
-
-      const queryResult = (await session.query(upsertSql)) as DriverExecResult;
-      const affected = this.affectedCount(queryResult);
-      this.warnIfUpsertSuppressed(entity, guards, plan, affected, items.length);
+        const queryResult = (await session.query(upsertSql)) as DriverExecResult;
+        const statementAffected = this.affectedCount(queryResult);
+        this.warnIfUpsertSuppressed(entity, guards, plan, statementAffected, size);
+        affected += statementAffected;
+      }
       return { affected };
     });
+  }
+
+  /**
+   * The batch split by the columns each row states, in order of first
+   * appearance. A statement names one column set, and a row that left a named
+   * column out would bind NULL there: inserted, it would lose the column's
+   * default, and on conflict it would overwrite the stored value, where
+   * upsert() leaves both alone. Rows of one group state the same columns
+   * (and `@ManyToOne` keys), so the first row stands for the group.
+   */
+  private groupByStatedColumns<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    items: Partial<T>[],
+    seeded: Partial<T>[],
+  ): { items: Partial<T>[]; seeded: Partial<T>[] }[] {
+    const relations = this.resolver.resolveForeignKeyRelations(entity);
+    const groups = new Map<string, { items: Partial<T>[]; seeded: Partial<T>[] }>();
+    items.forEach((item, i) => {
+      const row = seeded[i];
+      const shape = [
+        ...metadata.columns.map(
+          (col: ColumnMetadata) =>
+            `${this.statesUpsertValue(col, row) ? 1 : 0}${this.statesUpsertValue(col, item) ? 1 : 0}`,
+        ),
+        ...relations.map((rel) => (this.resolveFkValue(rel, fieldsOf(row)) !== undefined ? "1" : "0")),
+      ].join("");
+      let group = groups.get(shape);
+      if (!group) {
+        group = { items: [], seeded: [] };
+        groups.set(shape, group);
+      }
+      group.items.push(item);
+      group.seeded.push(row);
+    });
+    return [...groups.values()];
   }
 
 }

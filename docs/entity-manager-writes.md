@@ -183,7 +183,7 @@ INSERT INTO "t" DEFAULT VALUES
 
 For `saveMany()` batch inserts, all rows share one column set in the multi-row `VALUES` list. A column is omitted only when **no item in the batch** provides it. In mixed batches (some items provide the column, some don't), the column stays in the list and a row that leaves it out writes the column's default, as it would if saved on its own: `DEFAULT` on PostgreSQL and MySQL, and on SQLite, which has no `DEFAULT` inside `VALUES`, the declared `default` (NULL when none is declared). An explicit `null` is still written as NULL.
 
-`insertMany()`, `insertManyAndReturn()` and `createInsertBuilder()` follow the same batch rule, and `upsert()` / `insertIgnore()` the single-row one. `batchUpsert()` names the same column set but binds `NULL` for a row that leaves a column out. When no row of an `insertMany()` provides any column at all, the full column list is kept and every row writes the defaults. Before 3.0, `insertMany()`, `insertManyAndReturn()` and `createInsertBuilder()` named every declared column and bound `NULL` for the ones you left out, so a `DEFAULT` never applied there.
+`insertMany()`, `insertManyAndReturn()` and `createInsertBuilder()` follow the same batch rule, and `upsert()` / `insertIgnore()` the single-row one. `batchUpsert()` writes one statement per set of columns its rows state, so a row that leaves a column out is written as `upsert()` writes it: the column keeps its default when the row is inserted and its stored value on conflict. When no row of an `insertMany()` provides any column at all, the full column list is kept and every row writes the defaults. Before 3.0, `insertMany()`, `insertManyAndReturn()` and `createInsertBuilder()` named every declared column and bound `NULL` for the ones you left out, so a `DEFAULT` never applied there.
 
 ---
 
@@ -673,7 +673,7 @@ The alias renames its columns (`__name`) on purpose. Under the table's own names
 
 ### Batch Upsert -- batchUpsert()
 
-When you need to upsert hundreds or thousands of rows at once, `batchUpsert()` is significantly faster than calling `upsert()` in a loop. It packs all rows into a single multi-row `INSERT ... ON CONFLICT` statement.
+When you need to upsert hundreds or thousands of rows at once, `batchUpsert()` is significantly faster than calling `upsert()` in a loop. It packs the rows into a multi-row `INSERT ... ON CONFLICT` statement -- one for each set of columns the rows state, usually just one. Rows that state different columns go into separate statements in the same transaction, so a row that leaves a column out keeps the stored value on conflict instead of overwriting it with NULL.
 
 ```typescript
 await em.batchUpsert(User, [
