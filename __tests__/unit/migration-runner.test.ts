@@ -148,6 +148,19 @@ describe("MigrationRunner", () => {
       expect(results).toHaveLength(3);
       expect(results[2].name).toBe("CreatePostsTable");
     });
+
+    it("keeps its own list after a run with another list fails", async () => {
+      const driver = createMockDriver();
+      const qr = createMockQueryRunner();
+      const m1 = new CreateUsersTable();
+      const runner = new PostgresMigrationRunner([m1], driver, qr);
+      jest.spyOn(runner, "runAll").mockRejectedValueOnce(new Error("lock timeout"));
+
+      await expect(runner.run([m1, new AddEmailToUsers()])).rejects.toThrow("lock timeout");
+
+      const results = await runner.run();
+      expect(results.map((r) => r.name)).toEqual(["CreateUsersTable"]);
+    });
   });
 
   describe("rollback(n?)", () => {

@@ -259,6 +259,8 @@ const orders = await em
 // PostgreSQL: /*+ IndexScan(o idx_order_status) Leading(o c) */ SELECT ...
 ```
 
+힌트 문자열은 주석 안에 그대로 들어가기 때문에, `*/`가 들어 있으면 `InvalidQueryError`를 던집니다. 주석이 거기서 끝나고 나머지가 SQL로 실행되기 때문이에요.
+
 ::: warning
 `hint()`는 **`pg_hint_plan` 확장이 설치되고 활성화된 PostgreSQL에서만** 실제 효과가 있어요. 확장이 없으면 주석으로 처리되어 옵티마이저가 힌트를 보지 못합니다. SQLite는 모든 쿼리 힌트를 지원하지 않아요.
 :::

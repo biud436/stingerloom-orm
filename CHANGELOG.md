@@ -10,6 +10,14 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Fixed
 
+- **`@Transactional` returns its connection to the pool when BEGIN fails.** `REQUIRED` and `REQUIRES_NEW` acquired a connection and started the transaction outside the `try` that closes it, so a failing BEGIN (a dropped connection, say) kept the connection checked out; enough of them exhausted the pool. Both paths now share one function that closes the session however it ends.
+
+- **The MySQL connector settles `query()` and `close()` without a pool, and closing twice is a no-op.** Both returned from inside their promise when no pool existed, so `query()` and `close()` before `connect()` never settled; a second `close()` ended the closed pool again and rejected. `query()` now rejects with `PoolNotFound`, `close()` resolves, and a closed connector drops its pool so another `close()` resolves too.
+
+- **`MigrationRunner.run(migrations)` restores the runner's own list when a migration fails.** It swapped the list in and back without `try`/`finally`, so after a failure the runner kept running the list from the failed call.
+
+- **`SelectQueryBuilder.hint()` rejects text containing `*/`.** The hint is written into a `/*+ … */` comment as it is, so `*/` ended the comment and the rest ran as SQL. It now throws `InvalidQueryError`.
+
 - **A to-one relation a read did not load is left off the entity instead of being `null`, so saving the entity back keeps its foreign key.** A read with `relations` JOINs what it names, and the JOIN path set every other `@ManyToOne` / owning `@OneToOne` of the entity, and of the entities it JOINed, to `null`. The null claimed there was no related row, and `save()` of the entity as read wrote it: `find(Comment, { relations: ["post"] })`, an edit and a `save()` cleared the comment's `author_id`. A read without `relations`, a cursor page and the query builder already left such relations off. A loaded relation with no related row still reads `null`.
 
 - **`batchUpsert()` rows that state different columns are written as `upsert()` writes them.** The batch was one statement naming every column any row stated, and a row that left one out bound NULL there: a new row lost the column's default, and a conflicting row had its stored value overwritten with NULL (or failed a NOT NULL column). The rows are now grouped by the columns they state, one statement per group in the same transaction; a batch whose rows state the same columns is still a single statement.

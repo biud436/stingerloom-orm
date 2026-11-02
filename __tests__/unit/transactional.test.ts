@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "reflect-metadata";
-import { Transactional, transactionStorage } from "../../src/decorators/Transactional";
+import { Transactional, TransactionPropagation, transactionStorage } from "../../src/decorators/Transactional";
 import { TransactionSessionManager } from "../../src/dialects/TransactionSessionManager";
 
 // Mock TransactionSessionManager
@@ -238,4 +238,23 @@ describe("@Transactional decorator", () => {
 
     expect(mockStartTransaction).toHaveBeenCalledWith("REPEATABLE READ");
   });
+
+  it.each([TransactionPropagation.REQUIRED, TransactionPropagation.REQUIRES_NEW])(
+    "closes the session when BEGIN fails (%s)",
+    async (propagation) => {
+      mockStartTransaction.mockRejectedValueOnce(new Error("connection lost"));
+      class TestService {
+        @Transactional({ propagation })
+        async doWork() {
+          return "never";
+        }
+      }
+
+      await expect(new TestService().doWork()).rejects.toThrow("connection lost");
+
+      expect(mockClose).toHaveBeenCalledTimes(1);
+      expect(mockCommit).not.toHaveBeenCalled();
+      expect(mockRollback).not.toHaveBeenCalled();
+    },
+  );
 });

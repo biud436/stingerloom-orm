@@ -195,7 +195,8 @@ export class MySqlConnector extends IConnector {
   async query(rawSql: Sql | string, connection?: Connection): Promise<any> {
     return new Promise((resolve, reject) => {
       if (!this.pool) {
-        return;
+        // Settle the promise: a bare return left the caller waiting forever.
+        return reject(new PoolNotFound());
       }
 
       const qb = connection ? connection : this.pool;
@@ -243,14 +244,18 @@ export class MySqlConnector extends IConnector {
   async close(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!this.pool) {
-        return;
+        // Nothing to end: closing before connect(), or a second time, is a
+        // no-op. A bare return here left the promise pending.
+        return resolve();
       }
 
-      this.pool.end((error) => {
+      const pool = this.pool;
+      pool.end((error) => {
         if (error) {
           return reject(error);
         }
 
+        if (this.pool === pool) this.pool = undefined;
         resolve();
       });
     });

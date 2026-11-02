@@ -6,6 +6,7 @@ import { EntityManager } from "../../src/core/EntityManager";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { createDialectExpression } from "../../src/dialects/DialectExpression";
 import { createMockEm } from "./helpers/mock-em";
+import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
 
 // ── Test Entities ──────────────────────────────────────────
 // @Entity uses camelToSnakeCase(className) as table name:
@@ -559,6 +560,14 @@ describe("SelectQueryBuilder", () => {
       const { text } = qb.getSql();
 
       expect(text).toContain("/*+ IndexScan(u idx1) NestLoop(u o) */");
+    });
+
+    it("rejects hint text that would close the hint comment", () => {
+      const em = createMockEm("postgresql");
+      const qb = new SelectQueryBuilder(User, "u", em);
+
+      expect(() => qb.hint("IndexScan(u) */ DROP TABLE users; /*")).toThrow(InvalidQueryError);
+      expect(qb.where("id", 1).getSql().text).not.toContain("/*+");
     });
   });
 
