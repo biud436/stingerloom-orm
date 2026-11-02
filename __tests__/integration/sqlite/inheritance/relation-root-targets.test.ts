@@ -199,9 +199,9 @@ describe("[Integration] SQLite: relations targeting the root of a hierarchy", ()
     it("builds a SINGLE_TABLE root target as its subclass, with that class's columns only", async () => {
       const holder = await fullHolder(["item", "slot"]);
       expect(holder.item).toBeInstanceOf(RrtPen);
-      expect(plain(holder.item)).toEqual({ id: ids.pen, name: "pen", inkColor: "blue", ownerId: ids.alice, owner: null });
+      expect(plain(holder.item)).toEqual({ id: ids.pen, name: "pen", inkColor: "blue", ownerId: ids.alice });
       expect(holder.slot).toBeInstanceOf(RrtBox);
-      expect(plain(holder.slot)).toEqual({ id: ids.box, name: "box", qty: 3, ownerId: ids.alice, owner: null });
+      expect(plain(holder.slot)).toEqual({ id: ids.box, name: "box", qty: 3, ownerId: ids.alice });
     });
 
     it("builds a JOINED root target as its subclass, with its own table's columns", async () => {
@@ -214,8 +214,6 @@ describe("[Integration] SQLite: relations targeting the root of a hierarchy", ()
         keeperId: null,
         deletedAt: null,
         sails: 2,
-        owner: null,
-        keeper: null,
       });
       expect(holder.vault).toBeInstanceOf(RrtCar);
       expect((holder.vault as RrtCar).wheelCount).toBe(4);
@@ -226,12 +224,10 @@ describe("[Integration] SQLite: relations targeting the root of a hierarchy", ()
       const holder = await fullHolder(["asset", "item"]);
       const [boat] = await em.find(RrtAsset, { where: { id: ids.boat } });
       const [pen] = await em.find(RrtItem, { where: { id: ids.pen } });
-      // A JOINed target's own to-one relations, not loaded, read null.
-      const { owner: assetOwner, keeper, ...asset } = plain(holder.asset);
-      const { owner: itemOwner, ...item } = plain(holder.item);
-      expect([assetOwner, keeper, itemOwner]).toEqual([null, null, null]);
-      expect(asset).toEqual(plain(boat));
-      expect(item).toEqual(plain(pen));
+      // A JOINed target's own to-one relations are not loaded, so they are
+      // left off, as find() on the root leaves them.
+      expect(plain(holder.asset)).toEqual(plain(boat));
+      expect(plain(holder.item)).toEqual(plain(pen));
     });
 
     it("keeps a missing or soft-deleted target null", async () => {

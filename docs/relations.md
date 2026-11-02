@@ -1075,6 +1075,8 @@ ManyToOne relations and the owning side of OneToOne are loaded via LEFT JOIN (si
 
 An entity reached through a relation is hydrated with the same properties `find()` gives it when you query it directly — its foreign-key shadow properties (`authorId`) and its `@ComputedColumn` values included, whether it was JOINed or loaded by the separate query.
 
+A relation the read does not load is left off the entity, on the entity you queried and on the ones it reached. `null` is kept for a loaded relation with no related row, so an entity read with some of its relations can be saved back without clearing the foreign keys of the others.
+
 ### Nested Relations
 
 A relation of a related entity is named with a dotted path, or with the object form, which nests the same option under each relation:

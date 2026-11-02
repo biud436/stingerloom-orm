@@ -390,7 +390,7 @@ describe("[Integration] SQLite: nested relations in find()", () => {
       // p1.team is "infra", its author alice's team is "core".
       const [p1] = await em.find(FnrPost, { where: { id: ids.p1 }, relations: ["author", "team"] });
       expect(p1.team?.title).toBe("infra");
-      expect(p1.author.team).toBeNull();
+      expect(p1.author.team).toBeUndefined();
 
       const [nested] = await em.find(FnrPost, { where: { id: ids.p1 }, relations: ["author.team", "team"] });
       expect(nested.team?.title).toBe("infra");

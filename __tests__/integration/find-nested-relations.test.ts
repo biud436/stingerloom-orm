@@ -200,7 +200,7 @@ describe.each(getTestDrivers())(
     it("keeps a JOINed relation's own relation apart from a same-named JOIN of the row", async () => {
       const [plain] = await em.find(E.Post, { where: { id: ids.p1 }, relations: ["author", "team"] });
       expect(plain.team.title).toBe("infra");
-      expect(plain.author.team).toBeNull();
+      expect(plain.author.team).toBeUndefined();
 
       const [nested] = await em.find(E.Post, { where: { id: ids.p1 }, relations: ["author.team", "team"] });
       expect(nested.author.team.title).toBe("core");

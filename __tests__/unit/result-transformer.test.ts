@@ -268,7 +268,8 @@ describe("ResultTransformer", () => {
 
     it("중첩 관계는 루트 행의 같은 이름 JOIN 컬럼을 읽지 않아야 합니다", () => {
       // `comment__*` belongs to a JOIN of the row's own entity, not to the
-      // post's `comment` — only `post__comment__*` may hydrate that one.
+      // post's `comment` — only `post__comment__*` may hydrate that one, and
+      // with no such column the relation was not JOINed and is left off.
       const mockResult: QueryResult = {
         results: [
           {
@@ -288,7 +289,7 @@ describe("ResultTransformer", () => {
       const user = resultTransformer.transformNested(User, mockResult, {}) as User;
 
       expect(user.post).toBeInstanceOf(Post);
-      expect(user.post?.comment).toBeNull();
+      expect(user.post?.comment).toBeUndefined();
     });
 
     it("단일 행에 다수의 중첩된 관계 데이터 포함", () => {
