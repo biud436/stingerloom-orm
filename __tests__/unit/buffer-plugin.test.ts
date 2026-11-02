@@ -3022,14 +3022,20 @@ describe("Buffer Plugin", () => {
   // ── Phase 5: Batch INSERT ──────────────────────────────────────
 
   describe("batchInsert", () => {
-    it("should batch INSERT multiple entities of same type (MySQL)", async () => {
+    // saveMany() returns the rows it was given with generated keys from `firstId`.
+    const mockSaveMany = (extended: any, firstId: number) =>
+      jest
+        .spyOn(extended, "saveMany")
+        .mockImplementation(async (_entity: any, items: any) =>
+          items.map((item: any, i: number) => ({ ...item, id: firstId + i })),
+        ) as jest.SpyInstance;
+
+    it("inserts a group with one saveMany() call and writes the returned keys back", async () => {
       const em = createEmWithEntities(User);
       const extended = em.extend(bufferPlugin({ batchInsert: true }));
       jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
-      // Mock query to return MySQL-style insertId result
-      const querySpy = jest.spyOn(extended, "query").mockResolvedValue({ insertId: 10 } as any);
-      // Mock isMySqlFamily — check PluginContext usage
-      // Since createExtendedEm uses default mysql mock, isPostgres will be false
+      const saveManySpy = mockSaveMany(extended, 10);
+      const saveSpy = jest.spyOn(extended, "save");
 
       const mut = extended.buffer();
 
@@ -3042,13 +3048,16 @@ describe("Buffer Plugin", () => {
       const result = await mut.flush();
 
       expect(result.inserts).toBe(2);
-      // batch query should have been called
-      expect(querySpy).toHaveBeenCalledTimes(1);
-      expect(querySpy).toHaveBeenCalledWith(
-        expect.stringContaining("INSERT INTO"),
-        expect.any(Array),
-      );
-      // PKs should be written back sequentially from insertId
+      expect(saveManySpy).toHaveBeenCalledTimes(1);
+      expect(saveSpy).not.toHaveBeenCalled();
+      const [entity, items] = saveManySpy.mock.calls[0];
+      expect(entity).toBe(User);
+      expect(items.map((item: any) => ({ ...item }))).toEqual([
+        { name: "Alice", email: "a@b.c" },
+        { name: "Bob", email: "b@c.d" },
+      ]);
+      // The rows keep the class, so save() can run the entity's hook methods.
+      expect(items.every((item: any) => item instanceof User)).toBe(true);
       expect(u1.id).toBe(10);
       expect(u2.id).toBe(11);
     });
@@ -3102,7 +3111,7 @@ describe("Buffer Plugin", () => {
       const em = createEmWithEntities(AuditableItem);
       const extended = em.extend(bufferPlugin({ batchInsert: true }));
       jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
-      const querySpy = jest.spyOn(extended, "query").mockResolvedValue({ insertId: 50 } as any);
+      const saveManySpy = mockSaveMany(extended, 50);
 
       const mut = extended.buffer();
       const a = Object.assign(new AuditableItem(), { title: "a" });
@@ -3115,12 +3124,8 @@ describe("Buffer Plugin", () => {
       const after = Date.now();
 
       expect(result.inserts).toBe(2);
-      // Single multi-row INSERT, not two individual saves.
-      expect(querySpy).toHaveBeenCalledTimes(1);
-      expect(querySpy).toHaveBeenCalledWith(
-        expect.stringContaining("INSERT INTO"),
-        expect.any(Array),
-      );
+      // One saveMany() call, not two individual saves.
+      expect(saveManySpy).toHaveBeenCalledTimes(1);
       // In-memory instances carry the injected timestamps.
       expect(a.createdAt).toBeInstanceOf(Date);
       expect(a.updatedAt).toBeInstanceOf(Date);
@@ -3137,7 +3142,7 @@ describe("Buffer Plugin", () => {
       const em = createEmWithEntities(VersionedProduct);
       const extended = em.extend(bufferPlugin({ batchInsert: true }));
       jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
-      const querySpy = jest.spyOn(extended, "query").mockResolvedValue({ insertId: 200 } as any);
+      const saveManySpy = mockSaveMany(extended, 200);
 
       const mut = extended.buffer();
       const p1 = Object.assign(new VersionedProduct(), { name: "widget", price: 10 });
@@ -3148,7 +3153,7 @@ describe("Buffer Plugin", () => {
       const result = await mut.flush();
 
       expect(result.inserts).toBe(2);
-      expect(querySpy).toHaveBeenCalledTimes(1);
+      expect(saveManySpy).toHaveBeenCalledTimes(1);
       expect(p1.version).toBe(1);
       expect(p2.version).toBe(1);
     });
@@ -3157,7 +3162,7 @@ describe("Buffer Plugin", () => {
       const em = createEmWithEntities(AuditableItem);
       const extended = em.extend(bufferPlugin({ batchInsert: true }));
       jest.spyOn(extended, "transaction").mockImplementation(async (cb) => cb(extended as any));
-      jest.spyOn(extended, "query").mockResolvedValue({ insertId: 60 } as any);
+      mockSaveMany(extended, 60);
 
       const mut = extended.buffer();
       const pre = new Date(2020, 0, 1);

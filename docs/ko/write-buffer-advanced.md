@@ -249,21 +249,22 @@ INSERT INTO "user" ("name", "email") VALUES ($3, $4) RETURNING "id";
 INSERT INTO "user" ("name", "email") VALUES ($5, $6) RETURNING "id";
 ```
 
-**`batchInsert: true`** (1 round-trip):
+**`batchInsert: true`** (그룹당 INSERT 한 번):
 ```sql
--- PostgreSQL (RETURNING maps generated PKs back to each instance)
+-- PostgreSQL (RETURNING이 생성된 키와 함께 각 행을 돌려줌)
 INSERT INTO "user" ("name", "email")
 VALUES ($1, $2), ($3, $4), ($5, $6)
-RETURNING "id"
+RETURNING *
 
--- MySQL (LAST_INSERT_ID() returns first ID, then increment for each row)
+-- MySQL (키는 LAST_INSERT_ID()부터 이어지고, 행은 SELECT 한 번으로 다시 읽음)
 INSERT INTO `user` (`name`, `email`)
-VALUES (?, ?), (?, ?), (?, ?)
+VALUES (?, ?), (?, ?), (?, ?);
+SELECT ... FROM `user` WHERE `id` IN (?, ?, ?)
 ```
 
-Multi-row INSERT 후, 버퍼가 생성된 PK를 순서대로 각 인스턴스에 다시 써줘요.
+그룹은 `saveMany()`가 씁니다. 그래서 행마다 `save()`와 똑같이 컬럼 기본값, 트랜스포머, JSON 값, `tenant_column`의 테넌트 컬럼, 생명주기 훅, 이벤트, 구독자가 적용됩니다. 그다음 버퍼가 생성된 키와 데이터베이스가 채운 값을 순서대로 각 인스턴스에 옮겨 적어요.
 
-다음 경우에는 여전히 `save()`로 한 행씩 씁니다. 인스턴스가 하나뿐일 때, 복합 기본 키일 때, SQLite일 때, 그리고 `SINGLE_TABLE`이나 `JOINED` 계층의 엔티티일 때입니다. 이 계층의 행에는 discriminator가 필요하고, `JOINED` 자식은 테이블 두 개에 걸쳐 있기 때문입니다.
+다음 경우에는 여전히 `save()`로 한 행씩 씁니다. 인스턴스가 하나뿐일 때, 복합 기본 키일 때, SQLite일 때, 그리고 `SINGLE_TABLE`이나 `JOINED` 계층의 엔티티일 때입니다. 이 계층의 행에는 discriminator가 필요하고, `JOINED` 자식은 테이블 두 개에 걸쳐 있기 때문입니다. 인스턴스에 키가 이미 있으면 `saveMany()`도 한 행씩 씁니다.
 
 ### Batch UPDATE — 여러 행을 하나의 구문으로
 
@@ -331,6 +332,8 @@ buf.onFlushEvent("postInsert", (event) => {
 | `postDelete` | 각 DELETE 후 | `{ entity, criteria }` |
 
 이벤트는 배치 경로에서도 발화합니다. `batchInsert` / `batchUpdate`를 켜도 멀티로우 INSERT나 CASE WHEN UPDATE에 포함된 엔티티마다 `preInsert`/`postInsert`, `preUpdate`/`postUpdate` 쌍이 각각 실행돼요. `preInsert`/`preUpdate`는 배치 SQL을 만들기 전에 발화하므로, 리스너에서 엔티티를 수정하면 그대로 반영됩니다 — per-row 경로와 같은 계약이에요.
+
+엔티티 생명주기 훅(`@BeforeInsert`, `@BeforeUpdate` 등, 또는 defineEntity `hooks`)은 flush가 `save()` / `saveMany()`로 쓸 때 실행됩니다. 모든 INSERT가 여기에 해당하고, 변경된 인스턴스의 UPDATE도 마찬가지입니다. 단 `batchUpdate`가 CASE WHEN 구문 하나로 합친 UPDATE에서는 훅이 실행되지 않습니다. 훅은 인스턴스의 컬럼 값을 담은 복사본에서 실행되기 때문에, 훅이 컬럼에 쓴 값은 저장된 뒤 인스턴스로 옮겨지고, 그 밖에 `this`에 넣은 값은 복사본에만 남습니다.
 
 ### 예시: 감사 로그
 

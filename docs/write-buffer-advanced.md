@@ -249,21 +249,22 @@ INSERT INTO "user" ("name", "email") VALUES ($3, $4) RETURNING "id";
 INSERT INTO "user" ("name", "email") VALUES ($5, $6) RETURNING "id";
 ```
 
-**With `batchInsert: true`** (1 round-trip):
+**With `batchInsert: true`** (one INSERT for the group):
 ```sql
--- PostgreSQL (RETURNING maps generated PKs back to each instance)
+-- PostgreSQL (RETURNING brings each row back with its generated key)
 INSERT INTO "user" ("name", "email")
 VALUES ($1, $2), ($3, $4), ($5, $6)
-RETURNING "id"
+RETURNING *
 
--- MySQL (LAST_INSERT_ID() returns first ID, then increment for each row)
+-- MySQL (the keys follow LAST_INSERT_ID(); the rows are read back in one SELECT)
 INSERT INTO `user` (`name`, `email`)
-VALUES (?, ?), (?, ?), (?, ?)
+VALUES (?, ?), (?, ?), (?, ?);
+SELECT ... FROM `user` WHERE `id` IN (?, ?, ?)
 ```
 
-After the multi-row INSERT, the buffer writes the generated PKs back to each original instance in order.
+The group is written by `saveMany()`, so each row gets what `save()` would give it: column defaults, transformers, JSON values, the tenant column under `tenant_column`, lifecycle hooks, events and subscribers. The buffer then copies the generated keys and the values the database filled in back to each instance, in order.
 
-Some groups still go through `save()` one row at a time: a single instance, a composite primary key, SQLite, and entities in a `SINGLE_TABLE` or `JOINED` hierarchy -- their rows need the discriminator, and a `JOINED` child spans two tables.
+Some groups still go through `save()` one row at a time: a single instance, a composite primary key, SQLite, and entities in a `SINGLE_TABLE` or `JOINED` hierarchy -- their rows need the discriminator, and a `JOINED` child spans two tables. `saveMany()` also writes one row at a time when an instance already holds its key.
 
 ### Batch UPDATE — Multiple rows in one statement
 
@@ -331,6 +332,8 @@ buf.onFlushEvent("postInsert", (event) => {
 | `postDelete` | After each DELETE | `{ entity, criteria }` |
 
 Events fire on the batch paths too: with `batchInsert` / `batchUpdate` enabled, each entity in a multi-row INSERT or CASE WHEN UPDATE still gets its own `preInsert`/`postInsert` or `preUpdate`/`postUpdate` pair. `preInsert`/`preUpdate` fire before the batch statement is built, so listener mutations are persisted — the same contract as the per-row path.
+
+Entity lifecycle hooks (`@BeforeInsert`, `@BeforeUpdate` and the rest, or defineEntity `hooks`) run whenever the flush writes through `save()` / `saveMany()`: every INSERT, and the UPDATE of a dirty instance unless `batchUpdate` combines it into a CASE WHEN statement, which runs no hooks. A hook runs on a copy that holds the instance's columns, so what it writes to a column is persisted and copied back to the instance, while anything else it sets on `this` stays on the copy.
 
 ### Example: Audit logging
 

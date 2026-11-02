@@ -490,12 +490,16 @@ export class IdentityMapManager {
    * Extract only column values from an instance (no relation properties).
    * This ensures CascadeHandler in em.save() won't fire — WriteBuffer
    * handles cascade directly.
+   *
+   * The copy keeps the instance's prototype: save() runs lifecycle hooks
+   * (`@BeforeInsert`, defineEntity `hooks`) as methods of the object it is
+   * given, and a plain object has none.
    */
   extractColumnData(
     instance: EntityInstance,
     columnNames: string[],
   ): ColumnValueMap {
-    const data: ColumnValueMap = {};
+    const data: ColumnValueMap = Object.create(Object.getPrototypeOf(instance));
     for (const col of columnNames) {
       if (instance[col] !== undefined) data[col] = instance[col];
     }

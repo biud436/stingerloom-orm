@@ -10,6 +10,8 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Fixed
 
+- **WriteBuffer `batchInsert` writes what `save()` writes, and a flush runs the entity's lifecycle hooks.** The batch INSERT on PostgreSQL and MySQL was built from the raw instance values: a column left to its declared default was sent as NULL (a NOT NULL violation), column transformers were skipped, a JSON object was bound as-is (MySQL rejected the row), the tenant column stayed NULL under `tenant_column`, and no hook, event or subscriber ran. The group now goes through `saveMany()`, which reads the rows back with `RETURNING *` on PostgreSQL and one SELECT on MySQL. Separately, every flush path handed `save()` a plain-object copy of the instance, so `@BeforeInsert` / `@BeforeUpdate` and defineEntity `hooks` never ran for persisted or tracked instances; the copy now keeps the instance's prototype. A hook runs on that copy: its column writes are persisted and copied back, anything else it sets stays on the copy.
+
 - **A row of a multi-row INSERT that leaves out a column other rows set gets the column's default.** `saveMany()`, `insertMany()`, `insertManyAndReturn()` and `createInsertBuilder()` name a column once any row of the batch sets it, and the rows that left it out bound NULL there: a NOT NULL column with a `default` failed the whole batch, and a nullable one stored NULL instead of its default, unlike the same rows saved one at a time. Such a row now writes `DEFAULT` on PostgreSQL and MySQL, and on SQLite, which has no `DEFAULT` inside `VALUES`, the declared `default` (NULL when none is declared). An explicit `null` is still written as NULL, and when no row provides any column the rows write every column's default. `batchUpsert()` is unchanged.
 
 ### Documentation

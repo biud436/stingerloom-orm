@@ -187,7 +187,8 @@ export class FlushExecutor {
 
   /**
    * Batch INSERT for multiple entities of the same type.
-   * Groups by entity class, builds multi-row INSERT, writes back generated PKs.
+   * Groups by entity class, inserts each group with saveMany(), writes back
+   * generated PKs.
    */
   async flushPersistsBatched(
     txEm: EntityManager,
@@ -247,22 +248,6 @@ export class FlushExecutor {
         continue;
       }
 
-      // Get table name from entity metadata
-      const entityMeta = Reflect.getMetadata(ENTITY_TOKEN, entityClass);
-      const tableName = entityMeta?.name || entityClass.name;
-      const wrappedTable = this.ctx.wrapTable(tableName);
-
-      // Non-PK columns to insert. columnNames/pkColumns are PROPERTY keys; map
-      // each to its DB column for the SQL identifier (NamingStrategy-aware) while
-      // reading values off the instance by property key.
-      const colMap = new Map(
-        this.idMap.getColumnBindings(entityClass).map(b => [b.prop, b.column]),
-      );
-      const nonPkProps = entries[0].columnNames.filter(
-        c => !entries[0].pkColumns.includes(c),
-      );
-      const wrappedCols = nonPkProps.map(p => this.ctx.wrap(colMap.get(p) ?? p));
-
       // Emit preInsert BEFORE reading values off the instances — a listener
       // may mutate the entity (audit fields etc.), and the per-row path
       // persists such mutations because it fires the event before save().
@@ -270,42 +255,21 @@ export class FlushExecutor {
         await this.emitFlushEvent("preInsert", entry.entity, entry.instance);
       }
 
-      // Build parameter placeholders and values
-      const params: any[] = [];
-      const rowPlaceholders: string[] = [];
-      for (const entry of entries) {
-        const placeholders = nonPkProps.map(() => "?");
-        rowPlaceholders.push(`(${placeholders.join(", ")})`);
-        for (const prop of nonPkProps) {
-          params.push(entry.instance[prop] ?? null);
-        }
-      }
-
-      const sql = `INSERT INTO ${wrappedTable} (${wrappedCols.join(", ")}) VALUES ${rowPlaceholders.join(", ")}`;
-
-      const pkProp = entries[0].pkColumns[0];
-      const pkColumn = colMap.get(pkProp) ?? pkProp;
-      if (this.ctx.isPostgres()) {
-        // PostgreSQL: RETURNING the PK DB column; the returned row is keyed by
-        // the DB column name, so read it there and write it to the property.
-        const returningSql = `${sql} RETURNING ${this.ctx.wrap(pkColumn)}`;
-        const rows = await txEm.query(returningSql, params);
-        if (Array.isArray(rows)) {
-          for (let i = 0; i < entries.length && i < rows.length; i++) {
-            entries[i].instance[pkProp] = (rows[i] as any)[pkColumn];
-          }
-        }
-      } else {
-        // MySQL: LAST_INSERT_ID() returns first auto-increment of batch
-        const queryResult = await txEm.query(sql, params);
-        // Try to extract insertId from query result
-        const insertId =
-          (queryResult as any)?.insertId ??
-          (Array.isArray(queryResult) && (queryResult[0] as any)?.insertId);
-        if (typeof insertId === "number" && insertId > 0) {
-          for (let i = 0; i < entries.length; i++) {
-            entries[i].instance[pkProp] = insertId + i;
-          }
+      // saveMany() builds the multi-row INSERT, so the batch writes what
+      // save() writes for each row: column defaults, transformers, JSON
+      // values, the tenant column, lifecycle hooks, events and subscribers.
+      // It falls back to one row at a time itself where a batch cannot hold
+      // the rows (a key the caller set, a key the database does not generate).
+      const items = entries.map((entry) =>
+        this.idMap.extractColumnData(entry.instance, entry.columnNames),
+      );
+      const saved = await txEm.saveMany(entityClass, items);
+      for (let i = 0; i < entries.length; i++) {
+        const row = saved[i] as EntityInstance | undefined;
+        if (!row) continue;
+        for (const col of entries[i].columnNames) {
+          const v = row[col];
+          if (v !== undefined) entries[i].instance[col] = v;
         }
       }
 
