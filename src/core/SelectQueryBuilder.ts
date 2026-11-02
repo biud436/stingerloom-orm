@@ -2649,8 +2649,18 @@ export class SelectQueryBuilder<T, TResult = T> {
    * ```ts
    * qb.hint("IndexScan(o idx_order_date)")
    * ```
+   *
+   * The text goes into the comment as written, so text holding the comment
+   * terminator (`*` then `/`, which would end the comment and run the rest as
+   * SQL) throws `InvalidQueryError`.
    */
   hint(hintText: string): this {
+    if (hintText.includes("*/")) {
+      throw new InvalidQueryError(
+        `hint() text must not contain "*/": it would close the hint comment and run the rest as SQL (got "${hintText}").`,
+        `Pass only the pg_hint_plan hint, e.g. hint("IndexScan(o idx_order_date)").`,
+      );
+    }
     this.pgHints.push(hintText);
     return this;
   }

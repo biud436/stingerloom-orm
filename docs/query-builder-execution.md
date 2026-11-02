@@ -258,6 +258,8 @@ const orders = await em
 // PostgreSQL: /*+ IndexScan(o idx_order_status) */ SELECT ...
 ```
 
+The hint text is written into the comment as it is, so a hint containing `*/` throws `InvalidQueryError`: it would end the comment and run the rest as SQL.
+
 ## Soft Delete Handling
 
 If your entity has a `@DeletedAt` column, the query builder automatically excludes its soft-deleted rows. The same filter is applied to the other side of a relation join (`leftJoinRelation*` / `innerJoinRelation*`, in the ON clause) and inside the `whereHas()` / `whereNotHas()` / `withCount()` subqueries — an explicit `leftJoin(Entity, alias, on)` keeps the ON clause you wrote. To include soft-deleted rows everywhere:

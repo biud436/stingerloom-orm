@@ -311,9 +311,11 @@ export abstract class MigrationRunner {
     if (migrations) {
       const originalMigrations = this.migrations;
       (this as any).migrations = migrations;
-      const results = await this.runAll();
-      (this as any).migrations = originalMigrations;
-      return results;
+      try {
+        return await this.runAll();
+      } finally {
+        (this as any).migrations = originalMigrations;
+      }
     }
     return this.runAll();
   }

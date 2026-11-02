@@ -109,23 +109,9 @@ export function Transactional(
 
       // ──── REQUIRES_NEW: Always start a fresh transaction ────
       if (propagation === TransactionPropagation.REQUIRES_NEW) {
-        const session = new TransactionSessionManager();
-        await session.connect(connectionName);
-        await session.startTransaction(isolationLevel);
-
-        try {
-          const result = await transactionStorage.run(
-            session,
-            () => originalMethod.apply(this, args),
-          );
-          await session.commit();
-          return result;
-        } catch (error) {
-          await session.rollback();
-          throw error;
-        } finally {
-          await session.close();
-        }
+        return runInNewTransaction(connectionName, isolationLevel, () =>
+          originalMethod.apply(this, args),
+        );
       }
 
       // ──── NESTED: Use savepoint within existing transaction ────
@@ -147,25 +133,43 @@ export function Transactional(
         return originalMethod.apply(this, args);
       }
 
-      const session = new TransactionSessionManager();
-      await session.connect(connectionName);
-      await session.startTransaction(isolationLevel);
-
-      try {
-        const result = await transactionStorage.run(
-          session,
-          () => originalMethod.apply(this, args),
-        );
-        await session.commit();
-        return result;
-      } catch (error) {
-        await session.rollback();
-        throw error;
-      } finally {
-        await session.close();
-      }
+      return runInNewTransaction(connectionName, isolationLevel, () =>
+        originalMethod.apply(this, args),
+      );
     };
 
     return descriptor;
   };
+}
+
+/**
+ * Runs `fn` in a transaction on a connection of its own, committed when `fn`
+ * resolves and rolled back when it throws. The connection goes back to the
+ * pool however it ends — including when BEGIN itself fails, which used to
+ * leave it checked out.
+ */
+async function runInNewTransaction(
+  connectionName: string | undefined,
+  isolationLevel: TRANSACTION_ISOLATION_LEVEL | undefined,
+  fn: () => Promise<unknown>,
+): Promise<unknown> {
+  const session = new TransactionSessionManager();
+  await session.connect(connectionName);
+  try {
+    await session.startTransaction(isolationLevel);
+  } catch (error) {
+    await session.close();
+    throw error;
+  }
+
+  try {
+    const result = await transactionStorage.run(session, fn);
+    await session.commit();
+    return result;
+  } catch (error) {
+    await session.rollback();
+    throw error;
+  } finally {
+    await session.close();
+  }
 }
