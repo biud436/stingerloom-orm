@@ -312,7 +312,8 @@ describe("[Integration] SQLite: inheritance hierarchy relations at runtime", () 
     expect(plain(note)).toMatchObject({
       checkerId: bob.id,
       author: { id: alice.id, name: "alice" },
-      checker: null,
     });
+    // Not loaded, so not on the entity: a null would claim there is no checker.
+    expect("checker" in note).toBe(false);
   });
 });

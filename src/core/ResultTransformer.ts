@@ -528,7 +528,9 @@ export class ResultTransformer implements BaseResultTransformer {
    * objects regardless.
    *
    * `joined` names the relations the query JOINed (see
-   * {@link JoinedRelations}). The others are null without reading the row.
+   * {@link JoinedRelations}). The others are left off the entity, as a read
+   * without them leaves them: a `null` would say the row has no related row,
+   * and saving the entity back would clear its foreign key.
    */
   private fillPropertiesToForeignObject<T>(
     entityClass: MyClassConstructor<T>,
@@ -553,7 +555,7 @@ export class ResultTransformer implements BaseResultTransformer {
       // Build a separate object for the foreign-key data of each ManyToOne relation.
       for (const { getMappingEntity, columnName } of manyToOneMappingMetadata) {
         if (joined && !joined.has(columnName)) {
-          baseEntity[columnName] = null;
+          delete baseEntity[columnName];
           continue;
         }
         const ForeignClass = getMappingEntity() as ClazzType<T>;
@@ -562,10 +564,18 @@ export class ResultTransformer implements BaseResultTransformer {
         const foreignObject = this.createForeignObject();
 
         // Filter the foreign-key columns out of the JOIN result to build the object.
+        let selected = false;
         for (const key in resultSet) {
           if (key.startsWith(prefix)) {
             foreignObject[key.substring(prefix.length)] = resultSet[key];
+            selected = true;
           }
+        }
+        // No column under the prefix: the query did not JOIN this relation
+        // (only a nested level gets here without `joined`).
+        if (!selected) {
+          delete baseEntity[columnName];
+          continue;
         }
 
         baseEntity[columnName] = this.buildJoinedRelation(
@@ -586,7 +596,7 @@ export class ResultTransformer implements BaseResultTransformer {
 
         const propertyKey = rel.propertyKey;
         if (joined && !joined.has(propertyKey)) {
-          baseEntity[propertyKey] = null;
+          delete baseEntity[propertyKey];
           continue;
         }
         const RelatedClass = rel.getRelatedEntity() as ClazzType<any>;
@@ -594,10 +604,16 @@ export class ResultTransformer implements BaseResultTransformer {
         const prefix = this.addSeparatorToColumnName(propertyKey);
         const foreignObject = this.createForeignObject();
 
+        let selected = false;
         for (const key in resultSet) {
           if (key.startsWith(prefix)) {
             foreignObject[key.substring(prefix.length)] = resultSet[key];
+            selected = true;
           }
+        }
+        if (!selected) {
+          delete baseEntity[propertyKey];
+          continue;
         }
 
         baseEntity[propertyKey] = this.buildJoinedRelation(
