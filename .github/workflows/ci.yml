@@ -23,6 +23,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
+        env:
+          # v8 coverage merges every suite's report in the main process, which
+          # outgrew the default heap (JavaScript heap out of memory, exit 134).
+          NODE_OPTIONS: --max-old-space-size=6144
 
   stress:
     name: Stress Tests
