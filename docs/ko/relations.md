@@ -372,7 +372,7 @@ ALTER TABLE "cat" ADD CONSTRAINT "fk_cat_owner_id_a1b2c3d4"
   FOREIGN KEY ("owner_id") REFERENCES "owner" ("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ```
 
-> **2.1 이전에는** PostgreSQL과 MySQL / MariaDB의 `synchronize`가 관계에 무엇을 선언했든 모든 관계 제약을 `ON DELETE NO ACTION ON UPDATE NO ACTION`으로 만들었습니다(SQLite와 `migrate:generate`는 해당 없음). 그렇게 만들어진 제약은 업그레이드 후에도 그대로이니, `information_schema.referential_constraints`로 확인하고 위처럼 다시 만드세요.
+> **3.0 이전에는** PostgreSQL과 MySQL / MariaDB의 `synchronize`가 관계에 무엇을 선언했든 모든 관계 제약을 `ON DELETE NO ACTION ON UPDATE NO ACTION`으로 만들었습니다(SQLite와 `migrate:generate`는 해당 없음). 그렇게 만들어진 제약은 업그레이드 후에도 그대로이니, `information_schema.referential_constraints`로 확인하고 위처럼 다시 만드세요.
 
 ### FK 제약 조건 건너뛰기 (createForeignKeyConstraints)
 
@@ -697,7 +697,7 @@ await em.save(User, { id: user.id, profile: otherProfile });  // 다시 지정
 await em.save(User, { id: user.id, profile: null });          // 키 비우기
 ```
 
-`save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()`, upsert 계열 모두 이 키를 기록하고, 페이로드에 관계가 없으면 저장된 키를 그대로 둡니다. 연관 인스턴스에는 기본 키가 이미 있어야 해요. 역방향 측(아래의 `Profile.user`)에는 컬럼이 없으니 관계는 소유자 쪽에 지정하세요. 2.1 이전에는 어떤 쓰기 메서드도 소유자의 키를 저장하지 않아 컬럼이 `NULL`로 남았고, 섀도 프로퍼티를 넘긴 `updateMany()`만 예외였습니다.
+`save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()`, upsert 계열 모두 이 키를 기록하고, 페이로드에 관계가 없으면 저장된 키를 그대로 둡니다. 연관 인스턴스에는 기본 키가 이미 있어야 해요. 역방향 측(아래의 `Profile.user`)에는 컬럼이 없으니 관계는 소유자 쪽에 지정하세요. 3.0 이전에는 어떤 쓰기 메서드도 소유자의 키를 저장하지 않아 컬럼이 `NULL`로 남았고, 섀도 프로퍼티를 넘긴 `updateMany()`만 예외였습니다.
 
 ### 양방향
 

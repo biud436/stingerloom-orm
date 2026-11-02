@@ -181,9 +181,9 @@ INSERT INTO `t` () VALUES ()
 INSERT INTO "t" DEFAULT VALUES
 ```
 
-`saveMany()` 배치 삽입에서는 멀티 행 `VALUES`가 컬럼 목록 하나를 공유해요. 그래서 컬럼은 **배치의 어떤 항목도 값을 주지 않았을 때만** 생략돼요. 일부 항목만 값을 준 혼합 배치에서는 컬럼이 목록에 남고, 값이 없는 행에는 `NULL`이 바인딩돼요.
+`saveMany()` 배치 삽입에서는 멀티 행 `VALUES`가 컬럼 목록 하나를 공유합니다. 그래서 컬럼은 **배치의 어떤 항목도 값을 주지 않았을 때만** 빠집니다. 일부 항목만 값을 준 혼합 배치에서는 컬럼이 목록에 남고, 그 컬럼을 비워 둔 행에는 컬럼의 기본값이 들어갑니다. 한 행씩 저장했을 때와 같은 결과예요. PostgreSQL과 MySQL은 `DEFAULT`를 쓰고, `VALUES` 안에 `DEFAULT`를 쓸 수 없는 SQLite는 선언된 `default` 값을 씁니다(선언이 없으면 NULL). 값을 `null`로 명시하면 그대로 NULL이 저장됩니다.
 
-`insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`, `batchUpsert()`도 이 배치 규칙을 따르고, `upsert()` / `insertIgnore()`는 단일 행 규칙을 따릅니다. `insertMany()`의 어느 행도 컬럼 값을 하나도 주지 않았다면 전체 컬럼 목록을 그대로 두고 `NULL`을 바인딩합니다. 멀티 행 INSERT에는 이식 가능한 "전부 기본값" 형태가 없기 때문입니다. 2.1 이전의 `insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`는 선언된 컬럼을 전부 나열하고 빠진 값에 `NULL`을 바인딩해서, 이 경로에서는 `DEFAULT`가 적용되지 않았습니다.
+`insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`도 같은 배치 규칙을 따르고, `upsert()` / `insertIgnore()`는 단일 행 규칙을 따릅니다. `batchUpsert()`도 같은 컬럼 목록을 쓰지만, 컬럼을 비워 둔 행에는 `NULL`을 바인딩합니다. `insertMany()`의 어느 행도 컬럼 값을 하나도 주지 않았다면 전체 컬럼 목록을 그대로 두고, 모든 행이 기본값을 씁니다. 3.0 이전의 `insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`는 선언된 컬럼을 전부 나열하고 빠진 값에 `NULL`을 바인딩해서, 이 경로에서는 `DEFAULT`가 적용되지 않았습니다.
 
 ---
 
@@ -199,7 +199,7 @@ INSERT INTO "t" DEFAULT VALUES
 - `@ComputedColumn` 속성 -- 쓰이지는 않지만 조회로 얻은 인스턴스마다 붙어 있습니다;
 - 단일 테이블 상속에서는 판별자 컬럼과 형제 클래스의 컬럼.
 
-그 밖의 키 -- 오타, 컬럼이 되지 못한 DTO 필드, 속성 대신 적은 DB 컬럼명 -- 는 **쓰이지 않습니다**. 2.1 이전에는 아무 말 없이 버려졌어요. 같은 키를 `updateMany()`나 조회에 넘기면 진작부터 `Did you mean` 제안과 함께 거절됐는데도요.
+그 밖의 키 -- 오타, 컬럼이 되지 못한 DTO 필드, 속성 대신 적은 DB 컬럼명 -- 는 **쓰이지 않습니다**. 3.0 이전에는 아무 말 없이 버려졌어요. 같은 키를 `updateMany()`나 조회에 넘기면 진작부터 `Did you mean` 제안과 함께 거절됐는데도요.
 
 ### `unknownWriteKeys` 정책
 
@@ -738,10 +738,10 @@ ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`),
 알아 둘 점은 다음과 같습니다.
 
 - **버전은 올리기만 하고 검사하지 않습니다.** upsert는 마지막에 쓴 값이 이기는 연산이라 `OptimisticLockError`를 던지지 않아요. 대신 upsert 이전 버전을 쥔 `save()`가 나중에 거절되도록 보장합니다. 키만 넘긴 upsert가 soft-delete된 행을 복구하기만 할 때는 `restore()`처럼 버전을 유지합니다. `upsert()` / `batchUpsert()` 페이로드에 넣은 `@Version` 값은 새 행을 삽입할 때만 쓰이고 충돌 시에는 무시되며, 엔티티 클래스당 한 번 경고가 남습니다. 오래된 쓰기를 거절해야 한다면 `save()`를 쓰세요.
-- **관리 컬럼만으로는 갱신이 일어나지 않습니다.** 충돌 대상 말고는 갱신할 사용자 컬럼이 없으면, 문장이 PostgreSQL·SQLite에서는 `DO NOTHING`, MySQL/MariaDB에서는 아무것도 바꾸지 않는 `ON DUPLICATE KEY UPDATE <col> = <col>`로 내려갑니다. 없는 행은 삽입되고, 살아 있는 충돌 행은 버전·타임스탬프까지 그대로 남아요. 예외는 soft-delete된 충돌 행 하나뿐이고, 이 행은 여전히 복구됩니다(`DO UPDATE SET "deletedAt" = NULL WHERE "order"."deletedAt" IS NOT NULL`). 2.1 이전에는 이런 호출이 SQL을 아예 보내지 않고 `{ affected: 0 }`을 돌려줘서, 없는 행조차 삽입되지 않았습니다.
+- **관리 컬럼만으로는 갱신이 일어나지 않습니다.** 충돌 대상 말고는 갱신할 사용자 컬럼이 없으면, 문장이 PostgreSQL·SQLite에서는 `DO NOTHING`, MySQL/MariaDB에서는 아무것도 바꾸지 않는 `ON DUPLICATE KEY UPDATE <col> = <col>`로 내려갑니다. 없는 행은 삽입되고, 살아 있는 충돌 행은 버전·타임스탬프까지 그대로 남아요. 예외는 soft-delete된 충돌 행 하나뿐이고, 이 행은 여전히 복구됩니다(`DO UPDATE SET "deletedAt" = NULL WHERE "order"."deletedAt" IS NOT NULL`). 3.0 이전에는 이런 호출이 SQL을 아예 보내지 않고 `{ affected: 0 }`을 돌려줘서, 없는 행조차 삽입되지 않았습니다.
 - **soft delete와 유니크 키.** 일반 유니크 인덱스라면 삭제된 행도 충돌하고, upsert가 넘긴 값으로 그 행을 복구합니다. soft-delete된 행을 건너뛰는 `updateMany()`와는 다릅니다. 새 행을 만들고 싶다면 부분 유니크 인덱스(`WHERE "deletedAt" IS NULL`, PostgreSQL·SQLite)를 두고 `createInsertBuilder().onConflict(cols, { where })`로 지정하세요. `upsert()`는 부분 인덱스를 지정할 수 없습니다.
 - **INSERT는 항상 시도됩니다.** DB는 충돌을 찾기 전에 NOT NULL을 먼저 검사하므로, 행이 이미 있어도 기본값 없는 NOT NULL 컬럼은 전부 페이로드에 있어야 합니다. 컬럼도 관계도 하나 없는 페이로드는 아무것도 보내지 않고 `{ affected: 0 }`을 돌려줍니다.
-- **관계는 외래 키로 기록됩니다.** `@ManyToOne`과 `@OneToOne` 소유자 측은 `save()`, `insertMany()`와 마찬가지로 연관 인스턴스, 키 값 그대로, `${property}Id` 섀도 프로퍼티 중 어느 형태로 넘겨도 됩니다. 키는 INSERT에 들어가고, 충돌 대상에 속하지 않으면 다른 컬럼처럼 충돌 시에도 갱신됩니다. 페이로드에 없는 관계는 저장된 키를 그대로 둡니다. 충돌 대상은 DB 컬럼명을 받으므로 외래 키 쌍에 걸린 유니크 인덱스는 조인 컬럼으로 지정합니다: `em.upsert(Like, { user, post, weight: 3 }, ["user_id", "post_id"])`. 캐스케이드는 없으니 연관 인스턴스에는 기본 키가 이미 있어야 합니다. 2.1 이전에는 키가 버려져 `NULL`로 저장됐고, 충돌 대상이 외래 키이면 호출할 때마다 행이 하나씩 더 쌓였어요.
+- **관계는 외래 키로 기록됩니다.** `@ManyToOne`과 `@OneToOne` 소유자 측은 `save()`, `insertMany()`와 마찬가지로 연관 인스턴스, 키 값 그대로, `${property}Id` 섀도 프로퍼티 중 어느 형태로 넘겨도 됩니다. 키는 INSERT에 들어가고, 충돌 대상에 속하지 않으면 다른 컬럼처럼 충돌 시에도 갱신됩니다. 페이로드에 없는 관계는 저장된 키를 그대로 둡니다. 충돌 대상은 DB 컬럼명을 받으므로 외래 키 쌍에 걸린 유니크 인덱스는 조인 컬럼으로 지정합니다: `em.upsert(Like, { user, post, weight: 3 }, ["user_id", "post_id"])`. 캐스케이드는 없으니 연관 인스턴스에는 기본 키가 이미 있어야 합니다. 3.0 이전에는 키가 버려져 `NULL`로 저장됐고, 충돌 대상이 외래 키이면 호출할 때마다 행이 하나씩 더 쌓였어요.
 - **JOINED 자식은 거부됩니다.** `upsert()`, `insertIgnore()`, `batchUpsert()`, `insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`는 테이블 하나에만 쓰는데, 테이블별 상속(TPT)의 자식은 두 테이블에 걸쳐 있으므로 `UNSUPPORTED_OPERATION`을 던집니다. `save()`를 쓰세요(`saveMany()`는 이런 자식에서 `save()`로 넘어갑니다).
 - **`insertIgnore()`**도 삽입하는 행에는 같은 값을 채우고, 충돌한 행은 soft-delete 여부와 상관없이 절대 쓰지 않습니다.
 - **`createInsertBuilder()`**도 삽입 행은 같은 방식으로 채우지만, `doUpdate()`는 나열한 컬럼만 대입합니다. 버전 증가, 타임스탬프 갱신, `@DeletedAt` 초기화는 붙지 않아요.

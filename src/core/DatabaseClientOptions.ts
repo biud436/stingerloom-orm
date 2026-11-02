@@ -204,7 +204,7 @@ interface BaseDatabaseClientOptions {
    * - `"throw"`: reject with `InvalidQueryError` before any SQL — the same
    *   error a typo in a read `where` or in `updateMany()` raises.
    *   Recommended for production once the warnings are clean.
-   * - `"ignore"`: drop unknown keys silently (the pre-2.1 behavior).
+   * - `"ignore"`: drop unknown keys silently (the pre-3.0 behavior).
    *
    * `update()` / `updateMany()` always throw on an unknown key in `data` or
    * `where`, regardless of this option. `create()` / `merge()` / `preload()`

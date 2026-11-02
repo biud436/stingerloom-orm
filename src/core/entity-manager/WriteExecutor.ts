@@ -79,6 +79,7 @@ import {
   type EntityFields,
 } from "./entity-access";
 import { restoreOnRollback } from "./rollback-restore";
+import { renderDefaultValue } from "../../dialects/columnDefault";
 
 /**
  * Primary keys bound per `IN (...)` list when a TPT delete or criteria update
@@ -1771,6 +1772,19 @@ export class WriteExecutor {
   }
 
   /**
+   * The value a row of a multi-row INSERT writes for a column the statement
+   * names but the row leaves out: the column's default, which the same row
+   * gets from a single-row INSERT. PostgreSQL and MySQL say DEFAULT. SQLite
+   * has no DEFAULT inside VALUES, so the declared default is written out, or
+   * NULL when none is declared.
+   */
+  private omittedColumnValue(col: ColumnMetadata): unknown {
+    if (!this.ctx.isSqlite()) return raw("DEFAULT");
+    const declared = col.options?.default;
+    return declared === undefined ? null : raw(renderDefaultValue(declared));
+  }
+
+  /**
    * One INSERT row: the declared column values with write transforms applied
    * (`@Column` transformer.to, registered ColumnType transformers, and the
    * mandatory JSON stringify — reads apply transformer.from either way),
@@ -1789,6 +1803,7 @@ export class WriteExecutor {
     const rowValues: RawValue[] = bindParams(
       insertableColumns.map((col) => {
         const value = itemFields[this.ctx.propKey(col)];
+        if (value === undefined) return this.omittedColumnValue(col);
         // A raw `sql` fragment stands for an expression the database
         // evaluates (NOW(), a sequence call), so it is spliced as written.
         // Running it through the column transformer would serialize the
@@ -1851,7 +1866,8 @@ export class WriteExecutor {
    * Generated and auto-managed columns are always named so their values can
    * be filled in; a plain column that **no** item provides is left out so the
    * database DEFAULT applies (#368). Mixed batches keep one shared column
-   * set, so an item missing that column simply binds NULL there.
+   * set, and an item missing that column writes its default there
+   * ({@link omittedColumnValue}).
    */
   private selectBatchInsertColumns<T>(
     entity: ClazzType<T>,
@@ -2244,13 +2260,13 @@ export class WriteExecutor {
    * batch would otherwise bind NULL over the sequence), and any other column
    * when at least one item provides it — a column no item provides is left
    * out so the DB DEFAULT applies, as in saveMany() (#368). Items missing a
-   * named column bind NULL.
+   * named column write its default ({@link omittedColumnValue}).
    *
    * Runs after {@link applyBulkInsertDefaults}, so the tenant column and the
    * seeded managed columns always count as provided. When nothing at all is
    * provided — no declared column and no `@ManyToOne` key — the full declared
-   * column set is kept, binding NULL: a multi-row INSERT has no portable
-   * all-defaults form.
+   * column set is kept, each row writing every column's default: a multi-row
+   * INSERT has no portable all-defaults form.
    */
   private selectBulkInsertColumns<T>(
     entity: ClazzType<T>,
