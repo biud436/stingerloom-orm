@@ -755,18 +755,22 @@ export class MultiTenantEntityManager {
 
   /**
    * Apply pending plugins, listeners, and subscribers to a tenant EM. Called
-   * on the first `resolve()` for that tenant so events registered before the
-   * tenant existed still fire on it.
+   * on the first `resolve()` that returns that EM so events registered before
+   * it existed still fire on it.
+   *
+   * Tracked per EntityManager, not per tenant id: a tenant released by the
+   * idle TTL or `getRouter().release()` gets a new EntityManager the next
+   * time it is resolved, and that one needs the broadcasts too.
    */
-  private appliedTo = new Set<string>();
+  private appliedTo = new WeakSet<EntityManager>();
   private applyBroadcastsTo(tenantId: string, em?: EntityManager): void {
-    if (this.appliedTo.has(tenantId)) return;
     if (!em) {
       const found = this.router?.getAll().find((e) => e.tenantId === tenantId);
       if (!found) return;
       em = found.em;
     }
-    this.appliedTo.add(tenantId);
+    if (this.appliedTo.has(em)) return;
+    this.appliedTo.add(em);
     for (const plugin of this.installedPlugins) em.extend(plugin);
     for (const { event, listener } of this.broadcastListeners) em.on(event, listener);
     for (const sub of this.broadcastSubscribers) em.addSubscriber(sub);
