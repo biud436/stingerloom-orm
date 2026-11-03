@@ -19,7 +19,8 @@ export class MetadataLayerRegistry {
   private layers: Map<string, MetadataLayer> = new Map();
   private currentContext: string = "public";
 
-  // resolveAll() cache (#80) — bounded to prevent memory leak in multi-tenant
+  // resolveAll() cache (#80): one entry for "public" and one per context
+  // whose layer has entries of its own, at most MAX_CACHE_SIZE in all.
   private static readonly MAX_CACHE_SIZE = 1000;
   private resolveAllCache: Map<string, Map<string, any>> = new Map();
   private dirtyContexts: Set<string> = new Set(["public"]);
@@ -209,7 +210,14 @@ export class MetadataLayerRegistry {
    * The result is cached based on a dirty flag (#80).
    */
   resolveAll<T>(): Map<string, T> {
-    const ctx = this.getContext();
+    // A context whose layer holds nothing (or that has no layer) sees exactly
+    // the public layer, so it shares the public entry: tenant ids that only
+    // pass through MetadataContext.run() add nothing to the cache.
+    const current = this.getContext();
+    const ctx =
+      current !== "public" && (this.layers.get(current)?.size() ?? 0) > 0
+        ? current
+        : "public";
 
     // Cache hit: return the cached result when the context is not dirty
     if (!this.dirtyContexts.has(ctx)) {
@@ -237,11 +245,12 @@ export class MetadataLayerRegistry {
       }
     }
 
-    // Evict oldest entries if cache exceeds max size
-    if (this.resolveAllCache.size >= MetadataLayerRegistry.MAX_CACHE_SIZE) {
-      const firstKey = this.resolveAllCache.keys().next().value;
-      if (firstKey !== undefined && firstKey !== "public") {
-        this.resolveAllCache.delete(firstKey);
+    // At the bound, drop the oldest entries other than "public" — which is
+    // usually the oldest and is kept — to make room for a new one.
+    if (!this.resolveAllCache.has(ctx)) {
+      for (const key of this.resolveAllCache.keys()) {
+        if (this.resolveAllCache.size < MetadataLayerRegistry.MAX_CACHE_SIZE) break;
+        if (key !== "public") this.resolveAllCache.delete(key);
       }
     }
 
