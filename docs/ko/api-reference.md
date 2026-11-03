@@ -732,6 +732,7 @@ interface ReplicationConfig {
   master: ReplicationNodeConfig;
   slaves: ReplicationNodeConfig[];
   healthCheck?: HealthCheckConfig;
+  strategy?: "round-robin" | "random"; // 기본값: "round-robin"
 }
 
 interface HealthCheckConfig {
@@ -748,6 +749,7 @@ interface ReplicationNodeConfig {
   username: string;
   password: string;
   database: string;
+  ssl?: boolean | SslOptions; // 기본값: 연결의 ssl
 }
 ```
 

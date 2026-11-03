@@ -440,13 +440,16 @@ await em.register({
 });
 ```
 
+Read replicas work with PostgreSQL, MySQL and MariaDB. `register()` rejects `replication` on SQLite.
+
 ### How routing works
 
 Stingerloom automatically decides which server to use:
 
 - **Writes** (`save`, `delete`, `update`, `insertMany`, `deleteMany`, `upsert`) always go to the master.
 - **Reads** (`find`, `findOne`, `findWithCursor`, `count`, `explain`) are distributed across slaves using round-robin (replica1, then replica2, then replica1, and so on).
-- **Failover:** If all slaves fail, reads automatically fall back to the master. Your application keeps working, just without the read scaling benefit.
+- **Connections:** Each node gets one connection pool, sized by the same `pool` options as the main pool. The first read routed to a node opens its pool, later reads share it, and `propagateShutdown()` closes it. A node takes the connection's options with its own host, port, credentials and database, and its own `ssl` when it sets one.
+- **Failover:** A slave leaves the rotation only when it fails its [health checks](#replica-health-checks), so turn them on in production. When no healthy slave is left, reads go to the master: your application keeps working, just without the read scaling benefit. Without health checks, a read routed to a slave that is down fails.
 
 ### Understanding replication lag
 
@@ -509,7 +512,7 @@ await em.register({
 
 When a replica fails the health check `failureThreshold` times in a row, it is removed from the round-robin rotation. Reads automatically fall back to remaining healthy replicas or the master. When the failed replica passes `recoveryThreshold` consecutive checks, it is added back.
 
-Health checks are stopped automatically during `propagateShutdown()`.
+Each check runs `query` on a connection from the node's pool. A check still waiting on a slow node is not overlapped by the next one, so the thresholds count consecutive checks. `propagateShutdown()` stops the checks.
 
 ---
 

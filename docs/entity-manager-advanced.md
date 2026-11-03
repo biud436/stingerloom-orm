@@ -480,7 +480,7 @@ Here is what happens internally, in order:
 2. **Shutdown plugins** in reverse installation order (LIFO) -- If you installed plugins A, then B, then C, they shut down in order C, B, A. This respects dependencies (a plugin that depends on another shuts down before its dependency).
 3. **Clear** event listeners, subscribers, and dirty entity tracking -- Removes all registered `on()` listeners and subscriber instances to prevent memory leaks.
 4. **Reset** the query tracker -- Clears accumulated query logs and statistics.
-5. **Shutdown** the replication router -- Stops health checks for read replicas.
+5. **Shutdown** the replication router -- Stops health checks for read replicas and closes their connection pools.
 6. **Close connection pool** (if `closeConnections: true`) -- Terminates all database connections in the pool.
 
 ### Real-world NestJS scenario

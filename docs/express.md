@@ -849,8 +849,8 @@ await em.findOne(User, { where: { id }, useMaster: true });
 
 `useMaster` is also available on `findWithPage` and `findWithCursor` options.
 
-::: warning Replica reads open a fresh connection per query
-The replica path constructs a new connector and connects per read session rather than drawing from a cached pool, so each replica-routed query pays connect and disconnect cost. It is a real feature with a real trade-off — measure before routing a hot endpoint through it. Replication is also wired to the `"default"` connection only, so it does not compose with named connections.
+::: tip One pool per replica
+Each replica gets one connection pool, opened by the first read routed to it and shared by every later read; `propagateShutdown()` closes them. Replication works on a named connection too: its replicas take that connection's options. A replica that is down keeps failing the reads routed to it until a [health check](./configuration.md#replica-health-checks) takes it out of the rotation, so set `healthCheck` in production.
 :::
 
 ## Multiple databases

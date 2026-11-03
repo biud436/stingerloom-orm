@@ -440,13 +440,16 @@ await em.register({
 });
 ```
 
+읽기 레플리카는 PostgreSQL, MySQL, MariaDB에서 동작합니다. SQLite에 `replication`을 넘기면 `register()`가 거부합니다.
+
 ### 라우팅 방식
 
 Stingerloom이 자동으로 어떤 서버를 쓸지 결정해요:
 
 - **쓰기** (`save`, `delete`, `update`, `insertMany`, `deleteMany`, `upsert`)는 항상 마스터로 가요.
 - **읽기** (`find`, `findOne`, `findWithCursor`, `count`, `explain`)는 라운드 로빈으로 슬레이브에 분산돼요 (replica1, 그다음 replica2, 다시 replica1, ...).
-- **페일오버:** 모든 슬레이브가 죽으면 읽기가 자동으로 마스터로 폴백돼요. 읽기 확장 이점은 없지만 앱은 계속 동작해요.
+- **커넥션:** 노드마다 커넥션 풀이 하나씩 생기고, 크기는 메인 풀과 같은 `pool` 옵션을 따릅니다. 노드로 가는 첫 읽기가 풀을 열고, 이후 읽기는 그 풀을 함께 쓰며, `propagateShutdown()`이 닫습니다. 노드는 연결 옵션을 그대로 받되 호스트·포트·계정·데이터베이스는 자기 값을 쓰고, `ssl`을 지정했다면 그것도 자기 값을 씁니다.
+- **페일오버:** 슬레이브는 [헬스 체크](#replica-health-checks)에 실패했을 때만 로테이션에서 빠지므로 프로덕션에서는 헬스 체크를 켜 두세요. 정상 슬레이브가 하나도 남지 않으면 읽기는 마스터로 갑니다. 읽기 확장 이점은 없지만 앱은 계속 동작해요. 헬스 체크를 켜지 않으면 다운된 슬레이브로 라우팅된 읽기는 그대로 실패합니다.
 
 ### 복제 지연 이해
 
@@ -477,7 +480,7 @@ const user = await em.findOne(User, {
 
 `useMaster`는 아껴서 쓰세요. 모든 읽기에 `useMaster`를 붙이면 레플리카를 둔 의미가 없어져요.
 
-### 레플리카 헬스 체크
+### 레플리카 헬스 체크 {#replica-health-checks}
 
 프로덕션에서 레플리카는 다운되거나 지연될 수 있어요. Stingerloom의 `ReplicationRouter`는 비정상 레플리카를 자동으로 로테이션에서 제외하고, 복구되면 다시 추가하는 자동 헬스 모니터링을 지원해요.
 
@@ -509,7 +512,7 @@ await em.register({
 
 레플리카가 `failureThreshold`만큼 연속으로 헬스 체크에 실패하면 라운드 로빈 로테이션에서 제외돼요. 읽기는 자동으로 남은 정상 레플리카 또는 마스터로 폴백해요. 실패한 레플리카가 `recoveryThreshold`만큼 연속으로 체크를 통과하면 다시 추가돼요.
 
-헬스 체크는 `propagateShutdown()` 중에 자동으로 중지돼요.
+체크는 노드 풀에서 꺼낸 커넥션으로 `query`를 실행합니다. 느린 노드를 기다리는 체크가 끝나기 전에는 다음 체크를 겹쳐 시작하지 않으므로, 임계값은 연속된 체크 횟수를 셉니다. `propagateShutdown()`이 헬스 체크를 중지합니다.
 
 ---
 

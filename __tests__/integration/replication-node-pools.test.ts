@@ -2,14 +2,19 @@
  * Read replicas on a real PostgreSQL / MySQL (MariaDB): each node gets one
  * connection pool that every read routed to it shares, propagateShutdown()
  * closes those pools, and the configured health checks take a node that
- * cannot be reached out of the rotation. The replica nodes point at the
- * test server itself.
+ * cannot be reached out of the rotation, also on a named connection. The
+ * replica nodes point at the test server itself.
  */
 
 import "reflect-metadata";
-import { createTestConnection, dropTestTable, type TestConnectionResult } from "./helpers/test-connection";
+import {
+  createTestConnection,
+  dropTestTable,
+  resetMetadata,
+  type TestConnectionResult,
+} from "./helpers/test-connection";
 import { getTestDrivers, type TestDriverConfig } from "./helpers/driver-config";
-import { Entity, Column, PrimaryGeneratedColumn } from "../../src";
+import { Entity, Column, PrimaryGeneratedColumn, EntityManager } from "../../src";
 import type { ReplicationNodeConfig } from "../../src/dialects/ReplicationRouter";
 import { PostgresConnector } from "../../src/dialects/postgres/PostgresConnector";
 import { MySqlConnector } from "../../src/dialects/mysql/MySqlConnector";
@@ -46,6 +51,16 @@ describe.each(getTestDrivers())(
     let conn: TestConnectionResult | undefined;
     let Note: new () => NoteRow;
 
+    function defineNote() {
+      @Entity({ name: table })
+      class ReplicaNote {
+        @PrimaryGeneratedColumn() id!: number;
+        @Column({ type: "varchar", length: 40 }) body!: string;
+      }
+      Note = ReplicaNote;
+      return { entities: [ReplicaNote] };
+    }
+
     async function connectWithReplication(slaves: ReplicationNodeConfig[], healthCheck?: object) {
       conn = await createTestConnection(
         {
@@ -54,15 +69,7 @@ describe.each(getTestDrivers())(
           logging: false,
           replication: { master: nodeOf(options), slaves, ...(healthCheck ? { healthCheck } : {}) },
         } as any,
-        () => {
-          @Entity({ name: table })
-          class ReplicaNote {
-            @PrimaryGeneratedColumn() id!: number;
-            @Column({ type: "varchar", length: 40 }) body!: string;
-          }
-          Note = ReplicaNote;
-          return { entities: [ReplicaNote] };
-        },
+        defineNote,
       );
       await conn.em.save(Note, { body: "first" });
       return conn.em;
@@ -108,6 +115,35 @@ describe.each(getTestDrivers())(
 
       for (let i = 0; i < 6; i++) {
         expect((await em.find(Note)).map((row) => row.body)).toEqual(["first"]);
+      }
+    }, 60000);
+
+    it("reads through the replica pools of a named connection", async () => {
+      // No "default" connection exists here: the replica pools must take
+      // the named connection's options.
+      resetMetadata();
+      const { entities } = defineNote();
+      const em = new EntityManager();
+      await em.register(
+        {
+          ...options,
+          synchronize: true,
+          logging: false,
+          entities,
+          replication: { master: nodeOf(options), slaves: [nodeOf(options)] },
+        } as any,
+        "replica_named",
+      );
+      try {
+        await em.save(Note, { body: "named" });
+        for (let i = 0; i < 3; i++) {
+          expect((await em.find(Note)).map((row) => row.body)).toEqual(["named"]);
+        }
+      } finally {
+        const quote = type === "postgres" ? `"` : "`";
+        await em.query(`DROP TABLE IF EXISTS ${quote}${table}${quote}`);
+        await em.propagateShutdown({ closeConnections: true });
+        resetMetadata();
       }
     }, 60000);
   },

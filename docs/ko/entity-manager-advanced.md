@@ -478,7 +478,7 @@ if (!allCompleted) {
 2. **플러그인 종료** (설치 역순, LIFO) -- A, B, C 순서로 설치했다면 C, B, A 순서로 종료돼요. 의존성을 존중해요.
 3. **이벤트 리스너, 구독자, dirty entity 추적 정리** -- 등록된 모든 `on()` 리스너와 구독자 인스턴스를 제거해서 메모리 누수를 방지해요.
 4. **쿼리 트래커 초기화** -- 누적된 쿼리 로그와 통계를 지워요.
-5. **Replication router 종료** -- Read replica 헬스 체크를 중지해요.
+5. **Replication router 종료** -- Read replica 헬스 체크를 중지하고 레플리카 커넥션 풀을 닫습니다.
 6. **커넥션 풀 종료** (`closeConnections: true`일 때) -- 풀의 모든 DB 연결을 종료해요.
 
 ### 실전 NestJS 시나리오
