@@ -392,6 +392,7 @@ export class EntityManager implements BaseEntityManager {
     },
     warnIfRawQueryBypassesTenant: () => this.warnIfRawQueryBypassesTenant(),
     getReadNode: (u) => this.getReadNode(u),
+    connectToReadNode: (session, node) => this.replication.connectSession(session, node),
     getNameStrategy: (c) => this.getNameStrategy(c),
     resolveSelectColumns: (s) => this.resolveSelectColumns(s),
     markDirty: (e) => {
@@ -506,7 +507,7 @@ export class EntityManager implements BaseEntityManager {
     },
     registerEntities: () => this.schemaRegistrar.registerEntities(),
     configureTenantScope: (options) => this.tenantScope.configure(options),
-    initializeReplication: (config) => this.replication.initialize(config),
+    initializeReplication: (config, options) => this.replication.initialize(config, options),
     installPlugin: (plugin) => {
       this.extend(plugin);
     },

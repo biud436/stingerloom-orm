@@ -169,6 +169,66 @@ describe("TransactionSessionManager", () => {
       dsCreate.mockRejectedValueOnce(new Error("fail"));
       await expect(session.connectToNode(nodeConfig)).rejects.toThrow(DatabaseConnectionFailedError);
     });
+
+    function lastMySqlConnector(): { connect: jest.Mock; close: jest.Mock } {
+      const { MySqlConnector } = require("../../src/dialects/mysql/MySqlConnector");
+      const results = (MySqlConnector as jest.Mock).mock.results;
+      return results[results.length - 1].value;
+    }
+
+    it("ends the pool it opened when the session closes", async () => {
+      await session.connectToNode(nodeConfig);
+      const connector = lastMySqlConnector();
+      expect(connector.close).not.toHaveBeenCalled();
+
+      await session.close();
+
+      expect(dsClose).toHaveBeenCalledTimes(1);
+      expect(connector.close).toHaveBeenCalledTimes(1);
+    });
+
+    it("ends the pool it opened when no connection can be checked out", async () => {
+      dsCreate.mockRejectedValueOnce(new Error("fail"));
+      await expect(session.connectToNode(nodeConfig)).rejects.toThrow(DatabaseConnectionFailedError);
+
+      expect(lastMySqlConnector().close).toHaveBeenCalledTimes(1);
+    });
+
+    it("connects with the node's own ssl setting", async () => {
+      await session.connectToNode({ ...nodeConfig, ssl: { rejectUnauthorized: false } });
+
+      expect(lastMySqlConnector().connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          host: "replica.example.com",
+          username: "reader",
+          ssl: { rejectUnauthorized: false },
+        }),
+      );
+    });
+  });
+
+  // ─── connectWith() ─────────────────────────────────────────────
+
+  describe("connectWith()", () => {
+    it("checks a connection out of the given pool and leaves the pool open on close", async () => {
+      const pool = { close: jest.fn().mockResolvedValue(undefined) } as any;
+
+      await session.connectWith(pool, "mysql");
+      await session.close();
+
+      expect(MySqlDataSource).toHaveBeenCalledWith(pool);
+      expect(dsCreate).toHaveBeenCalledTimes(1);
+      expect(dsClose).toHaveBeenCalledTimes(1);
+      expect(pool.close).not.toHaveBeenCalled();
+    });
+
+    it("throws DatabaseConnectionFailedError when no connection can be checked out", async () => {
+      dsCreate.mockRejectedValueOnce(new Error("pool exhausted"));
+      const pool = { close: jest.fn() } as any;
+
+      await expect(session.connectWith(pool, "mysql")).rejects.toThrow(DatabaseConnectionFailedError);
+      expect(pool.close).not.toHaveBeenCalled();
+    });
   });
 
   // ─── query() ───────────────────────────────────────────────────

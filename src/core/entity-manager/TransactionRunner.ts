@@ -65,7 +65,7 @@ export class TransactionRunner {
     let committed = false;
     try {
       if (readNodeOverride) {
-        await session.connectToNode(readNodeOverride);
+        await this.ctx.connectToReadNode(session, readNodeOverride);
       } else {
         await session.connect(
           txOptions?.connectionName ?? this.ctx.getConnectionName(),
@@ -206,7 +206,7 @@ export class TransactionRunner {
     const session = new TransactionSessionManager();
     try {
       if (readNodeOverride) {
-        await session.connectToNode(readNodeOverride);
+        await this.ctx.connectToReadNode(session, readNodeOverride);
       } else {
         await session.connect(this.ctx.getConnectionName());
       }

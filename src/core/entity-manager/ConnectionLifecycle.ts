@@ -47,14 +47,18 @@ export interface ConnectionLifecycleHost {
   useNamingStrategy(strategy: NamingStrategy): void;
   registerEntities(): Promise<void>;
   configureTenantScope(options: DatabaseClientOptions): void;
-  initializeReplication(config: NonNullable<DatabaseClientOptions["replication"]>): void;
+  initializeReplication(
+    config: NonNullable<DatabaseClientOptions["replication"]>,
+    options: DatabaseClientOptions,
+  ): void;
   installPlugin(plugin: StingerloomPlugin): void;
   getQueryTracker(): QueryTracker | null;
   /** Plugin shutdown in reverse installation order (LIFO). */
   shutdownPlugins(): Promise<void>;
   /** Drops event listeners, subscribers, dirty sets and warn-once caches. */
   clearRuntimeState(): void;
-  shutdownReplication(): void;
+  /** Stops health checks and closes the replica node pools. */
+  shutdownReplication(): Promise<void>;
 }
 
 /**
@@ -227,7 +231,7 @@ export class ConnectionLifecycle {
 
     // Initialize ReplicationRouter
     if (replication) {
-      this.host.initializeReplication(replication);
+      this.host.initializeReplication(replication, databaseClientOptions);
     }
   }
 
@@ -336,8 +340,8 @@ export class ConnectionLifecycle {
     queryTracker?.reset();
     this.host.setQueryTracker(null);
 
-    // 5. Clean up ReplicationRouter
-    this.host.shutdownReplication();
+    // 5. Clean up ReplicationRouter and close the replica node pools
+    await this.host.shutdownReplication();
 
     // 6. Close the connection pool (when requested)
     if (closeConnections) {

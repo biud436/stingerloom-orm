@@ -116,8 +116,16 @@ export class ReplicationRouter {
     this.healthCheckFn = fn;
     const intervalMs = this.healthCheckConfig.intervalMs ?? 5000;
 
+    // A cycle still waiting on a slow node is not overlapped by the next
+    // tick: each slave gets one check at a time, so its counters count
+    // consecutive checks.
+    let running = false;
     this.healthCheckTimer = setInterval(() => {
-      void this.runHealthChecks();
+      if (running) return;
+      running = true;
+      void this.runHealthChecks().finally(() => {
+        running = false;
+      });
     }, intervalMs);
     // Don't let the health-check timer keep the Node process alive on its own.
     this.healthCheckTimer.unref?.();
