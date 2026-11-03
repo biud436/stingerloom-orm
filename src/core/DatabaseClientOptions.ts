@@ -229,9 +229,12 @@ interface BaseDatabaseClientOptions {
   retry?: RetryOptions;
 
   /**
-   * Read replica (read/write split) configuration.
-   * When set, reads route to slaves and writes to the master.
-   * On slave failure, traffic automatically falls back to the master.
+   * Read replica (read/write split) configuration (PostgreSQL, MySQL and
+   * MariaDB). When set, reads route to slaves and writes to the master.
+   * Each node gets one connection pool, opened by the first read routed to
+   * it and closed by `propagateShutdown()`. With `healthCheck` enabled, a
+   * slave that fails its checks leaves the rotation, and reads fall back to
+   * the master when none is left.
    */
   replication?: ReplicationConfig;
 
@@ -743,6 +746,11 @@ export function validateDatabaseClientOptions(
     errors.push(`'database' must not be empty for ${options.type}.`);
   }
   if (!options.entities) errors.push("'entities' is required.");
+  if (options.type === "sqlite" && values.replication != null) {
+    errors.push(
+      "'replication' is not supported for sqlite: read replicas route to PostgreSQL, MySQL or MariaDB nodes.",
+    );
+  }
   if (isServer) {
     if (!options.host) errors.push(`'host' is required for ${options.type}.`);
     for (const key of ["port", "username", "password"] as const) {

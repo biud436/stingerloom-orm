@@ -94,6 +94,7 @@ describe("connection option values", () => {
     ["no replication slaves", { replication: { master: node, slaves: [] } }, "'replication.slaves' must not be empty."],
     ["a replica without a database", { replication: { master: node, slaves: [{ ...node, database: undefined }] } }, "'replication.slaves[0].database' is required."],
     ["a health check without enabled", { replication: { master: node, slaves: [node], healthCheck: { intervalMs: 1000 } } }, "'replication.healthCheck.enabled' is required."],
+    ["replication on sqlite", { replication: { master: node, slaves: [node] } }, "'replication' is not supported for sqlite"],
     ["a type typo", { type: "postgresql" }, `Did you mean "postgres"?`],
   ])("rejects %s", (_label, extra, expected) => {
     expect(problemsWith(extra)).toContain(expected);

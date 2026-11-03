@@ -10,6 +10,7 @@ import { IQueryEngine } from "./IQueryEngine";
 import { TRANSACTION_ISOLATION_LEVEL } from "./IsolationLevel";
 import { Exception } from "../errors";
 import { ReplicationNodeConfig } from "./ReplicationRouter";
+import { connectReplicationNode } from "./connectReplicationNode";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { validateSavepointName } from "../utils/validateSavepointName";
@@ -23,6 +24,8 @@ import type { DriverQueryOptions } from "../types/DriverQueryOptions";
 export class TransactionSessionManager extends IQueryEngine {
   private connection?: IConnector;
   private dataSource?: IDataSource;
+  /** The pool {@link connectToNode} opened, which {@link close} ends. */
+  private ownedConnector?: IConnector;
   private readonly logger: Logger = new Logger(TransactionSessionManager.name);
   private transactionEndCallbacks: Array<
     (committed: boolean) => void | Promise<void>
@@ -86,48 +89,60 @@ export class TransactionSessionManager extends IQueryEngine {
   }
 
   /**
-   * Creates a dedicated connection to the specified replication node.
-   * Used when connecting directly to a slave node for Read Replica support.
+   * Checks a connection out of `connector`, a pool the caller owns.
+   * {@link close} returns the connection to it and leaves the pool open.
+   *
+   * @param connector The pool to take the connection from
+   * @param dbType The database type of that pool
+   * @throws {DatabaseConnectionFailedError} When no connection can be acquired
+   */
+  public async connectWith(connector: IConnector, dbType: string): Promise<void> {
+    try {
+      this.connection = connector;
+      this.dataSource = await this.createDataSource(dbType, connector);
+      await this.dataSource.createConnection();
+    } catch (error: unknown) {
+      throw new DatabaseConnectionFailedError(error);
+    }
+  }
+
+  /**
+   * Opens a pool of its own to the given replication node, with the default
+   * connection's options, and checks a connection out of it. {@link close}
+   * ends that pool. EntityManager reads do not use this: they share one
+   * pool per node for the manager's lifetime.
    *
    * @param nodeConfig Configuration of the node to connect to
    * @throws {DatabaseConnectionFailedError} When the connection fails
    */
   public async connectToNode(nodeConfig: ReplicationNodeConfig): Promise<void> {
-    let connector: IConnector | undefined;
     try {
-      const dbType = DatabaseClient.getInstance().type;
-      const options = DatabaseClient.getInstance().getOptions();
-
-      if (dbType === "postgres") {
-        const { PostgresConnector } = await import(
-          "./postgres/PostgresConnector"
-        );
-        connector = new PostgresConnector();
-      } else {
-        // mysql, mariadb
-        const { MySqlConnector } = await import("./mysql/MySqlConnector");
-        connector = new MySqlConnector();
-      }
-
-      // Connect using the node config (overrides host/port/username/password/database from the original options)
-      await connector.connect({
-        ...options,
-        host: nodeConfig.host,
-        port: nodeConfig.port,
-        username: nodeConfig.username,
-        password: nodeConfig.password,
-        database: nodeConfig.database,
-      });
+      const client = DatabaseClient.getInstance();
+      const dbType = client.type;
+      const connector = await connectReplicationNode(
+        dbType,
+        client.getOptions(),
+        nodeConfig,
+      );
+      this.ownedConnector = connector;
 
       this.connection = connector;
-      this.dataSource = await this.createDataSource(dbType, this.connection);
-
+      this.dataSource = await this.createDataSource(dbType, connector);
       await this.dataSource.createConnection();
     } catch (error: unknown) {
-      if (connector && connector !== this.connection) {
-        try { await connector.close(); } catch { /* ignore */ }
-      }
+      await this.closeOwnedConnector();
       throw new DatabaseConnectionFailedError(error);
+    }
+  }
+
+  private async closeOwnedConnector(): Promise<void> {
+    const connector = this.ownedConnector;
+    this.ownedConnector = undefined;
+    if (!connector) return;
+    try {
+      await connector.close();
+    } catch (error) {
+      this.logger.warn(`failed to close the replication node pool: ${error}`);
     }
   }
 
@@ -344,6 +359,10 @@ export class TransactionSessionManager extends IQueryEngine {
       throw new DatabaseNotConnectedError();
     }
 
-    await this.dataSource?.close();
+    try {
+      await this.dataSource?.close();
+    } finally {
+      await this.closeOwnedConnector();
+    }
   }
 }

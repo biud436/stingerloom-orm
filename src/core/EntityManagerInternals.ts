@@ -114,6 +114,11 @@ export interface EntityManagerInternals {
   /** Warns once per call site when raw SQL bypasses tenant-column scoping. */
   warnIfRawQueryBypassesTenant(): void;
   getReadNode(useMaster?: boolean): ReplicationNodeConfig | null;
+  /** Checks a connection to `node` out of the manager's pool for that node. */
+  connectToReadNode(
+    session: TransactionSessionManager,
+    node: ReplicationNodeConfig,
+  ): Promise<void>;
   getEntities(): ClazzType<any>[];
   getNameStrategy<T>(clazz: ClazzType<T>): string;
   resolveSelectColumns<T>(select: ISelectOption<T>): string[];
