@@ -1834,6 +1834,10 @@ export class EntityManager implements BaseEntityManager {
    * Inserts a row, or updates the existing row when it conflicts on the
    * primary key (or `conflictColumns`).
    *
+   * `conflictColumns` takes property keys (`@Column` properties and FK
+   * shadow properties such as `userId`) or DB column names; an unknown name
+   * throws `InvalidQueryError` before anything runs.
+   *
    * Dialect-portable: emits `INSERT … ON DUPLICATE KEY UPDATE` on
    * MySQL/MariaDB and `INSERT … ON CONFLICT … DO UPDATE` on
    * PostgreSQL/SQLite.

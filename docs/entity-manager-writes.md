@@ -622,7 +622,7 @@ The key phrase is `ON CONFLICT ... DO UPDATE` (PostgreSQL) or `ON DUPLICATE KEY 
 
 ### By unique column
 
-Pass an array of column names as the third argument to specify the conflict target:
+Pass the conflict target as the third argument. Name each column by its property key, as in the payload, or by its DB column name:
 
 ```typescript
 await em.upsert(User, {
@@ -655,6 +655,8 @@ The "conflict columns" tell the database which uniqueness constraint to check. I
 ::: info
 The conflict columns (third argument) must have a unique constraint or be the primary key. Otherwise, the database will reject the query. In PostgreSQL, you will get: `there is no unique or exclusion constraint matching the ON CONFLICT specification`.
 :::
+
+A name that is neither a property key nor a column of the entity throws `InvalidQueryError` (`ORM_INVALID_QUERY`) naming the closest column, before anything is sent. Each entry used to reach the database as written, so under `SnakeNamingStrategy` the property name `userEmail` failed with the driver's unknown-column error, and on MySQL, whose statement names no conflict target, a misspelled name went unnoticed.
 
 ### MySQL 8.0.19+: the proposed row through a row alias
 
@@ -695,7 +697,7 @@ VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)
 ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `loginCount` = VALUES(`loginCount`)
 ```
 
-The optional third argument specifies the conflict columns. If omitted, the primary key is used.
+The optional third argument specifies the conflict columns, named as for `upsert()`. If omitted, the primary key is used.
 
 ### Managed columns on conflict
 
@@ -741,7 +743,7 @@ Things to know:
 - **Managed columns never cause an update on their own.** When nothing of yours is left to update besides the conflict target, the statement degrades to `DO NOTHING` on PostgreSQL/SQLite and to a no-op `ON DUPLICATE KEY UPDATE <col> = <col>` on MySQL/MariaDB: a missing row is inserted, a live conflicting row -- version and timestamps included -- is left alone. The one exception is a soft-deleted conflicting row, which is still restored (`DO UPDATE SET "deletedAt" = NULL WHERE "order"."deletedAt" IS NOT NULL`). Before 3.0 such a call returned `{ affected: 0 }` without sending any SQL, so the missing row was not inserted either.
 - **Soft delete and unique keys.** With an ordinary unique index a trashed row still conflicts, and the upsert restores it with your values -- unlike `updateMany()`, which skips soft-deleted rows. If you want a new row instead, use a partial unique index (`WHERE "deletedAt" IS NULL`, PostgreSQL/SQLite) and target it with `createInsertBuilder().onConflict(cols, { where })`; `upsert()` cannot name a partial index.
 - **The INSERT is always attempted.** The database checks NOT NULL before it looks for a conflict, so every NOT NULL column without a default must be in the payload even when the row exists. A payload that states no column and no relation sends nothing and returns `{ affected: 0 }`.
-- **Relations are written as their foreign key.** A `@ManyToOne` or the owner side of a `@OneToOne` can be given as a related instance, a bare key or the `${property}Id` shadow property, as with `save()` and `insertMany()`. The key is part of the INSERT and, unless it belongs to the conflict target, is assigned on conflict like any other column; a relation the payload leaves out keeps the stored key. The conflict target takes DB column names, so a unique pair of foreign keys is targeted by its join columns -- `em.upsert(Like, { user, post, weight: 3 }, ["user_id", "post_id"])`. There is no cascade: a related instance must already carry its primary key. Before 3.0 the key was dropped and the row stored `NULL`; with a conflict target over foreign keys, every call inserted another row.
+- **Relations are written as their foreign key.** A `@ManyToOne` or the owner side of a `@OneToOne` can be given as a related instance, a bare key or the `${property}Id` shadow property, as with `save()` and `insertMany()`. The key is part of the INSERT and, unless it belongs to the conflict target, is assigned on conflict like any other column; a relation the payload leaves out keeps the stored key. A unique pair of foreign keys is targeted by its shadow properties or its join columns -- `em.upsert(Like, { user, post, weight: 3 }, ["userId", "postId"])`, or `["user_id", "post_id"]`. There is no cascade: a related instance must already carry its primary key. Before 3.0 the key was dropped and the row stored `NULL`; with a conflict target over foreign keys, every call inserted another row.
 - **JOINED children are rejected.** `upsert()`, `insertIgnore()`, `batchUpsert()`, `insertMany()`, `insertManyAndReturn()` and `createInsertBuilder()` write one table, and a table-per-type child spans two, so they throw `UNSUPPORTED_OPERATION`; use `save()` (`saveMany()` falls back to it for such children).
 - **`insertIgnore()`** seeds the same values for the row it inserts and never writes a conflicting row, soft-deleted or not.
 - **`createInsertBuilder()`** seeds inserted rows the same way, but its `doUpdate()` assigns exactly the columns you list -- no version bump, timestamp refresh or `@DeletedAt` reset is added.
@@ -1058,7 +1060,7 @@ Tenant scoping is applied at execute time, so it does not appear in `build()` ou
 | `executeAndReturn()` | `RETURNING *` | one row per call, read back by key (MariaDB 10.5+ plain INSERT: `RETURNING *`); throws for INSERT ... SELECT | `RETURNING *` |
 | `values(columns, query)` | the query as built | the query as built; derived table `AS new (…)` for `doUpdate()` on MySQL 8.0.19+ | `SELECT * FROM (…) WHERE true` before a conflict clause |
 
-MySQL arbitrates on every unique key at once, so it has no conflict target to name. Passing `.onConflict([...])` there is still worth doing -- it keeps the same call portable to PostgreSQL.
+MySQL arbitrates on every unique key at once, so it has no conflict target to name. Passing `.onConflict([...])` there is still worth doing -- it keeps the same call portable to PostgreSQL. The columns are checked on every dialect: `.onConflict()` takes property keys, FK shadow properties such as `customerId` included, or DB column names, and an unknown one throws `InvalidQueryError`.
 
 ---
 
