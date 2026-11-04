@@ -622,7 +622,7 @@ ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `email` = VALUES(`email`)
 
 ### 유니크 컬럼 기준
 
-세 번째 인자로 컬럼 이름 배열을 전달해서 충돌 대상을 지정할 수 있어요:
+세 번째 인자로 충돌 대상을 지정합니다. 각 컬럼은 페이로드처럼 프로퍼티 키로 적어도 되고, DB 컬럼명으로 적어도 돼요:
 
 ```typescript
 await em.upsert(User, {
@@ -655,6 +655,8 @@ ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `lastLoginAt` = VALUES(`lastLog
 ::: info
 충돌 컬럼(세 번째 인자)에는 유니크 제약 조건이 있거나 PK여야 해요. 그렇지 않으면 데이터베이스가 쿼리를 거부해요. PostgreSQL에서는 `there is no unique or exclusion constraint matching the ON CONFLICT specification` 에러가 발생해요.
 :::
+
+엔티티의 프로퍼티 키도 컬럼도 아닌 이름은 아무것도 보내기 전에 `InvalidQueryError`(`ORM_INVALID_QUERY`)로 거부되고, 메시지에 가장 가까운 컬럼이 나옵니다. 예전에는 적은 이름이 그대로 데이터베이스까지 갔기 때문에 `SnakeNamingStrategy`에서 프로퍼티 이름 `userEmail`을 쓰면 드라이버의 알 수 없는 컬럼 에러로 실패했고, 문장에 충돌 대상을 적지 않는 MySQL에서는 오타가 있어도 아무 일 없이 넘어갔습니다.
 
 ### MySQL 8.0.19+: 행 별칭으로 읽는 제안 행
 
@@ -695,7 +697,7 @@ VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)
 ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `loginCount` = VALUES(`loginCount`)
 ```
 
-세 번째 인자(옵션)로 충돌 컬럼을 지정해요. 생략하면 기본 키가 사용돼요.
+세 번째 인자(옵션)로 충돌 컬럼을 `upsert()`와 같은 방식으로 지정해요. 생략하면 기본 키가 사용돼요.
 
 ### 충돌 시 관리 컬럼
 
@@ -741,7 +743,7 @@ ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`),
 - **관리 컬럼만으로는 갱신이 일어나지 않습니다.** 충돌 대상 말고는 갱신할 사용자 컬럼이 없으면, 문장이 PostgreSQL·SQLite에서는 `DO NOTHING`, MySQL/MariaDB에서는 아무것도 바꾸지 않는 `ON DUPLICATE KEY UPDATE <col> = <col>`로 내려갑니다. 없는 행은 삽입되고, 살아 있는 충돌 행은 버전·타임스탬프까지 그대로 남아요. 예외는 soft-delete된 충돌 행 하나뿐이고, 이 행은 여전히 복구됩니다(`DO UPDATE SET "deletedAt" = NULL WHERE "order"."deletedAt" IS NOT NULL`). 3.0 이전에는 이런 호출이 SQL을 아예 보내지 않고 `{ affected: 0 }`을 돌려줘서, 없는 행조차 삽입되지 않았습니다.
 - **soft delete와 유니크 키.** 일반 유니크 인덱스라면 삭제된 행도 충돌하고, upsert가 넘긴 값으로 그 행을 복구합니다. soft-delete된 행을 건너뛰는 `updateMany()`와는 다릅니다. 새 행을 만들고 싶다면 부분 유니크 인덱스(`WHERE "deletedAt" IS NULL`, PostgreSQL·SQLite)를 두고 `createInsertBuilder().onConflict(cols, { where })`로 지정하세요. `upsert()`는 부분 인덱스를 지정할 수 없습니다.
 - **INSERT는 항상 시도됩니다.** DB는 충돌을 찾기 전에 NOT NULL을 먼저 검사하므로, 행이 이미 있어도 기본값 없는 NOT NULL 컬럼은 전부 페이로드에 있어야 합니다. 컬럼도 관계도 하나 없는 페이로드는 아무것도 보내지 않고 `{ affected: 0 }`을 돌려줍니다.
-- **관계는 외래 키로 기록됩니다.** `@ManyToOne`과 `@OneToOne` 소유자 측은 `save()`, `insertMany()`와 마찬가지로 연관 인스턴스, 키 값 그대로, `${property}Id` 섀도 프로퍼티 중 어느 형태로 넘겨도 됩니다. 키는 INSERT에 들어가고, 충돌 대상에 속하지 않으면 다른 컬럼처럼 충돌 시에도 갱신됩니다. 페이로드에 없는 관계는 저장된 키를 그대로 둡니다. 충돌 대상은 DB 컬럼명을 받으므로 외래 키 쌍에 걸린 유니크 인덱스는 조인 컬럼으로 지정합니다: `em.upsert(Like, { user, post, weight: 3 }, ["user_id", "post_id"])`. 캐스케이드는 없으니 연관 인스턴스에는 기본 키가 이미 있어야 합니다. 3.0 이전에는 키가 버려져 `NULL`로 저장됐고, 충돌 대상이 외래 키이면 호출할 때마다 행이 하나씩 더 쌓였어요.
+- **관계는 외래 키로 기록됩니다.** `@ManyToOne`과 `@OneToOne` 소유자 측은 `save()`, `insertMany()`와 마찬가지로 연관 인스턴스, 키 값 그대로, `${property}Id` 섀도 프로퍼티 중 어느 형태로 넘겨도 됩니다. 키는 INSERT에 들어가고, 충돌 대상에 속하지 않으면 다른 컬럼처럼 충돌 시에도 갱신됩니다. 페이로드에 없는 관계는 저장된 키를 그대로 둡니다. 외래 키 쌍에 걸린 유니크 인덱스는 섀도 프로퍼티나 조인 컬럼으로 지정합니다: `em.upsert(Like, { user, post, weight: 3 }, ["userId", "postId"])` 또는 `["user_id", "post_id"]`. 캐스케이드는 없으니 연관 인스턴스에는 기본 키가 이미 있어야 합니다. 3.0 이전에는 키가 버려져 `NULL`로 저장됐고, 충돌 대상이 외래 키이면 호출할 때마다 행이 하나씩 더 쌓였어요.
 - **JOINED 자식은 거부됩니다.** `upsert()`, `insertIgnore()`, `batchUpsert()`, `insertMany()`, `insertManyAndReturn()`, `createInsertBuilder()`는 테이블 하나에만 쓰는데, 테이블별 상속(TPT)의 자식은 두 테이블에 걸쳐 있으므로 `UNSUPPORTED_OPERATION`을 던집니다. `save()`를 쓰세요(`saveMany()`는 이런 자식에서 `save()`로 넘어갑니다).
 - **`insertIgnore()`**도 삽입하는 행에는 같은 값을 채우고, 충돌한 행은 soft-delete 여부와 상관없이 절대 쓰지 않습니다.
 - **`createInsertBuilder()`**도 삽입 행은 같은 방식으로 채우지만, `doUpdate()`는 나열한 컬럼만 대입합니다. 버전 증가, 타임스탬프 갱신, `@DeletedAt` 초기화는 붙지 않아요.
@@ -1058,7 +1060,7 @@ const { text, values } = em.createInsertBuilder(SyncMarker)
 | `executeAndReturn()` | `RETURNING *` | 호출당 한 행, 키로 다시 읽음 (MariaDB 10.5+의 충돌 절 없는 INSERT는 `RETURNING *`), INSERT ... SELECT는 예외 | `RETURNING *` |
 | `values(columns, query)` | 쿼리 그대로 | 쿼리 그대로, MySQL 8.0.19+의 `doUpdate()`는 파생 테이블 `AS new (…)` | 충돌 절 앞에서 `SELECT * FROM (…) WHERE true` |
 
-MySQL은 모든 유니크 키를 한꺼번에 대상으로 삼기 때문에 지정할 충돌 대상 자체가 없습니다. 그래도 `.onConflict([...])`를 붙여 두는 편이 좋아요. 같은 호출을 PostgreSQL로 그대로 옮길 수 있으니까요.
+MySQL은 모든 유니크 키를 한꺼번에 대상으로 삼기 때문에 지정할 충돌 대상 자체가 없습니다. 그래도 `.onConflict([...])`를 붙여 두는 편이 좋아요. 같은 호출을 PostgreSQL로 그대로 옮길 수 있으니까요. 컬럼 검사는 모든 다이얼렉트에서 똑같이 합니다. `.onConflict()`는 프로퍼티 키(`customerId` 같은 FK 섀도 프로퍼티 포함)나 DB 컬럼명을 받고, 알 수 없는 이름이면 `InvalidQueryError`를 던집니다.
 
 ---
 

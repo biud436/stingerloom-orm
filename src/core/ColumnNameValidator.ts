@@ -18,7 +18,8 @@ import {
  *
  * `criteria` is the second argument of delete / softDelete / restore, `data`
  * the SET payload of updateMany; `where` covers reads and updateMany's
- * `options.where`.
+ * `options.where`. `conflictColumns` is the conflict target of upsert /
+ * insertIgnore / batchUpsert, `onConflict` the one of createInsertBuilder.
  */
 export type IdentifierClause =
   | "where"
@@ -26,7 +27,9 @@ export type IdentifierClause =
   | "select"
   | "groupBy"
   | "criteria"
-  | "data";
+  | "data"
+  | "conflictColumns"
+  | "onConflict";
 
 /**
  * The identifiers a read query may name for one entity, plus the entity name

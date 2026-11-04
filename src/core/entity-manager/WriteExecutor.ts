@@ -48,6 +48,7 @@ import {
 } from "../JoinedChildSource";
 import { DEFAULT_BIGINT_MODE, normalizeBigintValue } from "../BigintColumnTransformer";
 import { assertScalarBindValue } from "../BindValueGuard";
+import { assertKnownColumn, buildColumnNameScope, type IdentifierClause } from "../ColumnNameValidator";
 import { createDialectExpression } from "../../dialects/DialectExpression";
 import { UpdateQueryBuilder } from "../UpdateQueryBuilder";
 import {
@@ -2661,8 +2662,8 @@ export class WriteExecutor {
 
     const properties = spec.target?.properties ?? [];
     if (properties.length > 0) {
-      return properties.map((prop) =>
-        this.ctx.wrap(this.columnNameForProperty(metadata, prop)),
+      return this.conflictColumnNames(entity, metadata, properties, "onConflict").map(
+        (name) => this.ctx.wrap(name),
       );
     }
 
@@ -2676,6 +2677,33 @@ export class WriteExecutor {
   }
 
   /** The DB column a property maps to, falling back to the property name. */
+  /**
+   * The DB columns a conflict target names. An entry is a property key — a
+   * `@Column` property or a `@ManyToOne` / `@OneToOne` FK shadow property,
+   * mapped through the NamingStrategy as the payload's keys are — or the DB
+   * column itself. A name that is neither throws `InvalidQueryError` with
+   * the closest column; it used to reach the database verbatim, or on MySQL,
+   * whose statement names no target, to be ignored.
+   */
+  private conflictColumnNames<T>(
+    entity: ClazzType<T>,
+    metadata: EntityScannerMetadata,
+    names: readonly string[],
+    clause: IdentifierClause,
+  ): string[] {
+    const propertyToColumn = this.ctx.buildPropertyToColumnMap(metadata);
+    const scope = buildColumnNameScope({
+      entityName: entity.name,
+      columns: metadata.columns,
+      propertyToColumn,
+      computedColumns: this.ctx.getComputedColumnNames(entity),
+    });
+    return names.map((name) => {
+      assertKnownColumn(name, clause, scope);
+      return propertyToColumn.get(name) ?? name;
+    });
+  }
+
   private columnNameForProperty(
     metadata: EntityScannerMetadata,
     property: string,
@@ -4562,7 +4590,9 @@ export class WriteExecutor {
       .filter((col: ColumnMetadata) => col.options?.primary)
       .map((col: ColumnMetadata) => col.name);
 
-    const resolvedConflictColumns = conflictColumns ?? pkColumns;
+    const resolvedConflictColumns = conflictColumns
+      ? this.conflictColumnNames(entity, metadata, conflictColumns, "conflictColumns")
+      : pkColumns;
     if (resolvedConflictColumns.length === 0) {
       throw new PrimaryKeyNotFoundError(entity.name);
     }

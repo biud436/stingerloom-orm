@@ -5,6 +5,7 @@ import { MySqlDriver } from "../../src/dialects/mysql/MySqlDriver";
 import { PostgresDriver } from "../../src/dialects/postgres/PostgresDriver";
 import { SqliteDriver } from "../../src/dialects/sqlite/SqliteDriver";
 import { MetadataLayerRegistry } from "../../src/scanner/MetadataScanner";
+import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
 
 // Mock 모듈 설정
 jest.mock("../../src/DatabaseClient", () => {
@@ -348,6 +349,40 @@ describe("EntityManager.upsert()", () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
       expect(mockQuery.mock.calls[0][0].sql).toBe(
         "INSERT INTO `Product` (`sku`) VALUES (?) ON DUPLICATE KEY UPDATE `sku` = `sku`",
+      );
+    });
+
+    // MySQL's statement names no conflict target, so a wrong name used to be
+    // ignored there instead of failing.
+    it("rejects an unknown conflict column before any query", async () => {
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue(userMetadata);
+
+      await expect(
+        em.upsert(UserEntity, { id: 1, email: "a@x.com", name: "A" }, ["emails"]),
+      ).rejects.toThrow(InvalidQueryError);
+      await expect(
+        em.batchUpsert(UserEntity, [{ id: 1, email: "a@x.com" }], ["emails"]),
+      ).rejects.toThrow('Unknown column "emails" in "conflictColumns" for entity "User". Did you mean "email"?');
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it("leaves a conflict column named by its property out of the update list", async () => {
+      const AccountEntity = class Account {};
+      (em as any).resolver.resolveEntityMetadata = jest.fn().mockReturnValue({
+        name: "account",
+        target: AccountEntity,
+        columns: [
+          { name: "id", propertyKey: "id", options: { primary: true, autoIncrement: true } },
+          { name: "user_email", propertyKey: "userEmail", options: {} },
+          { name: "login_count", propertyKey: "loginCount", options: {} },
+        ],
+      });
+
+      await em.upsert(AccountEntity, { userEmail: "a@x.com", loginCount: 2 } as any, ["userEmail"]);
+
+      expect(mockQuery.mock.calls[0][0].sql).toBe(
+        "INSERT INTO `account` (`user_email`, `login_count`) VALUES (?, ?) " +
+          "ON DUPLICATE KEY UPDATE `login_count` = VALUES(`login_count`)",
       );
     });
   });
