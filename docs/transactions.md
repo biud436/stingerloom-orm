@@ -436,6 +436,25 @@ async optionalStep() {
 }
 ```
 
+### Transactions on more than one connection
+
+A transaction belongs to one connection, and only work on that connection joins it. Inside `@Transactional()`, which opens the `"default"` connection, an EntityManager bound to `"analytics"` does not run its statements in that transaction: its statements run on `"analytics"`, each write commits in a transaction of its own, and none of it is undone when the default transaction rolls back. Give that work a transaction on its own connection when it has to be atomic too:
+
+```typescript
+@Transactional()                                     // "default"
+async placeOrder(order: Order) {
+  await this.em.save(Order, order);                  // joins the default transaction
+  await this.analyticsEm.transaction(async () => {   // a transaction on "analytics"
+    await this.analyticsEm.save(OrderEvent, { orderId: order.id });
+    await this.em.save(OrderLog, { orderId: order.id }); // still the default transaction
+  });
+}
+```
+
+The two transactions commit separately; there is no two-phase commit across databases. A transaction opened inside another connection's does not hide the outer one, so `this.em` inside the analytics callback still joins the default transaction. Propagation follows the same rule: `REQUIRED` and `NESTED` look only for a transaction on their own connection, so `@Transactional({ connectionName: "analytics" })` inside a default transaction opens one on `"analytics"`.
+
+The one way to run a manager's work on another connection is `em.transaction(cb, { connectionName })`: inside the callback, that manager's statements join the transaction on the named connection. Earlier versions ran every manager's statements in whichever transaction was active, so a manager on another connection read and wrote the wrong database.
+
 ---
 
 ## Savepoint -- Partial Rollback

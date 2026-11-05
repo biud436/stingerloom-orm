@@ -26,6 +26,7 @@ export class TransactionSessionManager extends IQueryEngine {
   private dataSource?: IDataSource;
   /** The pool {@link connectToNode} opened, which {@link close} ends. */
   private ownedConnector?: IConnector;
+  private registeredConnection?: string;
   private readonly logger: Logger = new Logger(TransactionSessionManager.name);
   private transactionEndCallbacks: Array<
     (committed: boolean) => void | Promise<void>
@@ -72,6 +73,7 @@ export class TransactionSessionManager extends IQueryEngine {
    * @throws {DatabaseConnectionFailedError} If the connection to the database fails.
    */
   public async connect(connectionName?: string) {
+    this.registeredConnection = connectionName ?? "default";
     try {
       this.connection = connectionName
         ? await DatabaseClient.getInstance().getConnection(connectionName)
@@ -86,6 +88,16 @@ export class TransactionSessionManager extends IQueryEngine {
     } catch (error: unknown) {
       throw new DatabaseConnectionFailedError(error);
     }
+  }
+
+  /**
+   * The registered connection {@link connect} opened this session on —
+   * `"default"` when it was given no name. Undefined for a session on a
+   * replica node or a pool the caller owns. An EntityManager joins an
+   * ambient session only when this is its own connection.
+   */
+  public get connectionName(): string | undefined {
+    return this.registeredConnection;
   }
 
   /**

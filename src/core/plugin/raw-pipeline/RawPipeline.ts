@@ -32,7 +32,7 @@ import { InvalidQueryError } from "../../../errors";
 import { MetadataContext } from "../../../metadata/MetadataContext";
 import { isValidPgIdentifier } from "../../../dialects/postgres/pgIdentifier";
 import { runInternalQuery } from "../../entity-manager/internal-query";
-import { transactionStorage } from "../../../decorators/Transactional";
+import { ambientSessionFor } from "../../../decorators/Transactional";
 import { InheritanceResolver } from "../../InheritanceResolver";
 import { RelationMetadataResolver } from "../../RelationMetadataResolver";
 import { buildJoinedChildFromSource, isJoinedChild } from "../../JoinedChildSource";
@@ -357,7 +357,8 @@ export class RawPipeline<T> {
    * options.
    */
   private batchRunner(driverOptions: DriverQueryOptions): BatchRunner | null {
-    const session = transactionStorage.getStore();
+    const em = this.ctx.em;
+    const session = ambientSessionFor(em.getConnectionName(), em);
     if (session) return (query) => session.queryWithOptions(query, driverOptions);
     const driver = this.ctx.driver;
     if (driver?.queryWithOptions) {

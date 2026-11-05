@@ -3,7 +3,6 @@ import { ClazzType } from "../../utils";
 import { Sql } from "../../utils/sqlTag";
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
 import { MetadataContext } from "../../metadata/MetadataContext";
-import { transactionStorage } from "../../decorators/Transactional";
 import type { EntityManagerInternals } from "../EntityManagerInternals";
 import { relationTreeKey, type RelationTree } from "../RelationTree";
 import type { RelationCountSpec } from "../RelationCount";
@@ -281,7 +280,7 @@ export class QueryResultCache {
   ): QueryCachePolicy | undefined {
     const normalized = this.normalizeOption(option.cache);
     if (!normalized) return undefined;
-    if (transactionStorage.getStore()) return undefined;
+    if (this.ctx.ambientSession()) return undefined;
     const tags = new Set<string>(this.collectReadTags(entity, option.relations));
     for (const tag of this.collectFilterTags(entity, option.where, option.relations, option.counts)) {
       tags.add(tag);
@@ -304,7 +303,7 @@ export class QueryResultCache {
   ): QueryCachePolicy | undefined {
     const normalized = this.normalizeOption(option);
     if (!normalized) return undefined;
-    if (transactionStorage.getStore()) return undefined;
+    if (this.ctx.ambientSession()) return undefined;
     const tags = new Set<string>(this.collectReadTags(root, undefined));
     for (const entity of joined) {
       for (const tag of this.collectReadTags(entity, undefined)) {
@@ -417,7 +416,7 @@ export class QueryResultCache {
     }
     if (tags.length === 0) return;
     await this.dropTags(tags);
-    const session = transactionStorage.getStore();
+    const session = this.ctx.ambientSession();
     if (session?.isTransactionActive) this.holdUntilTransactionEnd(session, tags);
   }
 
@@ -427,7 +426,7 @@ export class QueryResultCache {
    */
   async clear(): Promise<void> {
     await this.dropAll();
-    const session = transactionStorage.getStore();
+    const session = this.ctx.ambientSession();
     if (session?.isTransactionActive) this.holdUntilTransactionEnd(session, "all");
   }
 

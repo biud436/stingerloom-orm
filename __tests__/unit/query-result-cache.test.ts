@@ -92,6 +92,7 @@ function makeCtx(resolver = makeResolver()) {
     ctx: {
       getDbType: () => "sqlite",
       getConnectionName: () => "default",
+      ambientSession: () => transactionStorage.getStore(),
       getSchema: () => undefined,
       getLogger: () => logger,
       getResolver: () => resolver,

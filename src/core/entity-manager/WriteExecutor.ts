@@ -35,7 +35,7 @@ import {
   type ForeignKeyRelation,
 } from "../RelationMetadataResolver";
 import { CascadeHandler } from "../CascadeHandler";
-import { transactionStorage } from "../../decorators/Transactional";
+import { runInSession } from "../../decorators/Transactional";
 import type { InheritanceStrategy } from "../../decorators/Inheritance";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -515,7 +515,7 @@ export class WriteExecutor {
     // for it to join — otherwise the parent commits in its own transaction
     // (and nested-BEGINs SQLite when saveInternal runs under an existing
     // session, e.g. the saveMany fallback or an O2M cascade child).
-    await transactionStorage.run(session, () =>
+    await runInSession(session, () =>
       this.cascadeHandler.cascadeSaveManyToOne(entity, item),
     );
 
@@ -1618,7 +1618,7 @@ export class WriteExecutor {
           restoreOnRollback(session, items, async () => {
             // ManyToOne cascade joins this transaction via ALS (#414) so the
             // cascade-saved parents roll back together with the batch INSERT.
-            await transactionStorage.run(session, async () => {
+            await runInSession(session, async () => {
               for (const item of items) {
                 await this.cascadeHandler.cascadeSaveManyToOne(entity, item);
               }
@@ -3613,7 +3613,7 @@ export class WriteExecutor {
       // they reuse it instead of opening a second one: a nested BEGIN crashes
       // SQLite's single shared connection, and on pooled drivers the children
       // would commit independently of the parent delete (#414).
-      const afterParentDelete = await transactionStorage.run(session, () =>
+      const afterParentDelete = await runInSession(session, () =>
         this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria),
       );
 
@@ -3633,7 +3633,7 @@ export class WriteExecutor {
 
       // Owning-side OneToOne targets the deleted rows referenced.
       if (afterParentDelete) {
-        await transactionStorage.run(session, afterParentDelete);
+        await runInSession(session, afterParentDelete);
       }
 
       await this.emitAfterDelete(entity, criteria, affected);
@@ -3672,7 +3672,7 @@ export class WriteExecutor {
       // cascade remove — same as delete(): the children go first, on this
       // transaction's session (#414). Without it a bulk delete either failed
       // on the FK or, with constraints off, orphaned every child.
-      const afterParentDelete = await transactionStorage.run(session, () =>
+      const afterParentDelete = await runInSession(session, () =>
         this.cascadeHandler.cascadeDeleteOneToMany(entity, criteria),
       );
 
@@ -3683,7 +3683,7 @@ export class WriteExecutor {
         ? await this.deleteJoinedRows(entity, metadata, criteria, session)
         : null;
       if (joinedAffected !== null) {
-        if (afterParentDelete) await transactionStorage.run(session, afterParentDelete);
+        if (afterParentDelete) await runInSession(session, afterParentDelete);
         await this.emitAfterDelete(entity, criteria, joinedAffected);
         return { affected: joinedAffected };
       }
@@ -3705,7 +3705,7 @@ export class WriteExecutor {
         session,
       );
 
-      if (afterParentDelete) await transactionStorage.run(session, afterParentDelete);
+      if (afterParentDelete) await runInSession(session, afterParentDelete);
       await this.emitAfterDelete(entity, criteria, affected);
 
       return { affected };
@@ -4371,7 +4371,7 @@ export class WriteExecutor {
       // cascade remove, soft-delete flavour — before the parent UPDATE, while
       // the parents still read as live. Same session publication as delete()
       // (#414) so the children roll back with the parent.
-      await transactionStorage.run(session, () =>
+      await runInSession(session, () =>
         this.cascadeHandler.cascadeSoftDeleteOneToMany(entity, criteria),
       );
 
@@ -4478,7 +4478,7 @@ export class WriteExecutor {
       // Revive the children the softDelete cascade trashed — before the
       // parent UPDATE, so the handler can still tell which parents are
       // soft-deleted (see cascadeRestoreOneToMany).
-      await transactionStorage.run(session, () =>
+      await runInSession(session, () =>
         this.cascadeHandler.cascadeRestoreOneToMany(entity, criteria),
       );
 

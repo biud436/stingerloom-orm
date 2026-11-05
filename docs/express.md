@@ -649,7 +649,7 @@ export class TransferService {
 The decorator accepts `isolationLevel`, `propagation`, and `connectionName` — and nothing else. Deadlock retry exists only on `em.transaction()`; if you need it, use the callback form.
 
 ::: warning @Transactional() always opens the default connection
-The decorator resolves its connection from the global registry, not from the `em` you happen to call inside it. If your manager is bound to a named connection, pass it explicitly — `@Transactional({ connectionName: "analytics" })` — or use `em.transaction(cb, { connectionName })`, which inherits the manager's connection automatically.
+The decorator resolves its connection from the global registry, not from the `em` you happen to call inside it. A manager bound to another connection does not join that transaction: its statements run on its own connection, each write in a transaction of its own. If your manager is bound to a named connection, pass it explicitly — `@Transactional({ connectionName: "analytics" })` — or use `em.transaction(cb)`, which opens the manager's own connection. See [Transactions on more than one connection](./transactions.md#transactions-on-more-than-one-connection).
 
 Also note that `propagation: NESTED` degrades to a plain transaction when there is no enclosing one: the savepoint has nothing to nest inside.
 :::

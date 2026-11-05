@@ -2,7 +2,8 @@
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
 import { ReplicationNodeConfig } from "../../dialects/ReplicationRouter";
 import {
-  transactionStorage,
+  ambientSessionFor,
+  runInSession,
   TransactionPropagation,
   validateTransactionOptions,
 } from "../../decorators/Transactional";
@@ -54,9 +55,14 @@ export class TransactionRunner {
     readNodeOverride?: ReplicationNodeConfig | null,
     txOptions?: ExecuteTransactionOptions,
   ): Promise<R> {
+    // The ambient transaction is joined only when it runs on the connection
+    // this work targets; one on another database would take the statements.
     const reusable = txOptions?.forceNew
       ? undefined
-      : (existingSession ?? transactionStorage.getStore());
+      : (existingSession ??
+        (txOptions?.connectionName !== undefined
+          ? ambientSessionFor(txOptions.connectionName)
+          : this.ctx.ambientSession()));
     if (reusable) {
       return fn(reusable);
     }
@@ -184,8 +190,9 @@ export class TransactionRunner {
     const run = (session: TransactionSessionManager): Promise<R> =>
       this.withQueryTimeout(session, timeout, fn);
 
-    // 1. Reuse existing session (@Transactional or nested call)
-    const reusable = existingSession ?? transactionStorage.getStore();
+    // 1. Reuse existing session (@Transactional or nested call) on this
+    //    manager's connection
+    const reusable = existingSession ?? this.ctx.ambientSession();
     if (reusable) {
       return run(reusable);
     }
@@ -233,16 +240,25 @@ export class TransactionRunner {
     const propagation = options?.propagation ?? TransactionPropagation.REQUIRED;
     const isolationLevel = options?.isolationLevel;
     const connectionName = options?.connectionName;
+    // A transaction on another connection takes this manager's work in the
+    // callback: running it there is what passing `connectionName` asks for.
+    const redirected =
+      connectionName !== undefined && connectionName !== this.ctx.getConnectionName()
+        ? manager
+        : undefined;
 
     // ── NESTED: savepoint within the ambient transaction ──────────────
     // Mirrors @Transactional's NESTED branch. Only failures inside the
     // callback roll back to the savepoint; the outer transaction continues.
-    const ambient = transactionStorage.getStore();
+    const ambient =
+      connectionName !== undefined
+        ? ambientSessionFor(connectionName)
+        : this.ctx.ambientSession();
     if (propagation === TransactionPropagation.NESTED && ambient) {
       const savepointName = `sp_em_${++TransactionRunner.txSavepointCounter}`;
       await ambient.savepoint(savepointName);
       try {
-        return await transactionStorage.run(ambient, () => callback(manager));
+        return await runInSession(ambient, () => callback(manager), redirected);
       } catch (e) {
         await ambient.rollbackTo(savepointName);
         throw e;
@@ -263,7 +279,7 @@ export class TransactionRunner {
       try {
         return await this.ctx.executeInTransaction(
           async (session) => {
-            return transactionStorage.run(session, () => callback(manager));
+            return runInSession(session, () => callback(manager), redirected);
           },
           undefined,
           undefined,
