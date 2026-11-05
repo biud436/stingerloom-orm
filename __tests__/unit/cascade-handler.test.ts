@@ -14,6 +14,7 @@ import { ENTITY_TOKEN } from "../../src/decorators/Entity";
 import { EntityManagerInternals } from "../../src/core/EntityManagerInternals";
 import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolver";
 import { EntityMetadataNotFoundError } from "../../src/errors/EntityMetadataNotFoundError";
+import { transactionStorage } from "../../src/decorators/Transactional";
 
 // ---------------------------------------------------------------------------
 // Helpers: mock EntityManagerInternals & RelationMetadataResolver
@@ -40,6 +41,7 @@ function createMockCtx(
     getNameStrategy: jest.fn().mockReturnValue(""),
     resolveSelectColumns: jest.fn().mockReturnValue([]),
     markDirty: jest.fn(),
+    ambientSession: () => transactionStorage.getStore(),
     findInternal: jest.fn(),
     findOneInternal: jest.fn(),
     save: jest.fn().mockImplementation((_e: any, item: any) =>

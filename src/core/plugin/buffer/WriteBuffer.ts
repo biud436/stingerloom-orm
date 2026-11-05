@@ -36,7 +36,7 @@ import { EntityNotFoundError } from "../../../errors/EntityNotFoundError";
 import { OrmError } from "../../../errors/OrmError";
 import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import { LazyRelationInjector } from "./LazyRelationInjector";
-import { transactionStorage } from "../../../decorators/Transactional";
+import { ambientSessionFor } from "../../../decorators/Transactional";
 import { runInternalQuery } from "../../entity-manager/internal-query";
 import type { EntityManager } from "../../EntityManager";
 
@@ -1478,7 +1478,7 @@ export class WriteBuffer {
       // flush too. WITHOUT an ambient transaction, this flush opens and
       // commits its own transaction: the SAVEPOINT spans nothing beyond it,
       // and no parent rollback can ever reclaim the committed work.
-      if (this.parent && !transactionStorage.getStore()) {
+      if (this.parent && !ambientSessionFor(em.getConnectionName(), em)) {
         WriteBuffer.logger.warn(
           "Nested buffer flush() called outside an enclosing transaction: " +
           "this flush commits immediately and independently, so its SAVEPOINT " +
@@ -1513,7 +1513,7 @@ export class WriteBuffer {
       // mirroring the failed-flush contract (instances come back PK-less,
       // ready to re-persist on retry). Queues are NOT restored: a retry
       // re-runs the caller's workflow, which re-queues its own work.
-      const ambientSession = transactionStorage.getStore();
+      const ambientSession = ambientSessionFor(em.getConnectionName(), em);
       if (ambientSession) {
         ambientSession.onTransactionEnd((committed) => {
           if (committed) return;

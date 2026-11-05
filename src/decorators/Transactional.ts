@@ -73,6 +73,75 @@ export function validateTransactionOptions(options: {
 export const transactionStorage =
   new AsyncLocalStorage<TransactionSessionManager>();
 
+/**
+ * One ambient session and the ones it was opened inside. A transaction on a
+ * second connection becomes the ambient session for its callback, and the
+ * chain keeps the first connection's transaction reachable from there.
+ */
+interface AmbientFrame {
+  session: TransactionSessionManager;
+  /** The manager whose `em.transaction({ connectionName })` runs this frame. */
+  manager?: object;
+  outer?: AmbientFrame;
+}
+
+const ambientFrames = new AsyncLocalStorage<AmbientFrame>();
+
+const DEFAULT_CONNECTION = "default";
+
+/**
+ * Runs `fn` with `session` as the ambient transaction, keeping the sessions
+ * it was opened inside reachable for {@link ambientSessionFor}. `manager`
+ * names the EntityManager whose `em.transaction({ connectionName })` opened
+ * the frame on another connection: its work joins `session` too.
+ *
+ * @internal Package-internal — not a public API.
+ */
+export function runInSession<R>(
+  session: TransactionSessionManager,
+  fn: () => R,
+  manager?: object,
+): R {
+  const frame: AmbientFrame = { session, manager, outer: currentFrame() };
+  return ambientFrames.run(frame, () => transactionStorage.run(session, fn));
+}
+
+/**
+ * The ambient transaction that work on `connectionName` joins: the innermost
+ * session of the current async context opened on that connection, or the
+ * one `manager`'s own `em.transaction({ connectionName })` runs. A session
+ * whose connection is unknown (a caller-built one) is joined by everyone, as
+ * every ambient session used to be. Undefined when none applies — the work
+ * then runs in a session of its own instead of on another database.
+ *
+ * @internal Package-internal — not a public API.
+ */
+export function ambientSessionFor(
+  connectionName: string = DEFAULT_CONNECTION,
+  manager?: object,
+): TransactionSessionManager | undefined {
+  const top = transactionStorage.getStore();
+  if (!top) return undefined;
+  const matches = (session: TransactionSessionManager, frameManager?: object) =>
+    session.connectionName === undefined ||
+    session.connectionName === connectionName ||
+    (manager !== undefined && frameManager === manager);
+
+  const frame = currentFrame();
+  // A session set with transactionStorage.run() directly carries no chain.
+  if (!frame) return matches(top) ? top : undefined;
+  for (let f: AmbientFrame | undefined = frame; f; f = f.outer) {
+    if (matches(f.session, f.manager)) return f.session;
+  }
+  return undefined;
+}
+
+/** The ambient frame, unless the ambient session was set without one. */
+function currentFrame(): AmbientFrame | undefined {
+  const frame = ambientFrames.getStore();
+  return frame && frame.session === transactionStorage.getStore() ? frame : undefined;
+}
+
 let savepointCounter = 0;
 
 /**
@@ -105,7 +174,9 @@ export function Transactional(
     const originalMethod = descriptor.value;
 
     descriptor.value = async function (this: any, ...args: any[]) {
-      const existingSession = transactionStorage.getStore();
+      // Only a transaction on this decorator's connection is joined: one on
+      // another database neither takes its work nor makes this one nested.
+      const existingSession = ambientSessionFor(connectionName);
 
       // ──── REQUIRES_NEW: Always start a fresh transaction ────
       if (propagation === TransactionPropagation.REQUIRES_NEW) {
@@ -163,7 +234,7 @@ async function runInNewTransaction(
   }
 
   try {
-    const result = await transactionStorage.run(session, fn);
+    const result = await runInSession(session, fn);
     await session.commit();
     return result;
   } catch (error) {

@@ -649,7 +649,7 @@ export class TransferService {
 데코레이터가 받는 옵션은 `isolationLevel`, `propagation`, `connectionName` 세 개가 전부입니다. 데드락 재시도는 `em.transaction()`에만 있으니, 재시도가 필요하면 콜백 형태를 쓰세요.
 
 ::: warning @Transactional()은 항상 기본 커넥션을 엽니다
-데코레이터는 내부에서 호출하는 `em`이 아니라 전역 레지스트리에서 커넥션을 찾습니다. 매니저가 이름 있는 커넥션에 묶여 있다면 `@Transactional({ connectionName: "analytics" })`처럼 명시하거나, 매니저의 커넥션을 자동으로 물려받는 `em.transaction(cb, { connectionName })`을 쓰세요.
+데코레이터는 내부에서 호출하는 `em`이 아니라 전역 레지스트리에서 커넥션을 찾습니다. 다른 커넥션에 묶인 매니저는 그 트랜잭션에 합류하지 않고, 자기 커넥션에서 실행되고 쓰기마다 자체 트랜잭션으로 커밋됩니다. 매니저가 이름 있는 커넥션에 묶여 있다면 `@Transactional({ connectionName: "analytics" })`처럼 명시하거나, 매니저 자신의 커넥션을 여는 `em.transaction(cb)`를 쓰세요. 자세한 내용은 [여러 커넥션에 걸친 트랜잭션](./transactions.md#transactions-on-more-than-one-connection)을 참고하세요.
 
 그리고 `propagation: NESTED`는 감싸는 트랜잭션이 없으면 평범한 트랜잭션으로 격하됩니다. 중첩할 대상이 없으니 세이브포인트가 아무것도 보호하지 못하는 상태가 됩니다.
 :::

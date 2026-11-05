@@ -10,7 +10,6 @@ import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundErr
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
 import { runScopeExempt } from "./entity-manager/scope-exemption";
 import { restoreOnRollback } from "./entity-manager/rollback-restore";
-import { transactionStorage } from "../decorators/Transactional";
 import {
   assignFkValue,
   fkWriteKeysFromManyToOne,
@@ -210,7 +209,7 @@ export class CascadeHandler {
   private sessionOf(
     session?: TransactionSessionManager,
   ): TransactionSessionManager | undefined {
-    return session ?? transactionStorage.getStore();
+    return session ?? this.ctx.ambientSession();
   }
 
   /** Whether `value` is being saved by a caller up the cascade. */

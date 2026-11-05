@@ -70,6 +70,7 @@ describe("WriteBuffer flush optimization", () => {
       query: jest.fn(),
       find: jest.fn(),
       transaction: jest.fn().mockImplementation((fn: any) => fn(mockEm)),
+      getConnectionName: () => "default",
     };
     const buffer = new WriteBuffer(
       { em: mockEm, getEntities: () => [Item] } as any,
@@ -96,6 +97,7 @@ describe("WriteBuffer flush optimization", () => {
       query: jest.fn(),
       find: jest.fn(),
       transaction: jest.fn().mockImplementation((fn: any) => fn(mockEm)),
+      getConnectionName: () => "default",
     };
     const buffer = new WriteBuffer(
       { em: mockEm, getEntities: () => [Item] } as any,

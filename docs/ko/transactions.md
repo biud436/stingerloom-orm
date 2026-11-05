@@ -436,6 +436,25 @@ async optionalStep() {
 }
 ```
 
+### 여러 커넥션에 걸친 트랜잭션 {#transactions-on-more-than-one-connection}
+
+트랜잭션은 하나의 커넥션에 속하고, 그 커넥션의 작업만 트랜잭션에 합류합니다. `"default"` 커넥션을 여는 `@Transactional()` 안에서 `"analytics"`에 묶인 EntityManager는 그 트랜잭션에서 문장을 실행하지 않습니다. 문장은 모두 `"analytics"`에서 실행되고 쓰기는 하나하나 자체 트랜잭션으로 커밋되므로, 바깥 트랜잭션이 나중에 롤백되어도 남아요. 이 작업도 원자적이어야 한다면 그 커넥션의 트랜잭션으로 감싸 주세요:
+
+```typescript
+@Transactional()                                     // "default"
+async placeOrder(order: Order) {
+  await this.em.save(Order, order);                  // joins the default transaction
+  await this.analyticsEm.transaction(async () => {   // a transaction on "analytics"
+    await this.analyticsEm.save(OrderEvent, { orderId: order.id });
+    await this.em.save(OrderLog, { orderId: order.id }); // still the default transaction
+  });
+}
+```
+
+두 트랜잭션은 따로 커밋됩니다. 데이터베이스를 가로지르는 2단계 커밋은 없어요. 다른 커넥션의 트랜잭션 안에서 연 트랜잭션이 바깥 트랜잭션을 가리지 않으므로, analytics 콜백 안의 `this.em`도 여전히 default 트랜잭션에 합류합니다. 전파도 같은 규칙을 따릅니다. `REQUIRED`와 `NESTED`는 자기 커넥션의 트랜잭션만 찾기 때문에, default 트랜잭션 안의 `@Transactional({ connectionName: "analytics" })`는 `"analytics"`에 새 트랜잭션을 엽니다.
+
+매니저의 작업을 다른 커넥션에서 실행하는 방법은 `em.transaction(cb, { connectionName })` 하나뿐입니다. 콜백 안에서는 그 매니저의 문장이 지정한 커넥션의 트랜잭션에 합류해요. 이전 버전은 모든 매니저의 문장을 그때 활성인 트랜잭션에서 실행했기 때문에, 다른 커넥션의 매니저가 엉뚱한 데이터베이스를 읽고 썼습니다.
+
 ---
 
 ## Savepoint -- 부분 롤백

@@ -93,7 +93,7 @@ import {
   ReplicationRouter,
   ReplicationNodeConfig,
 } from "../dialects/ReplicationRouter";
-import { transactionStorage } from "../decorators/Transactional";
+import { ambientSessionFor } from "../decorators/Transactional";
 
 // Extracted handler classes
 import { EntityManagerInternals } from "./EntityManagerInternals";
@@ -383,6 +383,7 @@ export class EntityManager implements BaseEntityManager {
     beginTrackQuery: () => this.beginTrackQuery(),
     trackQuery: (e, s, m) => this.trackQuery(e, s, m),
     getConnectionName: () => this.connectionName,
+    ambientSession: () => ambientSessionFor(this.connectionName, this),
     getTenantStrategy: () => this.tenantScope.strategy,
     notifyTransactionSubscribers: (m) => this.notifyTransactionSubscribers(m),
     notifyPluginBeforeTransaction: (iso) => this.notifyPluginBeforeTransaction(iso),
@@ -396,7 +397,7 @@ export class EntityManager implements BaseEntityManager {
     getNameStrategy: (c) => this.getNameStrategy(c),
     resolveSelectColumns: (s) => this.resolveSelectColumns(s),
     markDirty: (e) => {
-      const txSession = transactionStorage.getStore();
+      const txSession = ambientSessionFor(this.connectionName, this);
       if (txSession) {
         let set = this.txDirtyEntities.get(txSession);
         if (!set) {
@@ -674,7 +675,7 @@ export class EntityManager implements BaseEntityManager {
     } finally {
       const cache = this._queryCache;
       if (cache) {
-        await cache.invalidateEntity(entity, session ?? transactionStorage.getStore());
+        await cache.invalidateEntity(entity, session ?? ambientSessionFor(this.connectionName, this));
       }
     }
   }

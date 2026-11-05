@@ -101,6 +101,11 @@ export interface EntityManagerInternals {
   // ── Transaction-engine bridge (used by TransactionRunner) ──────
   /** The connection name this EM uses — read live (tests reassign `em.connectionName`). */
   getConnectionName(): string;
+  /**
+   * The ambient transaction this EM's work joins: the innermost one on its
+   * own connection, or one its `em.transaction({ connectionName })` opened.
+   */
+  ambientSession(): TransactionSessionManager | undefined;
   /** The active TenantQueryStrategy — read live (tests reassign `em.tenantStrategy`). */
   getTenantStrategy(): TenantQueryStrategy;
   /** Fires a transaction-level lifecycle method on every registered EntitySubscriber. */
