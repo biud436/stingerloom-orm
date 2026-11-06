@@ -459,6 +459,26 @@ SELECT * FROM "user"
 
 Both strategies produce identical results. The difference is purely in performance. Unless you have a specific reason to use search_path (e.g., compatibility with tools that don't support schema-qualified names), **`schema_qualified` is the better default**.
 
+### Switching tenants inside a transaction
+
+Every tenant schema lives in the one database, so a transaction can hold work for several tenants. Each statement runs in the schema of the tenant active when it is issued, whichever tenant the transaction began under:
+
+```typescript
+await MetadataContext.run("acme_corp", async () => {
+  await em.transaction(async () => {
+    await em.save(Invoice, { total: 100 });      // → "acme_corp"
+
+    await MetadataContext.run("globex", async () => {
+      await em.save(Invoice, { total: 250 });    // → "globex"
+    });
+  });
+});
+```
+
+Under `search_path`, the transaction's `SET LOCAL` names the tenant it began under. After a switch, the ORM sends another `SET LOCAL search_path` before the next statement, and again when the work comes back — one extra round-trip per switch, none while the tenant stays the same. Under `schema_qualified` the tenant's tables are named in the SQL already; `"public"` work inside a tenant's transaction is pointed back at the default schema the same way. A transaction begun outside any `MetadataContext.run()` behaves the same: the work inside a tenant's block goes to that tenant's schema.
+
+The work for every tenant commits or rolls back together. `ROLLBACK TO SAVEPOINT` (a `NESTED` transaction that fails) also brings back the search_path in force when the savepoint was taken, and the statements after it still run in their own tenant's schema. The [`database` strategy](#cross-tenant-transactions-are-forbidden) is different: there each tenant is a separate database, and a switch inside a transaction throws.
+
 ### Shared tables: pinning an entity to a schema
 
 Both strategies send *every* table to the tenant schema. That is the point for tenant data, but some tables are shared by all tenants — subscription plans, countries, feature flags, the `tenants` table itself. Inside `MetadataContext.run("acme_corp", ...)` those tables are unreachable: `search_path` names only the tenant schema (there is no `public` fallback), and `schema_qualified` rewrites the name to `"acme_corp"."plan"`. PostgreSQL answers `relation "plan" does not exist`, and the only workaround was cloning the table into every tenant schema — a private, empty copy per tenant.
@@ -886,6 +906,8 @@ await MetadataContext.run("acme", async () => {
 ```
 
 If you genuinely need to write to two tenants atomically, you don't have a multi-tenant problem — you have a distributed-transaction problem. Use saga / outbox patterns at the application layer instead.
+
+The PostgreSQL schema strategies keep every tenant in one database, so there one transaction can span tenants — see [Switching tenants inside a transaction](#switching-tenants-inside-a-transaction).
 
 ### Admin fan-out: `forEachTenant`
 

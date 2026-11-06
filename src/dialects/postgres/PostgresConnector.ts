@@ -344,42 +344,61 @@ export class PostgresConnector extends IConnector {
       await this.setTransactionIsolationLevel(client, level);
     }
 
-    // #213: multi-tenancy — skip SET LOCAL when the schema is "public".
+    // #213: skip SET LOCAL when the schema is "public", the path every
+    // pooled connection already starts on.
+    const schema = this.searchPathFor(MetadataContext.getCurrentTenant());
+    if (schema !== undefined && schema !== "public") {
+      await this.setLocalSearchPath(client, schema);
+    }
+  }
+
+  /**
+   * The schema unqualified names resolve to, inside a transaction, for work
+   * done as `tenant`: the tenant's schema, or the configured `schema` for
+   * "public". `undefined` when the strategy leaves search_path alone.
+   *
+   * @internal
+   */
+  searchPathFor(tenant: string): string | undefined {
     // The "tenant_column" and "database" strategies do not encode the tenant
     // in a schema name, so SET LOCAL search_path would either point PG at a
     // non-existent schema ("tenant_column") or override a per-pool schema
     // that the user already configured ("database").
-    const schemaScopedStrategy =
-      this.tenantStrategy !== "tenant_column" &&
-      this.tenantStrategy !== "database";
-    if (schemaScopedStrategy) {
-      const tenant = MetadataContext.getCurrentTenant();
-      const schema = tenant !== "public" ? tenant : this.schema;
-      if (schema !== "public") {
-        // The default search_path strategy treats the active MetadataContext
-        // tenant as a PG schema name. When apps open MetadataContext.run()
-        // frames with non-schema markers (e.g. a numeric workspace id used
-        // purely for app-side context propagation), the SET LOCAL would
-        // crash every transaction. Skip the switch and warn once so users
-        // who *did* intend schema isolation notice the misconfiguration.
-        if (!PostgresConnector.isValidIdentifier(schema)) {
-          if (!this.warnedInvalidTenantIds.has(schema)) {
-            this.warnedInvalidTenantIds.add(schema);
-            this.logger.warn(
-              `MetadataContext tenant "${schema}" is not a valid PostgreSQL ` +
-                `identifier — skipping SET LOCAL search_path. If you intended ` +
-                `schema-based isolation, set tenantStrategy:"schema_qualified" ` +
-                `or use a schema-name tenant marker. If you use MetadataContext ` +
-                `only for app-side context, set tenantStrategy:"tenant_column" ` +
-                `to silence this warning.`,
-            );
-          }
-        } else {
-          const safeSchema = this.escapeIdentifier(schema);
-          await client.query(`SET LOCAL search_path TO ${safeSchema}`);
-        }
-      }
+    if (this.tenantStrategy === "tenant_column" || this.tenantStrategy === "database") {
+      return undefined;
     }
+    if (tenant === "public") return this.schema;
+    // The default search_path strategy treats the active MetadataContext
+    // tenant as a PG schema name. When apps open MetadataContext.run()
+    // frames with non-schema markers (e.g. a numeric workspace id used
+    // purely for app-side context propagation), the SET LOCAL would
+    // crash every transaction. Stay on the configured schema and warn once
+    // so users who *did* intend schema isolation notice the misconfiguration.
+    if (!PostgresConnector.isValidIdentifier(tenant)) {
+      if (!this.warnedInvalidTenantIds.has(tenant)) {
+        this.warnedInvalidTenantIds.add(tenant);
+        this.logger.warn(
+          `MetadataContext tenant "${tenant}" is not a valid PostgreSQL ` +
+            `identifier — skipping SET LOCAL search_path. If you intended ` +
+            `schema-based isolation, set tenantStrategy:"schema_qualified" ` +
+            `or use a schema-name tenant marker. If you use MetadataContext ` +
+            `only for app-side context, set tenantStrategy:"tenant_column" ` +
+            `to silence this warning.`,
+        );
+      }
+      return this.schema;
+    }
+    return tenant;
+  }
+
+  /**
+   * Points the open transaction's search_path at `schema` until it ends.
+   *
+   * @internal
+   */
+  async setLocalSearchPath(connection: any, schema: string): Promise<void> {
+    const client = connection as PoolClient;
+    await client.query(`SET LOCAL search_path TO ${this.escapeIdentifier(schema)}`);
   }
 
   async rollback(connection: any): Promise<void> {
