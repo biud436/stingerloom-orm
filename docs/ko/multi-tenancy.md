@@ -459,6 +459,26 @@ SELECT * FROM "user"
 
 두 전략 모두 동일한 결과를 만듭니다. 차이는 순수하게 성능에만 있어요. search_path를 써야 하는 특별한 이유(예: 스키마 한정 이름을 지원하지 않는 도구와의 호환)가 없다면, **`schema_qualified`가 더 나은 기본값**입니다.
 
+### 트랜잭션 안에서 테넌트 바꾸기 {#switching-tenants-inside-a-transaction}
+
+테넌트 스키마는 모두 한 데이터베이스 안에 있으므로, 트랜잭션 하나에 여러 테넌트의 작업을 담을 수 있습니다. 트랜잭션을 어느 테넌트에서 시작했든, 각 문장은 그 문장을 보낼 때 활성화된 테넌트의 스키마에서 실행됩니다:
+
+```typescript
+await MetadataContext.run("acme_corp", async () => {
+  await em.transaction(async () => {
+    await em.save(Invoice, { total: 100 });      // → "acme_corp"
+
+    await MetadataContext.run("globex", async () => {
+      await em.save(Invoice, { total: 250 });    // → "globex"
+    });
+  });
+});
+```
+
+`search_path` 전략에서는 트랜잭션의 `SET LOCAL`이 트랜잭션을 시작한 테넌트를 가리킵니다. 테넌트가 바뀌면 ORM이 다음 문장 앞에 `SET LOCAL search_path`를 한 번 더 보내고, 작업이 원래 테넌트로 돌아올 때도 다시 보냅니다. 바뀔 때마다 라운드 트립이 하나 늘 뿐이고, 테넌트가 그대로면 추가 문장은 없어요. `schema_qualified`에서는 테넌트 테이블이 이미 SQL에 스키마와 함께 적혀 있습니다. 테넌트 트랜잭션 안의 `"public"` 작업은 같은 방식으로 기본 스키마를 다시 가리키게 됩니다. `MetadataContext.run()` 밖에서 시작한 트랜잭션도 마찬가지로, 테넌트 블록 안의 작업은 그 테넌트의 스키마로 갑니다.
+
+모든 테넌트의 작업은 함께 커밋되거나 함께 롤백됩니다. `ROLLBACK TO SAVEPOINT`(실패한 `NESTED` 트랜잭션)는 세이브포인트를 만들 때의 search_path도 되돌리며, 그 뒤의 문장도 계속 각자의 테넌트 스키마에서 실행됩니다. [`database` 전략](#cross-tenant-transactions-are-forbidden)은 다릅니다. 그쪽은 테넌트마다 데이터베이스가 따로라서, 트랜잭션 안에서 테넌트를 바꾸면 예외가 납니다.
+
 ### 공유 테이블: 엔티티를 스키마에 고정하기
 
 두 전략 모두 *모든* 테이블을 테넌트 스키마로 보냅니다. 테넌트 데이터라면 그게 목적이지만, 모든 테넌트가 함께 쓰는 테이블도 있어요. 구독 플랜, 국가 코드, 피처 플래그, 그리고 `tenants` 테이블 자체가 그렇습니다. `MetadataContext.run("acme_corp", ...)` 안에서는 이런 테이블에 닿을 수 없습니다. `search_path`는 테넌트 스키마만 지정하고(`public` fallback이 없습니다), `schema_qualified`는 이름을 `"acme_corp"."plan"`으로 바꿔 쓰니까요. PostgreSQL은 `relation "plan" does not exist`로 답하고, 지금까지의 유일한 우회책은 테이블을 테넌트 스키마마다 복제하는 것이었습니다. 테넌트마다 비어 있는 사본이 하나씩 생기는 셈이죠.
@@ -868,7 +888,7 @@ publicTenantBehavior: "throw"     // MISSING_TENANT_CONTEXT 로 거부
 
 모든 요청에 테넌트가 *반드시* 설정되어야 하는 HTTP 서비스에서는 `"throw"`를 추천합니다. 컨텍스트 누락이 silent admin DB 쓰기 대신 fail-fast 버그가 됩니다.
 
-### Cross-tenant 트랜잭션은 금지됩니다
+### Cross-tenant 트랜잭션은 금지됩니다 {#cross-tenant-transactions-are-forbidden}
 
 SQL 트랜잭션은 단일 connection에 묶이고, connection은 단일 물리 DB에 묶입니다. 따라서 트랜잭션 도중 테넌트를 바꾸면 atomicity를 보장할 방법이 없습니다:
 
@@ -886,6 +906,8 @@ await MetadataContext.run("acme", async () => {
 ```
 
 두 테넌트에 atomic 하게 써야 하는 상황이라면 사실 multi-tenant 문제가 아니라 distributed-transaction 문제입니다. 애플리케이션 레이어에서 saga / outbox 패턴을 쓰세요.
+
+PostgreSQL 스키마 전략은 모든 테넌트를 한 데이터베이스에 두므로, 그쪽에서는 트랜잭션 하나가 여러 테넌트에 걸칠 수 있습니다. [트랜잭션 안에서 테넌트 바꾸기](#switching-tenants-inside-a-transaction)를 참고하세요.
 
 ### 관리 작업: `forEachTenant`
 
