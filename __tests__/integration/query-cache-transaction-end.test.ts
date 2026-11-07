@@ -7,7 +7,7 @@
  * write left that entry alive after COMMIT until its TTL ran out; the
  * invalidation now runs when the transaction ends.
  *
- * SQLite (one shared connection, the reader sees uncommitted rows):
+ * SQLite (one shared connection, the reader waits for the transaction):
  * __tests__/integration/sqlite/query-cache-transaction-end.test.ts
  */
 import "reflect-metadata";

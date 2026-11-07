@@ -417,7 +417,7 @@ Stingerloom supports three propagation modes:
 | Propagation | Behavior |
 |-------------|----------|
 | `REQUIRED` (default) | Join the existing transaction if one exists; otherwise create a new one |
-| `REQUIRES_NEW` | Always create a new, independent transaction (new database connection) |
+| `REQUIRES_NEW` | Always create a new, independent transaction (new database connection; refused inside a transaction [on SQLite](#transactions-on-sqlite)) |
 | `NESTED` | Create a savepoint within the existing transaction; rollback only the savepoint on failure |
 
 ```typescript
@@ -454,6 +454,25 @@ async placeOrder(order: Order) {
 The two transactions commit separately; there is no two-phase commit across databases. A transaction opened inside another connection's does not hide the outer one, so `this.em` inside the analytics callback still joins the default transaction. Propagation follows the same rule: `REQUIRED` and `NESTED` look only for a transaction on their own connection, so `@Transactional({ connectionName: "analytics" })` inside a default transaction opens one on `"analytics"`.
 
 The one way to run a manager's work on another connection is `em.transaction(cb, { connectionName })`: inside the callback, that manager's statements join the transaction on the named connection. Earlier versions ran every manager's statements in whichever transaction was active, so a manager on another connection read and wrote the wrong database.
+
+### Transactions on SQLite
+
+SQLite gives the ORM a single connection, and a transaction open on it takes every statement run on it. Transactions on SQLite therefore take turns: one that starts while another is open waits until that one commits or rolls back. Reads and writes outside the open transaction wait the same way, so they never see rows it has not committed. Work inside the transaction, the callback and everything it awaits, runs at once.
+
+```typescript
+// Both commit, one after the other.
+await Promise.all([
+  em.transaction(async (tx) => { await tx.save(Order, first); }),
+  em.transaction(async (tx) => { await tx.save(Order, second); }),
+]);
+```
+
+Two things follow from the single connection:
+
+- `REQUIRES_NEW` inside a transaction cannot get a connection of its own. It throws an `OrmError` with code `UNSUPPORTED_OPERATION` before it begins, and the outer transaction carries on unaffected. Use `REQUIRED` to join the open transaction, or `NESTED` for a savepoint.
+- Waiting work gives up after `pool.acquireTimeoutMs` (30 seconds by default; `0` waits without a limit) with `CONNECTION_FAILED`. A transaction that awaits work running outside it, such as a promise another request created, holds the connection that work waits for, so both wait until the timeout. Do that work inside the callback or after the transaction.
+
+Earlier versions issued a second BEGIN on the connection instead: the second transaction failed and its ROLLBACK undid the first one's work, a read next to an open transaction could return rows that were then rolled back, and `REQUIRES_NEW` rolled the outer transaction back. A `TransactionSessionManager` you drive yourself ([below](#manual-transaction-management)) still shares the connection without taking turns.
 
 ---
 

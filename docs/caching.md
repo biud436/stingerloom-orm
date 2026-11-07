@@ -85,7 +85,7 @@ The cache never changes the semantics of a query that must be current:
 
 Invalidation follows the same line — a write's invalidation never runs before the write is final:
 
-- **A write invalidates when its transaction ends.** Inside `em.transaction()`, `@Transactional`, or the transaction a cascading `save()` / `delete()` opens, the invalidation is held and runs after COMMIT — and after ROLLBACK too. While the transaction is open, a cached read outside it can fill an entry from the rows the transaction is replacing (PostgreSQL, MySQL) or from its uncommitted rows (SQLite, whose sessions share one connection); neither entry outlives the transaction. A write outside a transaction invalidates as soon as it returns, whether it succeeded or failed.
+- **A write invalidates when its transaction ends.** Inside `em.transaction()`, `@Transactional`, or the transaction a cascading `save()` / `delete()` opens, the invalidation is held and runs after COMMIT — and after ROLLBACK too. While the transaction is open, a cached read outside it can fill an entry from the rows the transaction is replacing (PostgreSQL, MySQL), and that entry does not outlive the transaction. On SQLite, whose sessions share one connection, the read waits for the transaction to end. A write outside a transaction invalidates as soon as it returns, whether it succeeded or failed.
 - **A read still running when its tables are invalidated is not stored**, so rows fetched just before a COMMIT never land in the cache after it.
 - **`invalidate()` and `clear()` inside a transaction run immediately and again when the transaction ends.**
 

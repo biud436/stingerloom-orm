@@ -229,10 +229,10 @@ await em.register({
 |--------|-------|-----------|--------|
 | `max` | Yes | Yes | Ignored |
 | `min` | -- | Yes | Ignored |
-| `acquireTimeoutMs` | -- | Yes | Ignored |
+| `acquireTimeoutMs` | -- | Yes | Yes |
 | `idleTimeoutMs` | -- | Yes | Ignored |
 
-> **Note:** SQLite is file-based with a single connection, so pool settings are ignored. There is no TCP overhead because reads and writes go directly to a file on disk.
+> **Note:** SQLite is file-based with a single connection, so the pool settings are ignored except `acquireTimeoutMs`: how long a statement or a transaction waits while another transaction holds the connection (see [Transactions on SQLite](./transactions.md#transactions-on-sqlite)). There is no TCP overhead because reads and writes go directly to a file on disk.
 
 ---
 

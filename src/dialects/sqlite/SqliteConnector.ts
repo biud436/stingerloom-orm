@@ -15,6 +15,7 @@ import { DbVersion, detectDbVersion } from "../DbVersion";
 import { parseInlineFlags } from "../../core/expressions/RegexPattern";
 import { planSafeIntegers, normalizeSafeIntegerRows } from "./SqliteSafeIntegers";
 import { sanitizeSqliteBindValues } from "./SqliteBindValues";
+import { DEFAULT_SQLITE_WAIT_MS, SqliteTransactionGate } from "./SqliteTransactionGate";
 
 /**
  * SQLite connector implementation.
@@ -64,6 +65,10 @@ export class SqliteConnector extends IConnector {
 
       this.db = new DatabaseConstructor(database);
       this.isDebug = !!logging;
+      // Work waits for the one connection while another flow's transaction
+      // holds it, as long as a pool waits for a free connection.
+      SqliteTransactionGate.of(this.db).waitTimeoutMs =
+        options.pool?.acquireTimeoutMs ?? DEFAULT_SQLITE_WAIT_MS;
 
       // Enable WAL mode for better performance
       this.db.pragma("journal_mode = WAL");
@@ -160,7 +165,7 @@ export class SqliteConnector extends IConnector {
         this.logger.info(`Query: ${rawSql}`);
       }
 
-      const raw = this.executeRaw(db, rawSql);
+      const raw = await this.execute(db, rawSql);
       if (connection) {
         // Mirror PostgresConnector's top-level `rowCount` so EntityManager's
         // affected-rows extraction (`... : queryResult.rowCount ?? 0`) works on
@@ -181,7 +186,7 @@ export class SqliteConnector extends IConnector {
         this.logger.info(`Query: ${sql}, # ${stringifyForLog(values)}`);
       }
 
-      const raw = this.executeRaw(db, sql, values);
+      const raw = await this.execute(db, sql, values);
       if (connection) {
         // Mirror PostgresConnector's top-level `rowCount` so EntityManager's
         // affected-rows extraction (`... : queryResult.rowCount ?? 0`) works on
@@ -236,6 +241,14 @@ export class SqliteConnector extends IConnector {
       cache.delete(cache.keys().next().value!);
     }
     return stmt;
+  }
+
+  /**
+   * Runs the statement on `db` now, or in its turn when another flow's
+   * transaction holds the connection (see {@link SqliteTransactionGate}).
+   */
+  private execute(db: Database.Database, sql: string, values?: any[]): any {
+    return SqliteTransactionGate.of(db).run(() => this.executeRaw(db, sql, values));
   }
 
   private executeRaw(db: Database.Database, sql: string, values?: any[]): any {

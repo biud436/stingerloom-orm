@@ -417,7 +417,7 @@ Stingerloom은 세 가지 전파 모드를 지원합니다.
 | 전파 방식 | 동작 |
 |-------------|----------|
 | `REQUIRED` (기본값) | 기존 트랜잭션이 있으면 합류, 없으면 새로 생성 |
-| `REQUIRES_NEW` | 항상 새 독립 트랜잭션 생성 (새 DB 연결) |
+| `REQUIRES_NEW` | 항상 새 독립 트랜잭션 생성 (새 DB 연결, [SQLite](#transactions-on-sqlite)에서는 트랜잭션 안에서 거부) |
 | `NESTED` | 기존 트랜잭션 내에 savepoint 생성, 실패 시 해당 savepoint만 롤백 |
 
 ```typescript
@@ -454,6 +454,25 @@ async placeOrder(order: Order) {
 두 트랜잭션은 따로 커밋됩니다. 데이터베이스를 가로지르는 2단계 커밋은 없어요. 다른 커넥션의 트랜잭션 안에서 연 트랜잭션이 바깥 트랜잭션을 가리지 않으므로, analytics 콜백 안의 `this.em`도 여전히 default 트랜잭션에 합류합니다. 전파도 같은 규칙을 따릅니다. `REQUIRED`와 `NESTED`는 자기 커넥션의 트랜잭션만 찾기 때문에, default 트랜잭션 안의 `@Transactional({ connectionName: "analytics" })`는 `"analytics"`에 새 트랜잭션을 엽니다.
 
 매니저의 작업을 다른 커넥션에서 실행하는 방법은 `em.transaction(cb, { connectionName })` 하나뿐입니다. 콜백 안에서는 그 매니저의 문장이 지정한 커넥션의 트랜잭션에 합류해요. 이전 버전은 모든 매니저의 문장을 그때 활성인 트랜잭션에서 실행했기 때문에, 다른 커넥션의 매니저가 엉뚱한 데이터베이스를 읽고 썼습니다.
+
+### SQLite의 트랜잭션 {#transactions-on-sqlite}
+
+SQLite에서 ORM이 쓰는 커넥션은 하나뿐이고, 그 위에 열린 트랜잭션은 커넥션에서 실행되는 모든 문장을 가져갑니다. 그래서 SQLite의 트랜잭션은 차례를 지킵니다. 다른 트랜잭션이 열려 있는 동안 시작한 트랜잭션은 앞의 트랜잭션이 커밋하거나 롤백할 때까지 기다립니다. 열린 트랜잭션 바깥의 읽기와 쓰기도 똑같이 기다리므로 아직 커밋되지 않은 행을 볼 일이 없어요. 트랜잭션 안의 작업, 즉 콜백과 콜백이 기다리는 작업은 바로 실행됩니다.
+
+```typescript
+// Both commit, one after the other.
+await Promise.all([
+  em.transaction(async (tx) => { await tx.save(Order, first); }),
+  em.transaction(async (tx) => { await tx.save(Order, second); }),
+]);
+```
+
+커넥션이 하나뿐이라서 생기는 일이 두 가지 있습니다.
+
+- 트랜잭션 안의 `REQUIRES_NEW`는 자기 커넥션을 따로 얻을 수 없습니다. 시작하기 전에 코드가 `UNSUPPORTED_OPERATION`인 `OrmError`를 던지고, 바깥 트랜잭션은 영향 없이 이어집니다. 열린 트랜잭션에 합류하려면 `REQUIRED`를, savepoint가 필요하면 `NESTED`를 쓰세요.
+- 기다리는 작업은 `pool.acquireTimeoutMs`(기본 30초, `0`이면 제한 없이 대기)가 지나면 `CONNECTION_FAILED`로 실패합니다. 트랜잭션이 바깥에서 실행 중인 작업(예를 들어 다른 요청이 만든 promise)을 기다리면, 그 작업이 기다리는 커넥션을 트랜잭션이 쥐고 있는 셈이라 양쪽 모두 타임아웃까지 기다리게 됩니다. 그런 작업은 콜백 안에서 하거나 트랜잭션이 끝난 뒤에 하세요.
+
+이전 버전은 이럴 때 커넥션에 BEGIN을 한 번 더 보냈습니다. 그래서 두 번째 트랜잭션이 실패하면서 그 ROLLBACK이 첫 번째 트랜잭션의 작업까지 되돌렸고, 열린 트랜잭션 옆의 읽기가 나중에 롤백될 행을 반환할 수 있었으며, `REQUIRES_NEW`는 바깥 트랜잭션을 롤백했습니다. 직접 다루는 `TransactionSessionManager`([아래](#수동-트랜잭션-관리))는 지금도 차례를 지키지 않고 커넥션을 함께 씁니다.
 
 ---
 
