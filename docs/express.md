@@ -771,7 +771,7 @@ pool: {
 
 Sizing guidance lives in the [Production Guide](./production-guide.md#connection-pool-size). Three dialect-specific facts that decide how your Express app behaves under load:
 
-- **SQLite ignores `pool` entirely.** There is one connection. Concurrent transactions are not possible — the practical consequence is that helpers running a count and a data query in parallel must run them sequentially, which is what the built-in pagination helpers do.
+- **SQLite reads only `pool.acquireTimeoutMs`.** There is one connection, so transactions take turns on it: a request whose transaction starts while another is open waits for it, and so does any read or write outside that transaction ([Transactions on SQLite](./transactions.md#transactions-on-sqlite)). `acquireTimeoutMs` caps the wait. Overlapping requests are safe; they just do not run their statements in parallel.
 - **MySQL only receives `max`.** `acquireTimeoutMs` is not forwarded, and the ORM does not set `queueLimit`, so when the pool is saturated `mysql2` **queues callers indefinitely**. Requests pile up rather than failing fast; a slow query storm turns into unbounded latency. Defend with a per-query `timeout` and a request timeout at the HTTP layer.
 - **PostgreSQL honors all four.** A saturated pool rejects after `acquireTimeoutMs`, and the rejection propagates as the raw `pg` error — not an `OrmError`.
 
@@ -1136,7 +1136,7 @@ it("creates a user", async () => {
 
 The helper defaults to `type: "sqlite"`, `database: ":memory:"`, `synchronize: true`, and `connectionName: "test"` — the distinct connection name is what keeps it from colliding with an application manager registered as `"default"` in the same process.
 
-Remember that SQLite differs from your production database in ways tests can hide: no `SKIP LOCKED`, no concurrent transactions, and looser type affinity. Keep a smaller integration suite against the real engine for anything that depends on those.
+Remember that SQLite differs from your production database in ways tests can hide: no `SKIP LOCKED`, transactions that take turns instead of running concurrently, and looser type affinity. Keep a smaller integration suite against the real engine for anything that depends on those.
 
 ---
 

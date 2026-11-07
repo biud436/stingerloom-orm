@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { AsyncLocalStorage } from "async_hooks";
 import { TransactionSessionManager } from "../dialects/TransactionSessionManager";
+import { runInTransactionFlow } from "../dialects/TransactionFlow";
 import { TRANSACTION_ISOLATION_LEVEL } from "../dialects/IsolationLevel";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
@@ -217,9 +218,18 @@ export function Transactional(
  * Runs `fn` in a transaction on a connection of its own, committed when `fn`
  * resolves and rolled back when it throws. The connection goes back to the
  * pool however it ends — including when BEGIN itself fails, which used to
- * leave it checked out.
+ * leave it checked out. The transaction runs in a flow of its own (see
+ * `runInTransactionFlow`).
  */
-async function runInNewTransaction(
+function runInNewTransaction(
+  connectionName: string | undefined,
+  isolationLevel: TRANSACTION_ISOLATION_LEVEL | undefined,
+  fn: () => Promise<unknown>,
+): Promise<unknown> {
+  return runInTransactionFlow(() => openTransaction(connectionName, isolationLevel, fn));
+}
+
+async function openTransaction(
   connectionName: string | undefined,
   isolationLevel: TRANSACTION_ISOLATION_LEVEL | undefined,
   fn: () => Promise<unknown>,

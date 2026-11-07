@@ -21,6 +21,7 @@ import { SqliteCapabilities } from "../DialectCapabilities";
 import { resolveSqliteCapabilities } from "../resolveCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
 import { sqliteQueryWithOptions } from "./sqliteQueryWithOptions";
+import { SqliteTransactionGate } from "./SqliteTransactionGate";
 
 /**
  * SQL driver implementation for SQLite.
@@ -68,7 +69,7 @@ export class SqliteDriver implements ISqlDriver {
   async queryWithOptions(query: Sql, options: DriverQueryOptions): Promise<any[]> {
     const sqliteConnector = this.connector as SqliteConnector;
     const db = await sqliteConnector.getConnection();
-    return sqliteQueryWithOptions(db, query, options);
+    return SqliteTransactionGate.of(db).run(() => sqliteQueryWithOptions(db, query, options));
   }
 
   /**

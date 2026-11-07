@@ -3,12 +3,13 @@
  * Query cache invalidation is tied to the end of the transaction a write ran
  * in, not to the write itself.
  *
- * SQLite runs every session on one shared connection, so a read issued
- * outside an open transaction sees that transaction's uncommitted rows and
- * can cache them. These tests hold a transaction open, read outside it with
- * a cache request, then end the transaction:
- * - after ROLLBACK the cache must not keep a value that was never committed
- * - after COMMIT an entry filled while the transaction was open is dropped
+ * SQLite runs every session on one shared connection. A read issued outside
+ * an open transaction used to see that transaction's uncommitted rows and
+ * cache them; it now waits for the transaction to end. These tests hold a
+ * transaction open, start a cached read outside it, then end the
+ * transaction:
+ * - after ROLLBACK the read returns, and the cache keeps, the committed value
+ * - after COMMIT the read returns, and the cache keeps, the new value
  * - the transaction the ORM opens itself for a cascading save behaves the same
  *
  * The PostgreSQL / MySQL side (a reader that sees the state the transaction
@@ -59,6 +60,15 @@ function gate(): { promise: Promise<void>; open: () => void } {
   return { promise, open };
 }
 
+/** Starts `read` and reports whether it has settled yet. */
+function pending<T>(read: Promise<T>): { result: Promise<T>; settled: () => boolean } {
+  let settled = false;
+  const result = read.finally(() => (settled = true));
+  return { result, settled: () => settled };
+}
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
 async function errorOf(promise: Promise<unknown>): Promise<unknown> {
   try {
     await promise;
@@ -107,15 +117,14 @@ describe("[Integration] SQLite: query cache invalidation at transaction end", ()
     });
 
     await written.promise;
-    try {
-      // Outside the transaction's async context: the shared connection shows
-      // the uncommitted row, and the read caches it.
-      expect(await cachedScore()).toBe(999);
-    } finally {
-      release.open();
-    }
+    // Outside the transaction's async context: the read waits for it to end.
+    const read = pending(cachedScore());
+    await tick();
+    expect(read.settled()).toBe(false);
+    release.open();
     expect(String(await errorOf(tx))).toMatch(/abort/);
 
+    expect(await read.result).toBe(10);
     expect(await cachedScore()).toBe(10);
   });
 
@@ -129,15 +138,14 @@ describe("[Integration] SQLite: query cache invalidation at transaction end", ()
     });
 
     await written.promise;
-    try {
-      await cachedScore();
-      expect(em.queryCache?.stats.entries).toBe(1);
-    } finally {
-      release.open();
-    }
+    const read = pending(cachedScore());
+    await tick();
+    expect(read.settled()).toBe(false);
+    expect(em.queryCache?.stats.entries).toBe(0);
+    release.open();
     await tx;
 
-    expect(em.queryCache?.stats.entries).toBe(0);
+    expect(await read.result).toBe(555);
     expect(await cachedScore()).toBe(555);
   });
 
@@ -157,12 +165,12 @@ describe("[Integration] SQLite: query cache invalidation at transaction end", ()
 
       await inserting.promise;
       // The cascaded author is inserted but not committed.
-      try {
-        expect(await listCached()).toEqual(["kim", "lee"]);
-      } finally {
-        release.open();
-      }
+      const read = pending(listCached());
+      await tick();
+      expect(read.settled()).toBe(false);
+      release.open();
       expect(String(await errorOf(save))).toMatch(/post rejected/);
+      expect(await read.result).toEqual(["kim"]);
     } finally {
       em.off("beforeInsert", stall);
     }
@@ -184,12 +192,12 @@ describe("[Integration] SQLite: query cache invalidation at transaction end", ()
       const save = em.save(QcteAuthor, { name: "park", score: 3 });
 
       await inserted.promise;
-      try {
-        expect(await listCached()).toEqual(["kim", "park"]);
-      } finally {
-        release.open();
-      }
+      const read = pending(listCached());
+      await tick();
+      expect(read.settled()).toBe(false);
+      release.open();
       expect(String(await errorOf(save))).toMatch(/author rejected/);
+      expect(await read.result).toEqual(["kim"]);
     } finally {
       em.off("afterInsert", stall);
     }

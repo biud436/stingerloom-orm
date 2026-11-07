@@ -229,10 +229,10 @@ await em.register({
 |------|-------|-----------|--------|
 | `max` | 예 | 예 | 무시됨 |
 | `min` | -- | 예 | 무시됨 |
-| `acquireTimeoutMs` | -- | 예 | 무시됨 |
+| `acquireTimeoutMs` | -- | 예 | 예 |
 | `idleTimeoutMs` | -- | 예 | 무시됨 |
 
-> **참고:** SQLite는 단일 연결 파일 기반이라 풀 설정이 무시돼요. 읽기/쓰기가 디스크 파일로 직접 가서 TCP 오버헤드가 없어요.
+> **참고:** SQLite는 단일 연결 파일 기반이라 `acquireTimeoutMs`를 뺀 풀 설정이 무시돼요. `acquireTimeoutMs`는 다른 트랜잭션이 커넥션을 쥐고 있는 동안 문장이나 트랜잭션이 기다리는 시간입니다([SQLite의 트랜잭션](./transactions.md#transactions-on-sqlite) 참고). 읽기/쓰기가 디스크 파일로 직접 가서 TCP 오버헤드가 없어요.
 
 ---
 

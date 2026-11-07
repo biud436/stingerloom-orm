@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
+import { runInTransactionFlow } from "../../dialects/TransactionFlow";
 import { ReplicationNodeConfig } from "../../dialects/ReplicationRouter";
 import {
   ambientSessionFor,
@@ -67,6 +68,19 @@ export class TransactionRunner {
       return fn(reusable);
     }
 
+    // The transaction runs in a flow of its own, which lets a connection
+    // that serves one transaction at a time (SQLite) tell the transaction's
+    // statements from other work.
+    return runInTransactionFlow(() =>
+      this.runInNewSession(fn, readNodeOverride, txOptions),
+    );
+  }
+
+  private async runInNewSession<R>(
+    fn: (session: TransactionSessionManager) => Promise<R>,
+    readNodeOverride: ReplicationNodeConfig | null | undefined,
+    txOptions: ExecuteTransactionOptions | undefined,
+  ): Promise<R> {
     const session = new TransactionSessionManager();
     let committed = false;
     try {

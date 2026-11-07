@@ -33,7 +33,9 @@ import {
 /**
  * Connection pool configuration options.
  * Shared between MySQL and PostgreSQL.
- * SQLite is file-based, uses a single connection, and ignores pool settings.
+ * SQLite is file-based and uses a single connection: it reads only
+ * `acquireTimeoutMs`, the time work waits for that connection while a
+ * transaction holds it.
  */
 export interface PoolOptions {
   /**
@@ -52,7 +54,9 @@ export interface PoolOptions {
 
   /**
    * Maximum time (ms) to wait for a connection to become available.
-   * PostgreSQL: connectionTimeoutMillis
+   * PostgreSQL: connectionTimeoutMillis. SQLite: how long a statement or a
+   * transaction waits while another transaction holds the single
+   * connection (0 waits without a limit).
    * @default 30000
    */
   acquireTimeoutMs?: number;
@@ -218,7 +222,8 @@ interface BaseDatabaseClientOptions {
   /**
    * Connection pool configuration.
    * Applies to MySQL and PostgreSQL.
-   * SQLite uses a single file-based connection, so this option is ignored.
+   * SQLite uses a single file-based connection and reads only
+   * `acquireTimeoutMs`.
    */
   pool?: PoolOptions;
 

@@ -375,9 +375,9 @@ export class QueryResultCache {
    * tags are held and dropped when it ends — after COMMIT and after
    * ROLLBACK alike. Until then a read outside the transaction can fill an
    * entry from the rows the transaction is replacing (PostgreSQL, MySQL:
-   * stale once it commits) or from its uncommitted rows (SQLite's shared
-   * connection: never true once it rolls back); dropping at the write
-   * itself would leave that entry alive until its TTL.
+   * stale once it commits; SQLite's shared connection holds that read until
+   * the transaction ends); dropping at the write itself would leave that
+   * entry alive until its TTL.
    */
   async invalidateEntity(
     entity: ClazzType<any>,
