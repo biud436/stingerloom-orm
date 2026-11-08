@@ -13,7 +13,6 @@ This directory contains example projects demonstrating how to use Stingerloom OR
 | [nestjs-blog](./nestjs-blog) | MySQL | Relations (M2M), upsert, soft delete, schema diff, EXPLAIN |
 | [nestjs-linear-clone](./nestjs-linear-clone) | PostgreSQL | Issue tracker — production-grade SQL (CTEs, window functions, complex queries) |
 | [nestjs-multitenant](./nestjs-multitenant) | PostgreSQL | Schema-per-tenant + AsyncLocalStorage middleware |
-| [prisma-import-demo](./prisma-import-demo) | MySQL | Prisma schema → Stingerloom entity codegen |
 
 ## Conventions
 
@@ -184,29 +183,4 @@ cd nestjs-multitenant
 pnpm install
 pnpm start:dev
 # curl -H "x-tenant-id: tenant_a" http://localhost:3000/users
-```
-
----
-
-### [prisma-import-demo](./prisma-import-demo)
-
-Showcases the `stingerloom-prisma-import` workflow: write your data model
-in Prisma syntax, run a single command, and use the generated decorator
-entities exactly like hand-written ones.
-
-- **`prisma/schema.prisma` → `src/generated/*.entity.ts`** via `pnpm generate`
-- **E-commerce domain**: Customer / Product / Order / OrderItem with enums
-  and a composite `@@unique`
-- Demonstrates how to wire the generated entities into
-  `StingerloomOrmModule.forFeature([...])`
-
-**Tech Stack**: NestJS, TypeScript, MySQL, Prisma schema, Stingerloom ORM
-
-**Quick Start**:
-
-```bash
-cd prisma-import-demo
-pnpm install
-pnpm generate      # parse schema.prisma → src/generated/
-pnpm start         # requires MySQL with ecommerce_db
 ```

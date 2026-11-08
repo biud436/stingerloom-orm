@@ -22,7 +22,7 @@ await em.register({ /* ... */, logging: true });
 
 1.x의 `@stingerloom/orm`은 모듈을 통째로 다시 내보냈습니다. 그 바람에 엔진 내부(`SchemaRegistrar`, `CascadeHandler`, `EntityManagerInternals`)와 표현식 렌더링 함수, 내부 타입 가드까지 673개가 루트에서 그냥 import됐습니다. 2.0부터는 공개할 것만 골라서 이름으로 내보냅니다.
 
-import가 풀리지 않는다면 원래 공개 API가 아니던 심볼입니다. 대체 경로는 두지 않았으니, 꼭 필요한 쓰임새가 있다면 이슈로 알려 주세요. 진입점 자체는 그대로입니다 — `@stingerloom/orm`, `/nestjs`, `/prisma-import`, 그리고 다이얼렉트별 서브패스.
+import가 풀리지 않는다면 원래 공개 API가 아니던 심볼입니다. 대체 경로는 두지 않았으니, 꼭 필요한 쓰임새가 있다면 이슈로 알려 주세요. 진입점 자체는 그대로입니다 — `@stingerloom/orm`, `/nestjs`, 그리고 다이얼렉트별 서브패스.
 
 ### 직접 만든 드라이버
 

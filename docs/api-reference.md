@@ -1159,42 +1159,6 @@ class IntrospectionTypeMapper {
 }
 ```
 
-### PrismaImporter
-
-[Usage ->](./prisma-import.md)
-
-Re-exported from `src/integration/prisma-import/`. Converts a `schema.prisma`
-file into decorator-based entity files. Also available as the
-`stingerloom-prisma-import` CLI binary. Requires `@mrleebo/prisma-ast` as a
-peer dependency.
-
-```typescript
-interface PrismaImportOptions {
-  schemaPath: string;
-  outputDir: string;
-  force?: boolean;                                  // overwrite existing files
-  provider?: "postgresql" | "mysql" | "sqlite";     // override detected provider
-}
-
-interface PrismaImportResult {
-  written: string[];
-  skipped: string[];
-  warnings: string[];
-  files: Map<string, string>;                       // filename → source
-}
-
-class PrismaImporter {
-  // Parse + write to disk.
-  import(options: PrismaImportOptions): Promise<PrismaImportResult>;
-  // Parse + return generated source as a Map (no disk I/O).
-  generate(source: string, provider?: string): Map<string, string>;
-}
-```
-
-The module also re-exports the lower-level building blocks (`PrismaParser`,
-`PrismaSchemaAnalyzer`, `RelationResolver`, `TypeMapper`, `FileWriter`) for
-custom pipelines.
-
 ## Errors
 
 All ORM errors extend `OrmError`, which includes an optional `suggestion` field with an actionable fix hint. This helps you diagnose problems without consulting documentation:

@@ -1157,41 +1157,6 @@ class IntrospectionTypeMapper {
 }
 ```
 
-### PrismaImporter
-
-[사용법 ->](./prisma-import.md)
-
-`src/integration/prisma-import/`에서 재내보내집니다. `schema.prisma` 파일을
-데코레이터 기반 엔티티 파일로 변환합니다. `stingerloom-prisma-import` CLI
-바이너리로도 제공됩니다. 피어 의존성으로 `@mrleebo/prisma-ast`가 필요합니다.
-
-```typescript
-interface PrismaImportOptions {
-  schemaPath: string;
-  outputDir: string;
-  force?: boolean;                                  // 기존 파일 덮어쓰기
-  provider?: "postgresql" | "mysql" | "sqlite";     // 감지된 프로바이더 강제 지정
-}
-
-interface PrismaImportResult {
-  written: string[];
-  skipped: string[];
-  warnings: string[];
-  files: Map<string, string>;                       // 파일명 → 소스
-}
-
-class PrismaImporter {
-  // 파싱 후 디스크에 작성.
-  import(options: PrismaImportOptions): Promise<PrismaImportResult>;
-  // 파싱 후 생성 소스를 Map으로 반환 (디스크 I/O 없음).
-  generate(source: string, provider?: string): Map<string, string>;
-}
-```
-
-이 모듈은 `PrismaParser`, `PrismaSchemaAnalyzer`, `RelationResolver`,
-`TypeMapper`, `FileWriter` 같은 하위 레벨 빌딩 블록도 재내보내어 커스텀
-파이프라인을 구성할 수 있게 해 줍니다.
-
 ## Errors
 
 모든 ORM 에러는 `OrmError`를 상속하고, `suggestion` 필드에 해결 힌트가 포함될 수 있어요. 문서를 찾아보지 않아도 문제를 진단할 수 있어요:

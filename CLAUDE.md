@@ -8,8 +8,8 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 - **패키지 매니저:** pnpm
 - **npm 배포:** https://www.npmjs.com/package/@stingerloom/orm
 - **진입점:** `dist/index.js` (CJS) / `dist/esm/index.js` (ESM) / `dist/index.d.ts`
-- **서브패스:** `@stingerloom/orm/nestjs`, `@stingerloom/orm/prisma-import`
-- **CLI:** `stingerloom` (마이그레이션), `stingerloom-prisma-import` (Prisma 스키마 변환)
+- **서브패스:** `@stingerloom/orm/nestjs`
+- **CLI:** `stingerloom` (마이그레이션, 인트로스펙션)
 
 ---
 
@@ -48,8 +48,7 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 │   ├── schema/                 # defineEntity 코드 우선 빌더 (t 필드 빌더, InferEntity),
 │   │                           # EntitySchema (데코레이터 없는 엔티티 정의)
 │   ├── integration/
-│   │   ├── nestjs/             # StingerloomOrmModule, @InjectRepository, @InjectEntityManager
-│   │   └── prisma-import/      # PrismaImporter, TypeMapper, RelationResolver
+│   │   └── nestjs/             # StingerloomOrmModule, @InjectRepository, @InjectEntityManager
 │   ├── types/                  # ColumnType, CascadeType, ReferentialAction, DeepPartial 등
 │   ├── utils/                  # Logger, ReflectManager, uuid-v7, camelToSnakeCase 등
 │   └── errors/                 # OrmError, OrmErrorCode + 16개 커스텀 에러 클래스
@@ -63,11 +62,10 @@ TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker O
 │   ├── nestjs-multitenant/     # NestJS 멀티테넌시 예제 (PostgreSQL 스키마 격리)
 │   ├── nestjs-todo/            # NestJS 최소 CRUD 예제
 │   ├── nestjs-todo-sqlite/     # NestJS SQLite 예제
-│   ├── vanilla-todo-sqlite/    # 비 NestJS code-first 스크립트 예제 (defineEntity, SQLite in-memory)
-│   └── prisma-import-demo/     # Prisma 스키마 → Stingerloom 마이그레이션 예제
+│   └── vanilla-todo-sqlite/    # 비 NestJS code-first 스크립트 예제 (defineEntity, SQLite in-memory)
 ├── mcp/                        # MCP 서버 (MySQL, PostgreSQL 직접 접근)
-├── docs/                       # 영어 문서 (53개 파일)
-│   └── ko/                     # 한국어 문서 (53개 파일)
+├── docs/                       # 영어 문서 (52개 파일)
+│   └── ko/                     # 한국어 문서 (52개 파일)
 ├── .claude/agents/             # 에이전트 전문가 정의 (5개)
 ├── dist/                       # 빌드 결과물 (gitignored)
 ├── package.json
@@ -280,7 +278,6 @@ pnpm start          # NestJS 서버 시작
 | `pg` | PostgreSQL 드라이버 |
 | `better-sqlite3` | SQLite 드라이버 |
 | `@nestjs/common`, `@nestjs/core` | NestJS 통합 |
-| `@mrleebo/prisma-ast` | Prisma 스키마 파싱 |
 | `fast-glob` | 엔티티 glob 패턴 해석 |
 
 ---
@@ -330,12 +327,11 @@ pnpm start          # NestJS 서버 시작
 - 인트로스펙션 (DB 스키마 → 엔티티 클래스 자동 생성)
 - EntitySchema (데코레이터 없는 엔티티 정의)
 - defineEntity 코드 우선 빌더 (t 필드 빌더, InferEntity 타입 추론, 데코레이터 없는 생명주기 훅)
-- Prisma 스키마 임포트
 - stream() AsyncGenerator 기반 스트리밍
 - distinct, DISTINCT ON (PostgreSQL)
 - validate() / validateArray() 결과 검증 훅
 - Dual CJS/ESM 빌드
-- 영어 문서 (53페이지) + 한국어 문서 (53페이지)
+- 영어 문서 (52페이지) + 한국어 문서 (52페이지)
 - SQL Injection 전 드라이버 감사 완료
 - WriteBuffer 1차 캐시 (PK findOne → Identity Map 히트 시 DB 스킵)
 - SelectQueryBuilder 14개 생산성 메서드 (when, pipe, whereHas, whereInSubquery, applyScope 등)
@@ -356,7 +352,7 @@ pnpm start          # NestJS 서버 시작
 
 ### 현재 안정성 상태 (v3.0.0 준비 main, 2026-11-01 기준)
 - **테스트:** 0 failures — 유닛 6,848 + SQLite 통합 1,889 (2026-11-01) + 실 PostgreSQL 777 / 실 MariaDB 629 (2026-10-03 검증, MySQL은 192.168.35.227:3306 원격 MariaDB) + stress 19 + temporal TZ 매트릭스 88×4존
-- **예제:** 8개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-linear-clone, nestjs-multitenant, nestjs-todo, nestjs-todo-sqlite, vanilla-todo-sqlite, prisma-import-demo) — NestJS 예제는 전부 NestJS 11, 타입 체크 8/8 통과 (2026-11-01 검증)
+- **예제:** 7개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-linear-clone, nestjs-multitenant, nestjs-todo, nestjs-todo-sqlite, vanilla-todo-sqlite) — NestJS 예제는 전부 NestJS 11, 타입 체크 7/7 통과 (2026-11-01 검증, prisma-import-demo는 2026-11-08 제거)
 - **보안:** SQL Injection 취약점 수정 완료, 전 드라이버 감사 완료
 - **격리:** 테넌트 간 메타데이터 유출 차단, AsyncLocalStorage 동시성 안전 확보
 
@@ -430,5 +426,4 @@ pnpm start          # NestJS 서버 시작
 | `src/metadata/LayeredMetadataStore.ts` | 레이어드 메타데이터 핵심 |
 | `src/metadata/MetadataContext.ts` | AsyncLocalStorage 기반 컨텍스트 |
 | `src/integration/nestjs/index.ts` | NestJS 모듈 진입점 |
-| `src/integration/prisma-import/index.ts` | Prisma 스키마 임포트 진입점 |
 | `src/DatabaseClient.ts` | DB 연결 싱글톤 |

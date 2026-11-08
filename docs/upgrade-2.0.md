@@ -20,7 +20,7 @@ await em.register({ /* ... */, logging: true });
 
 `@stingerloom/orm` used to re-export whole modules, so 673 symbols were importable from the package root — engine internals (`SchemaRegistrar`, `CascadeHandler`, `EntityManagerInternals`), expression plumbing (`buildAbs`, `renderSubquery`), internal type guards. The barrel now names its exports.
 
-If an import stops resolving, it was one of those internals. There is no supported replacement path for engine internals; open an issue describing what you needed it for. Public entry points are unchanged: `@stingerloom/orm`, `@stingerloom/orm/nestjs`, `@stingerloom/orm/prisma-import`, and the dialect subpaths.
+If an import stops resolving, it was one of those internals. There is no supported replacement path for engine internals; open an issue describing what you needed it for. Public entry points are unchanged: `@stingerloom/orm`, `@stingerloom/orm/nestjs`, and the dialect subpaths.
 
 ### Custom drivers must implement `escapeIdentifier()`
 

@@ -43,8 +43,7 @@ export enum OrmErrorCode {
   ENTITY_GLOB_NO_MATCH = "ORM_ENTITY_GLOB_NO_MATCH",
   ENTITY_GLOB_LOAD_FAILED = "ORM_ENTITY_GLOB_LOAD_FAILED",
 
-  // Prisma import
-  PRISMA_PARSE_ERROR = "ORM_PRISMA_PARSE_ERROR",
+  // Optional peer dependencies
   MISSING_DEPENDENCY = "ORM_MISSING_DEPENDENCY",
 
   // Plugin system

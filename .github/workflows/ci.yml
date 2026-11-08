@@ -105,7 +105,6 @@ jobs:
             nestjs-todo,
             nestjs-todo-sqlite,
             nestjs-linear-clone,
-            prisma-import-demo,
             vanilla-todo-sqlite,
           ]
     steps:

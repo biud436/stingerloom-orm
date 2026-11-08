@@ -71,7 +71,7 @@ Stingerloom은 이런 관심사를 `src/` 아래 디렉토리로 분리하고, �
 
 | 레이어 | 디렉토리 | 역할 |
 |--------|----------|------|
-| Integration | `integration/` | ORM을 프레임워크(NestJS)와 도구(Prisma import)에 연결해요 |
+| Integration | `integration/` | ORM을 프레임워크(NestJS)에 연결해요 |
 | Core | `core/` | EntityManager와 handler들 -- 핵심 로직이에요 |
 | Connection | `DatabaseClient.ts` | 데이터베이스 연결을 보관하고 앱 전체에서 공유해요 |
 | Scanner | `scanner/` | `@Entity` / `@Column` 데코레이터를 읽어서 메타데이터 레지스트리를 구성해요 |
@@ -281,7 +281,7 @@ src/
 │   └── MetadataScanner.ts         Decorator-time registry (canonical)
 ├── migration/             MigrationRunner + CLI (`npx stingerloom`)
 ├── schema/                Decorator-free EntitySchema API
-├── integration/           NestJS module, Prisma importer
+├── integration/           NestJS module
 ├── types/                 Shared types (QueryResult, EntityResult, ColumnType)
 ├── errors/                OrmError + 11 specific error codes
 ├── utils/                 Logger, ReflectManager

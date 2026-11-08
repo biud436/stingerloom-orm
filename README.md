@@ -191,7 +191,7 @@ A NestJS interceptor or Express middleware wraps the per-request handler in `Met
 | **Migrations** | `SchemaDiff` auto-detection (column rename heuristic), `MigrationGenerator`, CLI runner (`npx stingerloom migrate:run \| rollback \| status \| generate`) |
 | **Observability** | N+1 detection, slow query warnings, `EXPLAIN` analysis, `EntitySubscriber` events, query listeners |
 | **Validation** | `@NotNull`, `@MinLength`, `@MaxLength`, `@Min`, `@Max`, Zod / Valibot schemas via `qb.selectSchema(schema)` |
-| **Schema definition** | Decorators or decorator-free `EntitySchema`; Prisma schema import |
+| **Schema definition** | Decorators or decorator-free `EntitySchema` |
 | **Infrastructure** | Connection pooling, read replicas, retry with backoff, per-query timeout, graceful shutdown, SSL/TLS, AsyncIterable streaming (`stream()`), MariaDB native UUID + `INSERT … RETURNING` |
 | **NestJS** | `StingerloomOrmModule.forRoot / forFeature`, `@InjectRepository`, `@InjectEntityManager`, multi-DB named connections |
 
@@ -234,7 +234,6 @@ pnpm start
 | [nestjs-todo](./examples/nestjs-todo) | Minimal CRUD — bare-minimum entity + repository setup |
 | [nestjs-todo-sqlite](./examples/nestjs-todo-sqlite) | Minimal CRUD on SQLite via `better-sqlite3` |
 | [nestjs-multitenant](./examples/nestjs-multitenant) | PostgreSQL schema-based tenant isolation with `TenantMigrationRunner` |
-| [prisma-import-demo](./examples/prisma-import-demo) | Generate Stingerloom entities from an existing Prisma schema |
 
 ## Contributing
 

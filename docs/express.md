@@ -1144,7 +1144,7 @@ Remember that SQLite differs from your production database in ways tests can hid
 
 - **tsx / nodemon restarts** are safe: metadata and connections are rebuilt on every process start.
 - **better-sqlite3 is a native module.** If `new Database()` crashes the process right after an upgrade, the installed prebuilt binary does not match your Node.js version — reinstall it (`npm rebuild better-sqlite3`) or pin a major version known to support your Node release.
-- The migration CLI (`npx stingerloom`) and the Prisma importer run as CommonJS tools; they work regardless of your app's module system.
+- The migration CLI (`npx stingerloom`) runs as a CommonJS tool; it works regardless of your app's module system.
 - **`reflect-metadata` must be imported once, before any entity module.** Putting it at the top of `db.ts` and importing `db.ts` first from `main.ts` is the reliable ordering; a bundler that hoists imports can otherwise load an entity before the polyfill exists.
 
 ## Production checklist
