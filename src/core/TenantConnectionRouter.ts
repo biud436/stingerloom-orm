@@ -53,7 +53,11 @@ interface RouterEntry {
   connectionName: string;
   /** Whether this entry was provisioned by the router (vs. user-supplied). */
   ownedByRouter: boolean;
-  /** Last time `resolve()` returned this entry. Used for TTL eviction. */
+  /**
+   * When `resolve()` last returned this entry, from `performance.now()`. Used
+   * for TTL eviction; a monotonic clock, so a change to the system clock does
+   * not move it.
+   */
   lastUsedAt: number;
   /** Optional eviction timer when idleTtlMs > 0. */
   evictTimer?: NodeJS.Timeout;
@@ -97,7 +101,7 @@ export class TenantConnectionRouter {
   async resolve(tenantId: string): Promise<EntityManager> {
     const cached = this.entries.get(tenantId);
     if (cached) {
-      cached.lastUsedAt = Date.now();
+      cached.lastUsedAt = performance.now();
       this.scheduleEviction(tenantId, cached);
       return cached.em;
     }
@@ -256,7 +260,7 @@ export class TenantConnectionRouter {
       em,
       connectionName,
       ownedByRouter,
-      lastUsedAt: Date.now(),
+      lastUsedAt: performance.now(),
     };
     this.entries.set(tenantId, entry);
     this.scheduleEviction(tenantId, entry);
@@ -278,16 +282,21 @@ export class TenantConnectionRouter {
     return this.opts.resolver(tenantId);
   }
 
-  private scheduleEviction(tenantId: string, entry: RouterEntry): void {
+  private scheduleEviction(tenantId: string, entry: RouterEntry, delay?: number): void {
     const ttl = this.opts.idleTtlMs ?? 0;
     if (ttl <= 0) return;
     if (entry.evictTimer) clearTimeout(entry.evictTimer);
     entry.evictTimer = setTimeout(() => {
-      const idleFor = Date.now() - entry.lastUsedAt;
+      const idleFor = performance.now() - entry.lastUsedAt;
       if (idleFor >= ttl) {
         void this.release(tenantId);
+      } else {
+        // Node fires a timer on its own millisecond clock, so it can run up
+        // to a millisecond before `idleFor` reaches the TTL. Check again
+        // when the rest of the TTL has passed instead of keeping the tenant.
+        this.scheduleEviction(tenantId, entry, Math.max(1, Math.ceil(ttl - idleFor)));
       }
-    }, ttl);
+    }, delay ?? ttl);
     // Don't keep the event loop alive solely for eviction.
     if (typeof entry.evictTimer.unref === "function") entry.evictTimer.unref();
   }

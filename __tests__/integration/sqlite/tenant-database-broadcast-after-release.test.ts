@@ -95,7 +95,7 @@ describe("[Integration] SQLite: tenant broadcasts after the tenant is released",
     const { mtem, fired } = await makeMtem({ tenantConnectionTtlMs: 30 });
 
     await MetadataContext.run("acme", () => mtem.save(BroadcastUser, { name: "before" }));
-    await waitFor(() => mtem.getRouter().getAll().length === 0, 5000);
+    await waitFor(() => mtem.getRouter().getAll().length === 0, 2000);
     await MetadataContext.run("acme", () => mtem.save(BroadcastUser, { name: "after" }));
 
     expect(fired.subscriber).toEqual(["before", "after"]);
