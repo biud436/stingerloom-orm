@@ -206,6 +206,52 @@ describe("TenantConnectionRouter", () => {
       }
     });
 
+    it("evicts a tenant whose eviction timer fires before it has been idle for the TTL", async () => {
+      jest.useFakeTimers();
+      try {
+        const router = new TenantConnectionRouter({
+          resolver: async () => sqliteOpts(),
+          entities: [RtUserEntity],
+          idleTtlMs: 30,
+        });
+        const em = await router.resolve("early");
+        // A timer runs on Node's own millisecond clock and can fire slightly
+        // before the router measures the TTL as passed; model a timer that
+        // fires 10 ms early.
+        (router as any).entries.get("early").lastUsedAt += 10;
+
+        await jest.advanceTimersByTimeAsync(30);
+        expect(router.getResolvedTenants()).toContain("early");
+
+        await jest.advanceTimersByTimeAsync(10);
+        expect(router.getResolvedTenants()).not.toContain("early");
+        await jest.runAllTimersAsync();
+        expect(DatabaseClient.getInstance().hasConnection(em.getConnectionName())).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("evicts an idle tenant after the system clock is set back", async () => {
+      jest.useFakeTimers();
+      try {
+        const router = new TenantConnectionRouter({
+          resolver: async () => sqliteOpts(),
+          entities: [RtUserEntity],
+          idleTtlMs: 30,
+        });
+        await router.resolve("clock");
+
+        jest.setSystemTime(Date.now() - 60_000);
+        await jest.advanceTimersByTimeAsync(30);
+
+        expect(router.getResolvedTenants()).not.toContain("clock");
+        await jest.runAllTimersAsync();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("idleTtlMs <= 0 means no eviction timer is ever scheduled", async () => {
       const router = new TenantConnectionRouter({
         resolver: async () => sqliteOpts(),
