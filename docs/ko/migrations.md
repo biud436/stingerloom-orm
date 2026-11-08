@@ -65,6 +65,8 @@ export class CreateUsersTable extends Migration {
 | `context.query(sql)` | SQL 문을 실행해요 |
 | `context.driver` | 데이터베이스 드라이버에 접근해요 (DDL 헬퍼, 식별자 이스케이프 등) |
 
+PostgreSQL과 SQLite에서는 둘 다 migration의 트랜잭션 안에서 실행됩니다([Migration과 트랜잭션](#migration과-트랜잭션) 참고).
+
 ---
 
 ## Migration 예제
@@ -199,6 +201,63 @@ SELECT "name" FROM "__migrations" ORDER BY "id" ASC;
 ```sql
 DELETE FROM "__migrations" WHERE "name" = 'AddPhoneToUsers';
 ```
+
+---
+
+## Migration과 트랜잭션
+
+PostgreSQL과 SQLite에서는 runner가 migration 하나를 `__migrations` 행과 함께 한 트랜잭션으로 적용합니다.
+
+```sql
+BEGIN;
+-- up()이 실행하는 문장 전부
+INSERT INTO "__migrations" ("name") VALUES ('AddPhoneToUsers');
+COMMIT;
+```
+
+중간에 한 문장이라도 실패하면 migration 전체가 롤백됩니다. 바뀐 것은 하나도 남지 않고 추적 행도 기록되지 않으니, `migrate:status`에는 그대로 대기 중으로 나옵니다. migration을 고친 뒤 `migrate:run`을 다시 실행하면 처음부터 적용돼요. 되돌릴 때도 마찬가지로 `down()`과 추적 행 `DELETE`가 함께 커밋되거나 함께 롤백됩니다.
+
+트랜잭션 안에서 `context.query()`와 `context.driver`의 헬퍼는 트랜잭션이 잡은 커넥션 하나에서 실행되고, runner를 만들 때 넘긴 query runner는 거치지 않습니다. [훅](#마이그레이션-훅)은 트랜잭션 밖에서 호출됩니다. `beforeEach`는 `BEGIN` 전에, `afterEach`는 `COMMIT` 뒤에, `onError`는 `ROLLBACK` 뒤에 불려요.
+
+### MySQL과 MariaDB
+
+MySQL은 스키마 변경을 실행하는 즉시 커밋하기 때문에 `CREATE TABLE`이나 `ALTER TABLE`은 트랜잭션으로 되돌릴 수 없습니다. 그래서 MySQL에서는 migration을 문장 단위로 실행합니다. 중간에 실패하면 무엇이 적용된 채로 남았는지 에러 메시지에 나옵니다.
+
+```
+Unknown data type: 'NO_SUCH_TYPE'. It ran outside a transaction (MySQL commits each schema change as it runs), so what it ran before failing stays applied, including these 2 statements from context.query:
+  CREATE TABLE `orders` (`id` INT PRIMARY KEY, `total` INT)
+  ALTER TABLE `orders` ADD COLUMN `note` VARCHAR(20) NOT NULL DEFAULT 'x'
+```
+
+다시 실행하기 전에 이 문장들을 직접 되돌리거나, 이미 있는 것은 건너뛰도록 migration을 고쳐 주세요. 목록에는 `context.query()`로 실행한 문장만 나오고, `context.driver` 헬퍼가 실행한 것도 적용된 채로 남아 있습니다.
+
+데이터만 바꾸는 migration(`INSERT`, `UPDATE`, `DELETE`)은 MySQL에서도 `transaction = true`를 지정하면 원자적으로 실행됩니다.
+
+### 트랜잭션 끄기
+
+트랜잭션 안에서 실행할 수 없는 문장도 있습니다. 그런 문장을 쓰는 migration에 `transaction = false`를 지정하면(필드와 getter 모두 됩니다) runner가 문장을 하나씩 보내고, 각 문장은 실행되는 즉시 커밋됩니다.
+
+```typescript
+export class AddEmailIndex extends Migration {
+  readonly transaction = false;
+
+  async up(context: MigrationContext) {
+    await context.query(`CREATE INDEX CONCURRENTLY "idx_users_email" ON "users" ("email")`);
+  }
+
+  async down(context: MigrationContext) {
+    await context.query(`DROP INDEX CONCURRENTLY "idx_users_email"`);
+  }
+}
+```
+
+| 문장 | 트랜잭션 안에서는 |
+|------|-------------------|
+| PostgreSQL `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX ... CONCURRENTLY`, `VACUUM`, PostgreSQL 11 이하의 `ALTER TYPE ... ADD VALUE` | PostgreSQL이 거부합니다("cannot run inside a transaction block"). migration은 롤백되고, runner의 에러 메시지에 `transaction = false`를 지정하라는 안내가 붙습니다. |
+| PostgreSQL에서 같은 migration의 `ALTER TYPE ... ADD VALUE`로 추가한 enum 값을 쓰는 문장 | 값을 추가한 트랜잭션이 커밋되기 전에는 그 값을 쓸 수 없습니다("unsafe use of new value"). 그 값을 쓰는 문장을 다음 migration으로 옮기거나 `transaction = false`를 지정하세요. |
+| SQLite `PRAGMA foreign_keys = OFF` / `ON` | SQLite는 트랜잭션 안에서 이 PRAGMA를 무시합니다. 외래 키를 끄고 테이블을 다시 만드는 migration이라면 외래 키가 켜진 채로 진행되고, 기존 테이블을 DROP할 때 그 테이블을 참조하는 모든 테이블의 `ON DELETE` 동작이 실행됩니다. 그래서 runner는 트랜잭션 안에서 이 문장을 거부하고 아무것도 적용하지 않습니다. 트랜잭션 안에서는 `PRAGMA defer_foreign_keys = ON`을 쓰거나, `transaction = false`를 지정하세요. |
+
+`transaction`을 지정하지 않으면 데이터베이스가 정합니다. PostgreSQL과 SQLite는 트랜잭션 안에서, MySQL은 트랜잭션 없이 실행합니다. 트랜잭션을 열 수 없는 드라이버에서 `transaction = true`를 지정한 migration은 아무것도 실행하지 않고 실패합니다.
 
 ---
 
@@ -366,7 +425,7 @@ for (const result of results) {
 }
 ```
 
-Migration이 실패하면 runner가 즉시 멈춰요 -- 이후 migration은 실행하지 않아요. 실패한 migration에 의존하는 경우가 대부분이기 때문이에요.
+Migration이 실패하면 runner가 즉시 멈춰요 -- 이후 migration은 실행하지 않아요. 실패한 migration에 의존하는 경우가 대부분이기 때문이에요. PostgreSQL과 SQLite에서는 실패한 migration이 이미 롤백된 상태이고, MySQL에서는 적용된 채로 남은 문장이 `result.error`에 나옵니다([Migration과 트랜잭션](#migration과-트랜잭션) 참고).
 
 ---
 
@@ -753,7 +812,7 @@ const runner = new PostgresMigrationRunner(migrations, em.getDriver()!, queryRun
 await runner.runAll();
 ```
 
-모든 훅은 비동기(Promise 반환)이거나 동기(즉시 반환)일 수 있어요.
+모든 훅은 비동기(Promise 반환)이거나 동기(즉시 반환)일 수 있어요. 훅은 migration의 트랜잭션 밖에서 호출되고, 훅이 받는 `context`는 query runner로 문장을 보냅니다. 그래서 훅이 실행한 문장은 migration이 롤백돼도 되돌아가지 않습니다.
 
 ---
 

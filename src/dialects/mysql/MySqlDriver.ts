@@ -4,7 +4,9 @@ import type { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "./BaseSchema";
 import { ColumnType } from "../../decorators";
-import { ISqlDriver } from "../SqlDriver";
+import { DriverSession, ISqlDriver } from "../SqlDriver";
+import { MySqlDataSource } from "./MySqlDataSource";
+import { runInSessionTransaction } from "../runInSessionTransaction";
 import { Exception } from "../../errors";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -83,6 +85,15 @@ export class MySqlDriver implements ISqlDriver {
 
   executeRaw(sqlStr: string) {
     return this.connector.query(sqlStr);
+  }
+
+  runInTransaction<R>(work: (session: DriverSession) => Promise<R>): Promise<R> {
+    return runInSessionTransaction(this.connector, new MySqlDataSource(this.connector), (connector) =>
+      work({
+        driver: new MySqlDriver(connector, this.clientType, this.version),
+        query: (statement) => connector.query(statement as any),
+      }),
+    );
   }
 
   async queryWithOptions(query: Sql, options: DriverQueryOptions): Promise<any[]> {

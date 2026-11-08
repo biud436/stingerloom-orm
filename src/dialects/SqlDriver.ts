@@ -32,7 +32,31 @@ export interface CreateTableForeignKey {
   onUpdate?: ReferentialAction;
 }
 
+/**
+ * One transaction on one connection, as {@link ISqlDriver.runInTransaction}
+ * hands it to its work.
+ *
+ * @internal Package-internal — not a public API.
+ */
+export interface DriverSession {
+  /** A driver of the same dialect whose statements run in the transaction. */
+  readonly driver: ISqlDriver;
+  /** Runs `sql` in the transaction and returns rows as a pool query does. */
+  query(sql: string | Sql): Promise<any>;
+}
+
 export interface ISqlDriver<T = any> {
+  /**
+   * Runs `work` in one transaction on a connection checked out of this
+   * driver's pool: BEGIN, then `work`, then COMMIT, or ROLLBACK when `work`
+   * rejects. The connection goes back to the pool either way.
+   *
+   * @internal Package-internal — `MigrationRunner` applies a migration and
+   * its tracking row through it. A driver without it has its migrations run
+   * one statement at a time.
+   */
+  runInTransaction?<R>(work: (session: DriverSession) => Promise<R>): Promise<R>;
+
   /**
    * Checks if the specified table exists in the database.
    *

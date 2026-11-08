@@ -839,6 +839,7 @@ interface TenantSyncResult { created: string[]; skipped: string[]; }
 ```typescript
 abstract class Migration {
   get name(): string;
+  readonly transaction?: boolean;   // true: 추적 행과 함께 트랜잭션으로 실행. 미지정: PostgreSQL/SQLite는 트랜잭션, MySQL은 아님
   abstract up(context: MigrationContext): Promise<void>;
   abstract down(context: MigrationContext): Promise<void>;
 }

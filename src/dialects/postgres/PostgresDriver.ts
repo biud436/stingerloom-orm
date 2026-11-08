@@ -4,7 +4,9 @@ import type { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnType } from "../../decorators";
-import { ISqlDriver } from "../SqlDriver";
+import { DriverSession, ISqlDriver } from "../SqlDriver";
+import { PostgresDataSource } from "./PostgresDataSource";
+import { runInSessionTransaction } from "../runInSessionTransaction";
 import { Exception } from "../../errors";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
@@ -225,6 +227,15 @@ export class PostgresDriver implements ISqlDriver {
 
   executeRaw(sqlStr: string) {
     return this.connector.query(sqlStr);
+  }
+
+  runInTransaction<R>(work: (session: DriverSession) => Promise<R>): Promise<R> {
+    return runInSessionTransaction(this.connector, new PostgresDataSource(this.connector), (connector) =>
+      work({
+        driver: new PostgresDriver(connector, this.clientType, this.schema, this.version, this.enumSchema),
+        query: (statement) => connector.query(statement as any),
+      }),
+    );
   }
 
   async queryWithOptions(query: Sql, options: DriverQueryOptions): Promise<any[]> {

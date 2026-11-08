@@ -3,6 +3,27 @@ import { ISqlDriver } from "../dialects/SqlDriver";
 import { Logger } from "../utils";
 import { Migration, MigrationContext } from "./Migration";
 import { AdvisoryLockError } from "../errors/AdvisoryLockError";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { MetadataContext } from "../metadata/MetadataContext";
+
+/**
+ * What PostgreSQL and SQLite say when a statement cannot run in a
+ * transaction (`CREATE INDEX CONCURRENTLY`, `VACUUM`, using an enum value
+ * added in the same transaction).
+ */
+const TRANSACTION_BLOCK_ERROR = /(?:inside|within) a transaction|unsafe use of new value/i;
+
+function withoutFinalPeriod(message: string): string {
+  return message.replace(/[.\s]+$/, "");
+}
+
+/** A migration that ran but whose tracking row could not be written. */
+class TrackingFailure extends Error {
+  constructor(readonly trackError: unknown) {
+    super(trackError instanceof Error ? trackError.message : String(trackError));
+  }
+}
 
 /**
  * Result of a migration execution.
@@ -25,6 +46,11 @@ export interface MigrationRecord {
 /**
  * Query execution interface injected into MigrationRunner.
  * Abstracted so that tests do not depend on TransactionSessionManager.
+ *
+ * The runner reads and writes its tracking table through it, and so does a
+ * migration that runs outside a transaction. A migration in a transaction
+ * runs on a connection of the driver's pool instead (see
+ * `Migration.transaction`).
  */
 export interface MigrationQueryRunner {
   query: (sql: string) => Promise<any>;
@@ -178,88 +204,220 @@ export abstract class MigrationRunner {
    * Applies a single migration.
    */
   async runUp(migration: Migration): Promise<MigrationResult> {
-    const context = this.createContext();
-
-    try {
-      this.logger.info(`Running migration: ${migration.name}`);
-      await this.hooks.beforeEach?.(migration, context);
-
-      const startTime = Date.now();
-      await migration.up(context);
-      const durationMs = Date.now() - startTime;
-
-      try {
-        await this.recordMigration(migration.name);
-      } catch (trackError: unknown) {
-        // #161: Schema changed but tracking record failed — critical desync
-        const msg =
-          trackError instanceof Error ? trackError.message : String(trackError);
-        this.logger.error(
-          `CRITICAL: Migration "${migration.name}" applied but tracking record failed: ${msg}. ` +
-            `The __migrations table may be out of sync with the actual schema.`,
-        );
-        return {
-          name: migration.name,
-          direction: "up",
-          success: false,
-          error: `Tracking failed: ${msg}`,
-        };
-      }
-
-      await this.hooks.afterEach?.(migration, context, durationMs);
-      this.logger.info(`Migration completed: ${migration.name} (${durationMs}ms)`);
-      return { name: migration.name, direction: "up", success: true };
-    } catch (e: unknown) {
-      const error = e instanceof Error ? e.message : String(e);
-      this.logger.error(`Migration failed: ${migration.name} - ${error}`);
-      await this.hooks.onError?.(migration, e instanceof Error ? e : new Error(error), context);
-      return { name: migration.name, direction: "up", success: false, error };
-    }
+    return this.apply(migration, "up");
   }
 
   /**
    * Reverts a single migration.
    */
   async runDown(migration: Migration): Promise<MigrationResult> {
+    return this.apply(migration, "down");
+  }
+
+  /**
+   * Why a migration that does not set `transaction` runs outside a
+   * transaction on this runner's database, or `undefined` when it runs in
+   * one.
+   */
+  protected outsideTransactionByDefault(): string | undefined {
+    return undefined;
+  }
+
+  /**
+   * Why `sql` must not run inside a migration's transaction, or `undefined`
+   * when it may.
+   */
+  protected refuseInTransaction(_sql: string): string | undefined {
+    return undefined;
+  }
+
+  /**
+   * Runs `migration` in `direction` and writes or deletes its tracking row.
+   * In a transaction, both commit or roll back together; outside one, each
+   * statement commits as it runs.
+   */
+  private async apply(
+    migration: Migration,
+    direction: "up" | "down",
+  ): Promise<MigrationResult> {
     const context = this.createContext();
+    const name = migration.name;
+    const up = direction === "up";
+    let inTransaction = false;
+    // Outside a transaction: the statements that ran, and why there was no
+    // transaction. A later failure leaves them applied.
+    const applied: string[] = [];
+    let outsideReason: string | undefined;
 
     try {
-      this.logger.info(`Reverting migration: ${migration.name}`);
+      this.logger.info(`${up ? "Running" : "Reverting"} migration: ${name}`);
       await this.hooks.beforeEach?.(migration, context);
 
       const startTime = Date.now();
-      await migration.down(context);
+      outsideReason = this.outsideTransactionReason(migration);
+      if (outsideReason === undefined) {
+        inTransaction = true;
+        await this.applyInTransaction(migration, direction);
+      } else {
+        const trackingFailed = await this.applyOutsideTransaction(migration, direction, applied);
+        if (trackingFailed) return trackingFailed;
+      }
       const durationMs = Date.now() - startTime;
 
-      try {
-        await this.removeMigrationRecord(migration.name);
-      } catch (trackError: unknown) {
-        // #161: Schema reverted but tracking record removal failed — critical desync
-        const msg =
-          trackError instanceof Error ? trackError.message : String(trackError);
-        this.logger.error(
-          `CRITICAL: Migration "${migration.name}" reverted but tracking record removal failed: ${msg}. ` +
-            `The __migrations table may be out of sync.`,
-        );
-        return {
-          name: migration.name,
-          direction: "down",
-          success: false,
-          error: `Tracking failed: ${msg}`,
-        };
-      }
-
       await this.hooks.afterEach?.(migration, context, durationMs);
-      this.logger.info(`Migration reverted: ${migration.name} (${durationMs}ms)`);
-      return { name: migration.name, direction: "down", success: true };
-    } catch (e: unknown) {
-      const error = e instanceof Error ? e.message : String(e);
-      this.logger.error(
-        `Migration revert failed: ${migration.name} - ${error}`,
+      this.logger.info(
+        `Migration ${up ? "completed" : "reverted"}: ${name} (${durationMs}ms)`,
       );
-      await this.hooks.onError?.(migration, e instanceof Error ? e : new Error(error), context);
-      return { name: migration.name, direction: "down", success: false, error };
+      return { name, direction, success: true };
+    } catch (e: unknown) {
+      const cause = e instanceof TrackingFailure ? e.trackError : e;
+      const message = cause instanceof Error ? cause.message : String(cause);
+      let error = e instanceof TrackingFailure ? `Tracking failed: ${message}` : message;
+      if (inTransaction) {
+        if (!(cause instanceof OrmError) && TRANSACTION_BLOCK_ERROR.test(message)) {
+          error =
+            `${withoutFinalPeriod(error)}. The migration ran in a transaction, which this ` +
+            "statement cannot run in; set `transaction = false` on it to run its statements one at a time";
+        }
+      } else if (applied.length > 0) {
+        error = withoutFinalPeriod(error) + this.describeApplied(applied, outsideReason ?? "");
+      }
+      this.logger.error(
+        `Migration ${up ? "failed" : "revert failed"}: ${name} - ${error}` +
+          (inTransaction ? " (rolled back: none of its changes were kept)" : ""),
+      );
+      await this.hooks.onError?.(
+        migration,
+        cause instanceof Error ? cause : new Error(error),
+        context,
+      );
+      return { name, direction, success: false, error };
     }
+  }
+
+  /**
+   * Why `migration` runs outside a transaction, or `undefined` when it runs
+   * in one.
+   */
+  private outsideTransactionReason(migration: Migration): string | undefined {
+    const wanted = migration.transaction;
+    if (wanted === false) return "it sets `transaction = false`";
+    if (wanted === undefined) {
+      const reason = this.outsideTransactionByDefault();
+      if (reason !== undefined) return reason;
+    }
+    if (typeof this.driver.runInTransaction !== "function") {
+      if (wanted === true) {
+        throw new OrmError(
+          OrmErrorCode.UNSUPPORTED_OPERATION,
+          `Migration "${migration.name}" sets \`transaction = true\`, but its driver cannot open a transaction.`,
+        );
+      }
+      return "its driver cannot open a transaction";
+    }
+    return undefined;
+  }
+
+  private async applyInTransaction(
+    migration: Migration,
+    direction: "up" | "down",
+  ): Promise<void> {
+    // Outside any tenant: on PostgreSQL a transaction begun for a tenant
+    // points search_path at the tenant's schema, while the runner reads its
+    // tracking table, like any pool statement, in the connection's schema.
+    await MetadataContext.run("public", () => this.applyInSession(migration, direction));
+  }
+
+  private async applyInSession(
+    migration: Migration,
+    direction: "up" | "down",
+  ): Promise<void> {
+    await this.driver.runInTransaction!(async (session) => {
+      const context: MigrationContext = {
+        driver: session.driver,
+        query: async (sql: string) => {
+          const refusal = this.refuseInTransaction(sql);
+          if (refusal !== undefined) {
+            throw new OrmError(OrmErrorCode.UNSUPPORTED_OPERATION, refusal);
+          }
+          return session.query(sql);
+        },
+      };
+      await (direction === "up" ? migration.up(context) : migration.down(context));
+      try {
+        await this.track(direction, migration.name, (sql) => session.query(sql));
+      } catch (trackError: unknown) {
+        throw new TrackingFailure(trackError);
+      }
+    });
+  }
+
+  /**
+   * Runs `migration` one statement at a time, recording into `applied` each
+   * one that ran. Returns a failed result when the migration ran but its
+   * tracking row could not be written or deleted.
+   */
+  private async applyOutsideTransaction(
+    migration: Migration,
+    direction: "up" | "down",
+    applied: string[],
+  ): Promise<MigrationResult | undefined> {
+    const context: MigrationContext = {
+      driver: this.driver,
+      query: async (sql: string) => {
+        const result = await this.queryRunner.query(sql);
+        applied.push(sql);
+        return result;
+      },
+    };
+    await (direction === "up" ? migration.up(context) : migration.down(context));
+
+    try {
+      await this.track(direction, migration.name, (sql) => this.queryRunner.query(sql));
+      return undefined;
+    } catch (trackError: unknown) {
+      // #161: the schema changed but the tracking row did not — critical desync
+      const msg =
+        trackError instanceof Error ? trackError.message : String(trackError);
+      this.logger.error(
+        direction === "up"
+          ? `CRITICAL: Migration "${migration.name}" applied but tracking record failed: ${msg}. ` +
+              `The __migrations table may be out of sync with the actual schema.`
+          : `CRITICAL: Migration "${migration.name}" reverted but tracking record removal failed: ${msg}. ` +
+              `The __migrations table may be out of sync.`,
+      );
+      return {
+        name: migration.name,
+        direction,
+        success: false,
+        error: `Tracking failed: ${msg}`,
+      };
+    }
+  }
+
+  /** The note a failure outside a transaction gets about what stayed applied. */
+  private describeApplied(applied: string[], reason: string): string {
+    const count = applied.length;
+    const list = applied
+      .map((sql) => {
+        const flat = sql.replace(/\s+/g, " ").trim();
+        return `  ${flat.length > 200 ? `${flat.slice(0, 197)}...` : flat}`;
+      })
+      .join("\n");
+    return (
+      `. It ran outside a transaction (${reason}), so what it ran before failing stays applied, ` +
+      `including ${count === 1 ? "this statement" : `these ${count} statements`} from context.query:\n${list}`
+    );
+  }
+
+  private track(
+    direction: "up" | "down",
+    name: string,
+    query: (sql: string) => Promise<any>,
+  ): Promise<void> {
+    return direction === "up"
+      ? this.recordMigration(name, query)
+      : this.removeMigrationRecord(name, query);
   }
 
   /**
@@ -397,16 +555,22 @@ export abstract class MigrationRunner {
     };
   }
 
-  private async recordMigration(name: string): Promise<void> {
+  private async recordMigration(
+    name: string,
+    query: (sql: string) => Promise<any>,
+  ): Promise<void> {
     const w = (n: string) => this.wrapIdentifier(n);
-    await this.queryRunner.query(
+    await query(
       `INSERT INTO ${w(this.tableName)} (${w("name")}) VALUES ('${name.replace(/'/g, "''")}')`,
     );
   }
 
-  private async removeMigrationRecord(name: string): Promise<void> {
+  private async removeMigrationRecord(
+    name: string,
+    query: (sql: string) => Promise<any>,
+  ): Promise<void> {
     const w = (n: string) => this.wrapIdentifier(n);
-    await this.queryRunner.query(
+    await query(
       `DELETE FROM ${w(this.tableName)} WHERE ${w("name")} = '${name.replace(/'/g, "''")}'`,
     );
   }
