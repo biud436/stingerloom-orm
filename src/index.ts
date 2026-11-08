@@ -762,33 +762,6 @@ export {
   RowShape,
 } from "./schema/defineRow";
 
-// Prisma import (requires optional @mrleebo/prisma-ast)
-export {
-  FileWriter,
-  FileWriterOptions,
-  ManyToManyInverseRelation,
-  ManyToManyOwningRelation,
-  ManyToOneRelation,
-  NativeTypeHint,
-  OneToManyRelation,
-  OneToOneInverseRelation,
-  OneToOneOwningRelation,
-  PrismaDefaultValue,
-  PrismaEnumInfo,
-  PrismaFieldInfo,
-  PrismaImportContext,
-  PrismaImporter,
-  PrismaImportOptions,
-  PrismaImportResult,
-  PrismaModelInfo,
-  PrismaRelationInfo,
-  RelationResolver,
-  ResolvedRelation,
-  TypeMapper,
-  TypeMappingResult,
-  WriteResult,
-} from "./integration/prisma-import/index";
-
 // Utilities (explicit subset - low-level internals are intentionally not public)
 export { ClazzType, Type } from "./utils/types";
 export { Logger } from "./utils/Logger";

@@ -75,11 +75,6 @@
       "import": "./dist/esm/integration/nestjs/index.js",
       "require": "./dist/integration/nestjs/index.js"
     },
-    "./prisma-import": {
-      "types": "./dist/integration/prisma-import/index.d.ts",
-      "import": "./dist/esm/integration/prisma-import/index.js",
-      "require": "./dist/integration/prisma-import/index.js"
-    },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "import": "./dist/esm/testing/index.js",
@@ -127,17 +122,13 @@
       "nestjs": [
         "dist/integration/nestjs/index.d.ts"
       ],
-      "prisma-import": [
-        "dist/integration/prisma-import/index.d.ts"
-      ],
       "testing": [
         "dist/testing/index.d.ts"
       ]
     }
   },
   "bin": {
-    "stingerloom": "dist/migration/cli-entry.js",
-    "stingerloom-prisma-import": "dist/integration/prisma-import/cli.js"
+    "stingerloom": "dist/migration/cli-entry.js"
   },
   "files": [
     "dist",
@@ -186,7 +177,6 @@
     "sql-template-tag": "^4.1.0"
   },
   "peerDependencies": {
-    "@mrleebo/prisma-ast": ">=0.12.0",
     "@nestjs/common": ">=8.0.0",
     "@nestjs/core": ">=8.0.0",
     "better-sqlite3": ">=9.0.0",
@@ -215,16 +205,12 @@
     "@nestjs/core": {
       "optional": true
     },
-    "@mrleebo/prisma-ast": {
-      "optional": true
-    },
     "fast-glob": {
       "optional": true
     }
   },
   "devDependencies": {
     "@mdit-vue/shared": "^2.1.4",
-    "@mrleebo/prisma-ast": "^0.14.0",
     "@nestjs/common": "^11.1.28",
     "@nestjs/core": "^11.1.28",
     "@nestjs/testing": "^11.1.28",

@@ -114,7 +114,6 @@ Subpath export도 동일:
 
 ```typescript
 import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
-import { PrismaImporter } from "@stingerloom/orm/prisma-import";
 import { EntityManager } from "@stingerloom/orm/core";       // 코어만
 import { PostgresDriver } from "@stingerloom/orm/postgres";   // 단일 드라이버
 ```

@@ -1144,7 +1144,7 @@ it("creates a user", async () => {
 
 - **tsx / nodemon의 재시작**은 걱정하지 않아도 됩니다. 메타데이터와 연결은 프로세스가 새로 뜰 때마다 다시 구성됩니다.
 - **better-sqlite3는 네이티브 모듈입니다.** 업그레이드 직후 `new Database()`에서 프로세스가 죽는다면, 설치된 prebuilt 바이너리가 현재 Node.js 버전과 맞지 않는 경우입니다. `npm rebuild better-sqlite3`로 다시 빌드하거나, 사용 중인 Node 릴리스를 지원하는 메이저 버전으로 고정하세요.
-- 마이그레이션 CLI(`npx stingerloom`)와 Prisma 임포터는 CommonJS로 실행되는 도구라서, 앱이 어떤 모듈 시스템을 쓰든 상관없이 동작합니다.
+- 마이그레이션 CLI(`npx stingerloom`)는 CommonJS로 실행되는 도구라서, 앱이 어떤 모듈 시스템을 쓰든 상관없이 동작합니다.
 - **`reflect-metadata`는 어떤 엔티티 모듈보다 먼저, 딱 한 번 import해야 합니다.** `db.ts` 최상단에 두고 `main.ts`에서 `db.ts`를 가장 먼저 import하는 순서가 안전합니다. 그러지 않으면 import를 끌어올리는 번들러에서 폴리필보다 엔티티가 먼저 로드될 수 있습니다.
 
 ## 운영 체크리스트

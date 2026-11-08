@@ -761,7 +761,6 @@ const { EntityManager } = require("@stingerloom/orm");
 |---------|------|
 | `@stingerloom/orm` | 코어 ORM (EntityManager, 데코레이터 등) |
 | `@stingerloom/orm/nestjs` | NestJS 통합 모듈 |
-| `@stingerloom/orm/prisma-import` | Prisma 스키마 임포터 |
 
 `package.json`의 `exports` 필드가 각 서브패스를 적절한 `import` (ESM) 또는 `require` (CJS) 진입점에 매핑해요. 별도 설정은 필요 없어요.
 

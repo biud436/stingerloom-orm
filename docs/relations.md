@@ -418,7 +418,7 @@ export class Post {
 
 `Relation<User>` is just `User` to the type checker, but because the outer reference resolves to a type alias with no runtime value, `design:type` serializes as `Object` instead of the entity class — no eager reference, no crash. The ORM never reads `design:type` for relation properties (the thunk is the source of truth), so nothing is lost.
 
-Only single-valued relations (`@ManyToOne`, `@OneToOne`) need the wrapper; collection properties (`Post[]`) already serialize as `Array`. The Prisma import and introspection generators emit `Relation<T>` automatically. CJS-only projects work without it, but the wrapper is harmless there — use it whenever entities reference each other and the code may run as ESM.
+Only single-valued relations (`@ManyToOne`, `@OneToOne`) need the wrapper; collection properties (`Post[]`) already serialize as `Array`. The introspection generator emits `Relation<T>` automatically. CJS-only projects work without it, but the wrapper is harmless there — use it whenever entities reference each other and the code may run as ESM.
 
 ## @OneToMany -- "What are this owner's cats?"
 

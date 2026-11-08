@@ -71,7 +71,7 @@ Stingerloom splits these concerns into directories under `src/`, with a strict r
 
 | Layer | Directory | What it does |
 |-------|-----------|--------------|
-| Integration | `integration/` | Connects the ORM to frameworks (NestJS) and tools (Prisma import) |
+| Integration | `integration/` | Connects the ORM to frameworks (NestJS) |
 | Core | `core/` | EntityManager and its handlers -- the main logic |
 | Connection | `DatabaseClient.ts` | Holds database connections, shared across the application |
 | Scanner | `scanner/` | Reads `@Entity` / `@Column` decorators and builds the metadata registry |
@@ -281,7 +281,7 @@ src/
 │   └── MetadataScanner.ts         Decorator-time registry (canonical)
 ├── migration/             MigrationRunner + CLI (`npx stingerloom`)
 ├── schema/                Decorator-free EntitySchema API
-├── integration/           NestJS module, Prisma importer
+├── integration/           NestJS module
 ├── types/                 Shared types (QueryResult, EntityResult, ColumnType)
 ├── errors/                OrmError + 11 specific error codes
 ├── utils/                 Logger, ReflectManager

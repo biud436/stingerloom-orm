@@ -773,7 +773,6 @@ Subpath exports are also dual:
 | `@stingerloom/orm/errors` | Error classes |
 | `@stingerloom/orm/plugin` | Plugin system |
 | `@stingerloom/orm/nestjs` | NestJS integration module |
-| `@stingerloom/orm/prisma-import` | Prisma schema importer |
 
 The `exports` field in `package.json` maps each subpath to the appropriate `import` (ESM) or `require` (CJS) entry point. No configuration needed on your side. Granular subpath imports reduce bundle size when used with tree-shaking bundlers.
 

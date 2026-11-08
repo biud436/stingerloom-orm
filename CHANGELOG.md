@@ -8,6 +8,16 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING: the Prisma schema importer is removed.** Gone with it:
+  - the `@stingerloom/orm/prisma-import` subpath and the `stingerloom-prisma-import` CLI;
+  - the importer's classes and types that the package root re-exported: `PrismaImporter`, `PrismaImportOptions`, `PrismaImportResult`, `PrismaImportContext`, `PrismaModelInfo`, `PrismaFieldInfo`, `PrismaEnumInfo`, `PrismaRelationInfo`, `PrismaDefaultValue`, `RelationResolver`, `ResolvedRelation`, `ManyToOneRelation`, `OneToManyRelation`, `OneToOneOwningRelation`, `OneToOneInverseRelation`, `ManyToManyOwningRelation`, `ManyToManyInverseRelation`, `TypeMapper`, `TypeMappingResult`, `NativeTypeHint`, `FileWriter`, `FileWriterOptions` and `WriteResult`;
+  - `OrmErrorCode.PRISMA_PARSE_ERROR` and the optional peer dependency `@mrleebo/prisma-ast`;
+  - the `prisma-import-demo` example.
+
+  To generate entities from a Prisma schema, apply the schema to a database (`prisma db push`) and run `npx stingerloom introspect` against it. Entity files the importer already wrote keep working: they import only decorators and types the package still exports.
+
 ### Fixed
 
 - **An idle tenant connection is released after `tenantConnectionTtlMs`, even when its timer fires early.** Under `tenantStrategy: "database"`, the eviction timer checked the tenant's idle time against `Date.now()` and released it only if the full TTL had passed. A timer can fire up to a millisecond before that clock shows it, and a system clock set back makes the gap larger; the tenant was then kept and no check was scheduled again, so its pool stayed open until the tenant was used again or released by hand. The router now checks again when the rest of the TTL has passed, and measures idle time on a monotonic clock.

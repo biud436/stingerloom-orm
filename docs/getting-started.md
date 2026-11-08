@@ -114,7 +114,6 @@ Subpath exports are also dual:
 
 ```typescript
 import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
-import { PrismaImporter } from "@stingerloom/orm/prisma-import";
 import { EntityManager } from "@stingerloom/orm/core";       // core only
 import { PostgresDriver } from "@stingerloom/orm/postgres";   // single dialect
 ```

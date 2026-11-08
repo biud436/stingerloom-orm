@@ -31,7 +31,6 @@ const ENTRY_POINTS: Record<string, string> = {
   "./postgres": "src/dialects/postgres/index.ts",
   "./sqlite": "src/dialects/sqlite/index.ts",
   "./nestjs": "src/integration/nestjs/index.ts",
-  "./prisma-import": "src/integration/prisma-import/index.ts",
   "./testing": "src/testing/index.ts",
 };
 

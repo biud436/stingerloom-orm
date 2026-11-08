@@ -106,7 +106,6 @@ function sidebarEn() {
       collapsed: false,
       items: [
         { text: "Introspection", link: "/introspection" },
-        { text: "Prisma Import", link: "/prisma-import" },
       ],
     },
     {
@@ -253,7 +252,6 @@ function sidebarKo() {
       collapsed: false,
       items: [
         { text: "인트로스펙션", link: "/ko/introspection" },
-        { text: "Prisma Import", link: "/ko/prisma-import" },
       ],
     },
     {
