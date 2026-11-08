@@ -26,6 +26,7 @@ import {
   PostgresMigrationRunner,
 } from "../../src/migration";
 import { AdvisoryLockError } from "../../src/errors";
+import { MetadataContext } from "../../src/metadata/MetadataContext";
 
 function gate(): { promise: Promise<void>; open: () => void } {
   let open!: () => void;
@@ -242,6 +243,154 @@ function suite(poolMax: number) {
       expect(events.some((e) => e.startsWith(`onError:broken_${sfx}:`))).toBe(true);
       expect(await recorded()).toEqual([create.name]);
       expect(await free()).toBe(true);
+    });
+
+    // PostgreSQL rolls the whole migration back; MySQL commits each schema
+    // change as it runs, so the runner says which statements stayed.
+    it("leaves nothing of a migration that fails part-way on PostgreSQL, and names what stayed on MySQL", async () => {
+      class HalfDone extends Migration {
+        get name() {
+          return `half_done_${sfx}`;
+        }
+        async up(ctx: MigrationContext) {
+          await ctx.query(`CREATE TABLE ${t(dataTable)} (${t("id")} INT PRIMARY KEY)`);
+          await ctx.query(`INSERT INTO ${t(dataTable)} (${t("id")}) VALUES (1)`);
+          await ctx.query("SELECT * FROM no_such_table_for_migration_runner_real");
+        }
+        async down() {}
+      }
+
+      const [result] = await runner([new HalfDone()]).runAll();
+
+      expect(result.success).toBe(false);
+      expect(await recorded()).toEqual([]);
+      const exists = await query(
+        type === "postgres"
+          ? `SELECT 1 FROM pg_tables WHERE tablename = '${dataTable}'`
+          : `SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '${dataTable}'`,
+      );
+      if (type === "postgres") {
+        expect(exists).toEqual([]);
+        expect(result.error).not.toContain("outside a transaction");
+      } else {
+        expect(exists).toHaveLength(1);
+        expect(result.error).toContain("It ran outside a transaction (MySQL commits each schema change as it runs)");
+        expect(result.error).toContain(
+          `stays applied, including these 2 statements from context.query:\n  CREATE TABLE ${t(dataTable)}`,
+        );
+      }
+      expect(await free()).toBe(true);
+    });
+
+    (type === "postgres" ? it : it.skip)(
+      "runs context.driver's helpers on the migration's connection, inside its transaction",
+      async () => {
+        const indexName = `mr_idx_${sfx}`;
+        const seen: unknown[] = [];
+        class WithHelpers extends Migration {
+          static broken = true;
+          get name() {
+            return `with_helpers_${sfx}`;
+          }
+          async up(ctx: MigrationContext) {
+            await ctx.query(`CREATE TABLE ${t(dataTable)} (${t("id")} INT PRIMARY KEY, ${t("v")} VARCHAR(20))`);
+            // Another connection cannot see the table before COMMIT, and would
+            // wait on its lock for the index.
+            seen.push(await ctx.driver.hasTable(dataTable));
+            await ctx.driver.addIndex(dataTable, "v", indexName);
+            if (WithHelpers.broken) await ctx.query("SELECT * FROM no_such_table_for_migration_runner_real");
+          }
+          async down() {}
+        }
+        const indexes = () => query(`SELECT indexname FROM pg_indexes WHERE indexname = '${indexName}'`);
+
+        const [failed] = await runner([new WithHelpers()]).runAll();
+
+        expect(failed.success).toBe(false);
+        expect(seen).toEqual([[{ tablename: dataTable }]]);
+        expect(await indexes()).toEqual([]);
+        expect(await query(`SELECT 1 FROM pg_tables WHERE tablename = '${dataTable}'`)).toEqual([]);
+
+        WithHelpers.broken = false;
+        const [applied] = await runner([new WithHelpers()]).runAll();
+
+        expect(applied.success).toBe(true);
+        expect(await indexes()).toEqual([{ indexname: indexName }]);
+        expect(await recorded()).toEqual([`with_helpers_${sfx}`]);
+      },
+    );
+
+    (type === "postgres" ? it : it.skip)(
+      "tells a migration that cannot run in a transaction to set transaction = false, and runs it when it does",
+      async () => {
+        await query(`CREATE TABLE ${t(dataTable)} (${t("id")} INT PRIMARY KEY, ${t("v")} VARCHAR(20))`);
+        const indexName = `mr_conc_${sfx}`;
+        class Concurrent extends Migration {
+          static transactional: boolean | undefined;
+          get name() {
+            return `concurrent_${sfx}`;
+          }
+          get transaction() {
+            return Concurrent.transactional;
+          }
+          async up(ctx: MigrationContext) {
+            await ctx.query(`CREATE INDEX CONCURRENTLY ${t(indexName)} ON ${t(dataTable)} (${t("v")})`);
+          }
+          async down() {}
+        }
+
+        const [refused] = await runner([new Concurrent()]).runAll();
+
+        expect(refused.success).toBe(false);
+        expect(refused.error).toContain("cannot run inside a transaction block");
+        expect(refused.error).toContain("set `transaction = false` on it");
+
+        Concurrent.transactional = false;
+        const [applied] = await runner([new Concurrent()]).runAll();
+
+        expect(applied.success).toBe(true);
+        expect(await query(`SELECT indexname FROM pg_indexes WHERE indexname = '${indexName}'`)).toEqual([
+          { indexname: indexName },
+        ]);
+      },
+    );
+
+    // A transaction begun for a tenant points search_path at the tenant's
+    // schema; the runner reads its tracking table in the connection's schema.
+    (type === "postgres" ? it : it.skip)(
+      "applies a migration in the connection's schema when the runner is called for a tenant",
+      async () => {
+        const create = new CreateData();
+
+        const [result] = await MetadataContext.run(`mr_no_such_schema_${sfx}`, () =>
+          runner([create]).runAll(),
+        );
+
+        expect(result).toEqual({ name: create.name, direction: "up", success: true });
+        expect(await recorded()).toEqual([create.name]);
+        expect(await query(`SELECT 1 AS ok FROM pg_tables WHERE tablename = '${dataTable}'`)).toEqual([{ ok: 1 }]);
+      },
+    );
+
+    (type === "mysql" ? it : it.skip)("rolls back a data-only migration that sets transaction = true on MySQL", async () => {
+      await query(`CREATE TABLE ${t(dataTable)} (${t("id")} INT PRIMARY KEY, ${t("v")} VARCHAR(20))`);
+      class SeedTwice extends Migration {
+        readonly transaction = true;
+        get name() {
+          return `seed_twice_${sfx}`;
+        }
+        async up(ctx: MigrationContext) {
+          await ctx.query(`INSERT INTO ${t(dataTable)} (${t("id")}, ${t("v")}) VALUES (1, 'a')`);
+          await ctx.query(`INSERT INTO ${t(dataTable)} (${t("id")}, ${t("v")}) VALUES (1, 'b')`);
+        }
+        async down() {}
+      }
+
+      const [result] = await runner([new SeedTwice()]).runAll();
+
+      expect(result.success).toBe(false);
+      expect(await query(`SELECT ${t("id")} FROM ${t(dataTable)}`)).toEqual([]);
+      expect(await recorded()).toEqual([]);
     });
 
     it("rolls back the last migration and its record", async () => {

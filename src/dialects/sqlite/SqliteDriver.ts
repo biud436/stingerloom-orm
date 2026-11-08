@@ -3,7 +3,9 @@ import sql, { raw, Sql } from "../../utils/sqlTag";
 import { IConnector } from "../../core/IConnector";
 import { MysqlSchemaInterface } from "../mysql/BaseSchema";
 import { ColumnType } from "../../decorators";
-import { ISqlDriver, CreateTableForeignKey } from "../SqlDriver";
+import { CreateTableForeignKey, DriverSession, ISqlDriver } from "../SqlDriver";
+import { SqliteDataSource } from "./SqliteDataSource";
+import { runInSessionTransaction } from "../runInSessionTransaction";
 import type { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
 import { referentialActionClause } from "../../types/ReferentialAction";
 import { SchemaOptions } from "../../types/SchemaOption";
@@ -64,6 +66,15 @@ export class SqliteDriver implements ISqlDriver {
 
   executeRaw(sqlStr: string) {
     return this.connector.query(sqlStr);
+  }
+
+  runInTransaction<R>(work: (session: DriverSession) => Promise<R>): Promise<R> {
+    return runInSessionTransaction(this.connector, new SqliteDataSource(this.connector), (connector) =>
+      work({
+        driver: new SqliteDriver(connector, this.version),
+        query: (statement) => connector.query(statement as any),
+      }),
+    );
   }
 
   async queryWithOptions(query: Sql, options: DriverQueryOptions): Promise<any[]> {

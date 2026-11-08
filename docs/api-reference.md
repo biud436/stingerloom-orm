@@ -839,6 +839,7 @@ Implementations: `PostgresTenantMigrationRunner`, `MySqlTenantMigrationRunner`, 
 ```typescript
 abstract class Migration {
   get name(): string;
+  readonly transaction?: boolean;   // true: run in a transaction with its tracking row. Unset: PostgreSQL/SQLite yes, MySQL no
   abstract up(context: MigrationContext): Promise<void>;
   abstract down(context: MigrationContext): Promise<void>;
 }

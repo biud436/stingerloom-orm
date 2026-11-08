@@ -65,6 +65,8 @@ The `MigrationContext` object gives you two things:
 | `context.query(sql)` | Execute any SQL statement |
 | `context.driver` | Access to the database driver (for DDL helpers, identifier escaping, etc.) |
 
+On PostgreSQL and SQLite both run in the migration's transaction (see [Migrations Run in a Transaction](#migrations-run-in-a-transaction)).
+
 ---
 
 ## More Migration Examples
@@ -199,6 +201,63 @@ When you rollback, the corresponding row is deleted:
 ```sql
 DELETE FROM "__migrations" WHERE "name" = 'AddPhoneToUsers';
 ```
+
+---
+
+## Migrations Run in a Transaction
+
+On PostgreSQL and SQLite, the runner applies each migration in a transaction, together with its row in `__migrations`:
+
+```sql
+BEGIN;
+-- every statement up() runs
+INSERT INTO "__migrations" ("name") VALUES ('AddPhoneToUsers');
+COMMIT;
+```
+
+When any statement fails, the whole migration rolls back. None of its changes are kept, no row is written, and `migrate:status` still lists it as pending, so you fix the migration and run `migrate:run` again from a clean slate. A revert works the same way: `down()` and the `DELETE` of the row commit or roll back together.
+
+Inside the transaction, `context.query()` and the helpers on `context.driver` run on the one connection the transaction holds, not through the query runner the runner was constructed with. The [hooks](#migration-hooks) run outside it: `beforeEach` before `BEGIN`, `afterEach` after `COMMIT`, `onError` after `ROLLBACK`.
+
+### MySQL and MariaDB
+
+MySQL commits each schema change as it runs, so no transaction can take back a `CREATE TABLE` or an `ALTER TABLE`. Migrations there run one statement at a time. When one fails part-way, the error says what stayed applied:
+
+```
+Unknown data type: 'NO_SUCH_TYPE'. It ran outside a transaction (MySQL commits each schema change as it runs), so what it ran before failing stays applied, including these 2 statements from context.query:
+  CREATE TABLE `orders` (`id` INT PRIMARY KEY, `total` INT)
+  ALTER TABLE `orders` ADD COLUMN `note` VARCHAR(20) NOT NULL DEFAULT 'x'
+```
+
+Undo those statements by hand, or make the migration skip what already exists, before you run it again. The list covers `context.query()` only: whatever a `context.driver` helper ran is applied as well.
+
+A migration that only changes data (`INSERT`, `UPDATE`, `DELETE`) can be made atomic on MySQL too, with `transaction = true`.
+
+### Running a Migration Outside a Transaction
+
+Some statements cannot run in a transaction. Give a migration that uses them `transaction = false` (a field or a getter), and the runner sends its statements one at a time, each committing as it runs:
+
+```typescript
+export class AddEmailIndex extends Migration {
+  readonly transaction = false;
+
+  async up(context: MigrationContext) {
+    await context.query(`CREATE INDEX CONCURRENTLY "idx_users_email" ON "users" ("email")`);
+  }
+
+  async down(context: MigrationContext) {
+    await context.query(`DROP INDEX CONCURRENTLY "idx_users_email"`);
+  }
+}
+```
+
+| Statement | What happens in a transaction |
+|-----------|-------------------------------|
+| PostgreSQL `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX ... CONCURRENTLY`, `VACUUM`; `ALTER TYPE ... ADD VALUE` on PostgreSQL 11 and older | PostgreSQL rejects it ("cannot run inside a transaction block"). The migration rolls back, and the runner's error tells you to set `transaction = false`. |
+| PostgreSQL: using an enum value that `ALTER TYPE ... ADD VALUE` added in the same migration | The new value cannot be used until the transaction that added it commits ("unsafe use of new value"). Move the statements that use it to the next migration, or set `transaction = false`. |
+| SQLite `PRAGMA foreign_keys = OFF` / `ON` | SQLite ignores it inside a transaction, so a table rebuild that turns foreign keys off would keep them on, and dropping the old table would run the `ON DELETE` actions of every table that references it. The runner refuses the statement inside a transaction and applies nothing. Use `PRAGMA defer_foreign_keys = ON` in the transaction, or set `transaction = false`. |
+
+Left unset, `transaction` follows the database: PostgreSQL and SQLite run the migration in a transaction, MySQL does not. `transaction = true` on a driver that cannot open one fails the migration before it runs anything.
 
 ---
 
@@ -366,7 +425,7 @@ for (const result of results) {
 }
 ```
 
-If a migration fails, the runner stops immediately -- it does not attempt to run subsequent migrations, because they likely depend on the one that failed.
+If a migration fails, the runner stops immediately -- it does not attempt to run subsequent migrations, because they likely depend on the one that failed. On PostgreSQL and SQLite the failed migration has been rolled back; on MySQL, `result.error` lists the statements that stayed applied (see [Migrations Run in a Transaction](#migrations-run-in-a-transaction)).
 
 ---
 
@@ -753,7 +812,7 @@ const runner = new PostgresMigrationRunner(migrations, em.getDriver()!, queryRun
 await runner.runAll();
 ```
 
-All hooks can be async (return a Promise) or synchronous.
+All hooks can be async (return a Promise) or synchronous. They run outside the migration's transaction, and the `context` they receive sends its statements through the query runner, so a statement a hook runs is not undone when the migration rolls back.
 
 ---
 
