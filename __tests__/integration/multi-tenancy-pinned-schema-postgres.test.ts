@@ -228,6 +228,18 @@ for (const strategy of STRATEGIES) {
         expect(await tableExists(tenant, sub.tableName)).toBe(true);
       });
 
+      it("leaves the pinned table out of a tenant provisioned from inside its own context", async () => {
+        const own = `${tenant}_own`;
+        try {
+          await MetadataContext.run(own, () => provision(em, own));
+
+          expect(await tableExists(own, sub.tableName)).toBe(true);
+          expect(await tableExists(own, plan.tableName)).toBe(false);
+        } finally {
+          await dropSchema(own);
+        }
+      });
+
       it("reads and writes the shared table from inside a tenant context", async () => {
         await em.save(plan.EntityClass, { code: "pro" });
 

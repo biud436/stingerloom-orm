@@ -232,12 +232,10 @@ export class TenantConnectionRouter {
     }
 
     const em = new EntityManager();
-    // Provisioning must run under the "public" metadata context, even if the
-    // caller's first query happened inside MetadataContext.run("acme"). The
-    // global EntityScanner stores @Entity registrations on the public layer
-    // (decorators run at module load, no tenant active); reading from any
-    // other layer returns an empty entity set, so SchemaRegistrar would
-    // create zero tables.
+    // Provisioning runs under the "public" metadata context, even if the
+    // caller's first query happened inside MetadataContext.run("acme"), so
+    // the new pool is set up the same whichever tenant's request reached it
+    // first.
     await MetadataContext.run("public", async () => {
       if (ownedByRouter) {
         // Fresh pool — register() handles connect + synchronize.
