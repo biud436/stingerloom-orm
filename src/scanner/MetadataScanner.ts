@@ -293,7 +293,8 @@ export class MetadataScanner {
    * scheduled: six in-tree scanners (Entity, Column, ManyToOne, OneToMany,
    * ManyToMany, OneToOne) still iterate it, so it can only go once they move
    * to the layer-aware lookups.
-   * Returns only the entries under this scanner's prefix in the current context layer.
+   * Returns the entries under this scanner's prefix in the merged view
+   * (public layer, overridden by the current context's layer).
    */
   protected get mapper(): Map<string, any> {
     return this.prefixedView;
@@ -333,18 +334,18 @@ export class MetadataScanner {
   }
 
   /**
-   * Returns a Map view over the current context layer scoped to this scanner's namespace.
+   * Returns a read-only Map view of this scanner's namespace in the merged
+   * view: the public layer, overridden by the current context's layer.
    * Supports the `for (const [_, value] of this.mapper)` pattern used by subclasses.
+   *
+   * Decorators record metadata on the public layer, so reading only the
+   * current context's layer would show a tenant context no entities at all.
    */
   private get prefixedView(): Map<string, any> {
-    const layer = this.registry.getCurrentLayer();
-    const raw = layer.getInternalMap();
-
-    if (!this.scannerPrefix) return raw;
-
+    const merged = this.registry.resolveAll<any>();
     const view = new Map<string, any>();
-    const prefix = `${this.scannerPrefix}::`;
-    for (const [k, v] of raw) {
+    const prefix = this.scannerPrefix ? `${this.scannerPrefix}::` : "";
+    for (const [k, v] of merged) {
       if (k.startsWith(prefix)) {
         view.set(k.slice(prefix.length), v);
       }
