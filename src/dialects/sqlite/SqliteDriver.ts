@@ -7,7 +7,6 @@ import { CreateTableForeignKey, DriverSession, ISqlDriver } from "../SqlDriver";
 import { SqliteDataSource } from "./SqliteDataSource";
 import { runInSessionTransaction } from "../runInSessionTransaction";
 import type { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
-import { referentialActionClause } from "../../types/ReferentialAction";
 import { SchemaOptions } from "../../types/SchemaOption";
 import { SchemaGenerator } from "../../core/generators/SchemaGenerator";
 import { validateSavepointName } from "../../utils/validateSavepointName";
@@ -15,7 +14,10 @@ import { Logger } from "../../utils/Logger";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { SqliteColumnDefinitionBuilder } from "./SqliteColumnDefinitionBuilder";
-import { buildCreateTableDefinitions } from "../createTableDefinitions";
+import {
+  buildCreateTableDefinitions,
+  buildInlineForeignKeyClause,
+} from "../createTableDefinitions";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import type { SqliteConnector } from "./SqliteConnector";
 import { DbVersion } from "../DbVersion";
@@ -288,7 +290,9 @@ export class SqliteDriver implements ISqlDriver {
     // later in the same sync pass is fine — SQLite resolves parent tables at
     // DML time, not at CREATE time.
     for (const fk of foreignKeys ?? []) {
-      definitions.push(this.buildForeignKeyClause(fk));
+      definitions.push(
+        buildInlineForeignKeyClause((name) => this.wrap(name), fk),
+      );
     }
 
     const result = sql`CREATE TABLE IF NOT EXISTS ${raw(this.wrap(tableName))} (${raw(
@@ -296,25 +300,6 @@ export class SqliteDriver implements ISqlDriver {
     )})`;
 
     return this.connector.query(result.text);
-  }
-
-  /**
-   * Builds an inline `FOREIGN KEY (...) REFERENCES ...` clause.
-   * Identifiers are wrapped; referential actions are validated against the
-   * ReferentialAction whitelist before being interpolated, and an unknown one
-   * throws.
-   */
-  private buildForeignKeyClause(fk: CreateTableForeignKey): string {
-    let clause = "";
-    if (fk.constraintName) {
-      clause += `CONSTRAINT ${this.wrap(fk.constraintName)} `;
-    }
-    clause += `FOREIGN KEY (${this.wrap(fk.columnName)}) REFERENCES ${this.wrap(
-      fk.referencedTable,
-    )} (${this.wrap(fk.referencedColumn)})`;
-    clause += referentialActionClause("ON DELETE", fk.onDelete);
-    clause += referentialActionClause("ON UPDATE", fk.onUpdate);
-    return clause;
   }
 
   /**

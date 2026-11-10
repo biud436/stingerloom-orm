@@ -286,6 +286,7 @@ export class MigrationCli {
     const schemaDiff = new SchemaDiff();
     const diff = await schemaDiff.diff(entities, queryRunner, dialect, undefined, {
       columnBuilder,
+      detectJoinTables: true,
     });
 
     // Tables the diff did not create are compared column by column only.
@@ -308,6 +309,7 @@ export class MigrationCli {
     const generator = new SchemaDiffMigrationGenerator(
       capabilities,
       this.driver?.getVersion?.()?.raw,
+      this.options.namingStrategy,
     );
     const content = generator.generate(diff, dialect);
     const sqlPreview = generator.dryRun(diff, dialect);
@@ -325,7 +327,7 @@ export class MigrationCli {
 
   /**
    * Whether the diff carries anything a migration would do. Renames, enum
-   * values and generated columns live outside the add/drop/alter lists, and a
+   * values, generated columns and join tables live outside the add/drop/alter lists, and a
    * diff holding only one of them used to be reported as "no changes" —
    * while synchronize applied it.
    *
@@ -342,6 +344,7 @@ export class MigrationCli {
       diff.alterColumns.length > 0 ||
       (diff.renamedColumns?.length ?? 0) > 0 ||
       (diff.addComputedColumns?.length ?? 0) > 0 ||
+      (diff.addJoinTables?.length ?? 0) > 0 ||
       (diff.enumChanges ?? []).some(
         (change) => change.isNew || change.addValues.length > 0,
       )

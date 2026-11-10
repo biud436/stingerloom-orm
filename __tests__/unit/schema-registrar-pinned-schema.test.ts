@@ -20,6 +20,8 @@ jest.mock("../../src/scanner/ScannerContainer", () => ({
     makeEntities: () => entityQueue[Symbol.iterator](),
     scan: (entity: any) =>
       entityQueue.find((m) => m.target === entity) ?? null,
+    // The schema diff reads the relations of each table for its join columns.
+    getByTarget: () => [],
   })),
 }));
 

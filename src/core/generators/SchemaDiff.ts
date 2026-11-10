@@ -8,6 +8,10 @@ import {
   getEntitySchema,
 } from "../../decorators/Entity";
 import { ComputedColumnMetadata } from "../../decorators/ComputedColumn";
+import {
+  MANY_TO_MANY_TOKEN,
+  ManyToManyMetadata,
+} from "../../decorators/ManyToMany";
 import { SchemaDialect } from "./SchemaGenerator";
 import {
   collectTableColumns,
@@ -134,6 +138,13 @@ export interface ComputedColumnChange {
   column: ComputedColumnMetadata;
 }
 
+/** A `@ManyToMany` join table that does not exist in the database. */
+export interface JoinTableChange {
+  tableName: string;
+  /** The entity declaring the owning side (`joinTable`) of the relation. */
+  ownerEntity: ClazzType<any>;
+}
+
 export interface SchemaDiffResult {
   addTables: string[];
   dropTables: string[];
@@ -156,6 +167,11 @@ export interface SchemaDiffResult {
    * drift is left to hand-written migrations).
    */
   addComputedColumns?: ComputedColumnChange[];
+  /**
+   * `@ManyToMany` join tables to create — reported only under
+   * {@link SchemaDiffOptions.detectJoinTables}.
+   */
+  addJoinTables?: JoinTableChange[];
 }
 
 /**
@@ -198,6 +214,12 @@ export interface SchemaDiffOptions {
    * entity is obsolete rather than merely owned by someone else.
    */
   detectDroppedTables?: boolean;
+  /**
+   * If true, report the `@ManyToMany` join tables missing from the database
+   * in `addJoinTables`. `migrate:generate` turns it on; `synchronize` creates
+   * its join tables in a pass of its own and leaves it off.
+   */
+  detectJoinTables?: boolean;
 
   /**
    * The connected driver's column definition builder — the single source of
@@ -354,6 +376,7 @@ export class SchemaDiff {
 
     // One entry per table: a SINGLE_TABLE child is compared as its root's
     // table, which holds the whole hierarchy.
+    const declaredEntities = entities;
     entities = [...new Set(entities.map((entity) => tableOwnerEntity(entity)))];
 
     // Declared column types come from the driver's own column builder, so the
@@ -521,6 +544,16 @@ export class SchemaDiff {
       }
     }
 
+    if (options?.detectJoinTables) {
+      result.addJoinTables = await this.detectMissingJoinTables(
+        declaredEntities,
+        new Set(result.addTables),
+        queryRunner,
+        dialect,
+        schema,
+      );
+    }
+
     // Detect ENUM changes (PostgreSQL only)
     if (dialect === "postgres") {
       await this.detectEnumChanges(result, entities, queryRunner, schema);
@@ -540,6 +573,48 @@ export class SchemaDiff {
     }
 
     return result;
+  }
+
+  /**
+   * The join tables the entities' owning `@ManyToMany` sides declare that the
+   * database does not have. One whose owner's table is itself new is taken
+   * as missing without a query.
+   */
+  private async detectMissingJoinTables(
+    entities: ClazzType<any>[],
+    newTables: ReadonlySet<string>,
+    queryRunner: QueryRunner,
+    dialect: SchemaDialect,
+    schema?: string,
+  ): Promise<JoinTableChange[]> {
+    const missing: JoinTableChange[] = [];
+    const seen = new Set<string>();
+    for (const entity of entities) {
+      const relations = (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity) ??
+        []) as ManyToManyMetadata<any>[];
+      for (const rel of relations) {
+        const tableName = rel.joinTable?.name;
+        if (!tableName || seen.has(tableName)) continue;
+        seen.add(tableName);
+        const ownerIsNew = newTables.has(
+          this.getTableName(tableOwnerEntity(entity)),
+        );
+        if (!ownerIsNew) {
+          // The join table lives in its owner's schema.
+          const pinnedSchema =
+            dialect === "postgres" ? getEntitySchema(entity) : undefined;
+          const dbColumns = await this.getDbColumns(
+            queryRunner,
+            tableName,
+            dialect,
+            pinnedSchema ?? schema,
+          );
+          if (dbColumns.length > 0) continue;
+        }
+        missing.push({ tableName, ownerEntity: entity });
+      }
+    }
+    return missing;
   }
 
   private getTableName<T>(entity: ClazzType<T>): string {

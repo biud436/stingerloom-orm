@@ -235,8 +235,15 @@ describe("[Integration] SQLite: inheritance tables across a synchronize restart"
     const sti = buildHierarchy("igs", "SINGLE_TABLE");
     const tpt = buildHierarchy("igj", "JOINED");
     const generator = new SchemaGenerator({ dialect: "sqlite" });
+    // The column definitions only: SQLite's foreign keys follow them inside
+    // the same statement, as `CONSTRAINT ... FOREIGN KEY ...` clauses.
     const columnsOf = (ddl: string) =>
-      [...ddl.slice(ddl.indexOf("(")).matchAll(/"(\w+)" /g)]
+      [
+        ...ddl
+          .slice(ddl.indexOf("("))
+          .split(", CONSTRAINT ")[0]
+          .matchAll(/"(\w+)" /g),
+      ]
         .map((m) => m[1])
         .sort();
 

@@ -11,18 +11,22 @@ import {
 import { SchemaGenerator, SchemaDialect } from "./SchemaGenerator";
 import { createColumnDefinitionBuilder } from "../../dialects/ColumnDefinitionBuilder";
 import { addColumnDefaultClause } from "../../dialects/columnDefault";
-import { MANY_TO_ONE_TOKEN, ManyToOneMetadata } from "../../decorators/ManyToOne";
-import { ONE_TO_ONE_TOKEN, OneToOneMetadata } from "../../decorators/OneToOne";
+import { getEntitySchema } from "../../decorators/Entity";
+import { InheritanceResolver } from "../InheritanceResolver";
+import { DefaultNamingStrategy, NamingStrategy } from "./NamingStrategy";
+import { collectTableColumns } from "./entityColumns";
 import {
-  ENTITY_TOKEN,
-  EntityMetadata,
-  getEntitySchema,
-} from "../../decorators/Entity";
+  collectTableForeignKeys,
+  generatorRelationResolver,
+} from "./tableRelations";
 import { ClazzType } from "../../utils";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import type { CommonCapabilities } from "../../dialects/DialectCapabilities";
 import { UnsupportedFeatureError } from "../../errors/UnsupportedFeatureError";
+
+const INHERITANCE = new InheritanceResolver();
+const DEPENDENCY_NAMING = new DefaultNamingStrategy();
 
 /**
  * Escapes an enum value for safe embedding in DDL strings.
@@ -60,9 +64,21 @@ export class SchemaDiffMigrationGenerator {
   private readonly capabilities?: CommonCapabilities;
   private readonly versionString?: string;
 
-  constructor(capabilities?: CommonCapabilities, versionString?: string) {
+  private readonly namingStrategy?: NamingStrategy;
+
+  /**
+   * @param namingStrategy Names the indexes and foreign keys of new tables.
+   *   Pass the one the application runs with, so a migration creates them
+   *   under the names `synchronize` looks for.
+   */
+  constructor(
+    capabilities?: CommonCapabilities,
+    versionString?: string,
+    namingStrategy?: NamingStrategy,
+  ) {
     this.capabilities = capabilities;
     this.versionString = versionString;
+    this.namingStrategy = namingStrategy;
   }
 
   /**
@@ -157,6 +173,116 @@ export class SchemaDiffMigrationGenerator {
     );
   }
 
+  private schemaGenerator(dialect: SchemaDialect): SchemaGenerator {
+    return new SchemaGenerator({
+      dialect,
+      capabilities: this.capabilities,
+      namingStrategy: this.namingStrategy,
+    });
+  }
+
+  /**
+   * The entities whose indexes belong to a new table: the entity itself and,
+   * for a SINGLE_TABLE root, the children stored in the same table.
+   */
+  private tableEntities(entity: ClazzType<any>): ClazzType<any>[] {
+    if (INHERITANCE.getStrategy(entity) !== "SINGLE_TABLE") return [entity];
+    return [
+      entity,
+      ...INHERITANCE.getConcreteEntities(entity).filter((e) => e !== entity),
+    ];
+  }
+
+  /** The join tables to create, by owning entity. */
+  private newJoinTables(diff: SchemaDiffResult): {
+    owners: ClazzType<any>[];
+    names: Set<string>;
+  } {
+    const changes = diff.addJoinTables ?? [];
+    return {
+      owners: [...new Set(changes.map((change) => change.ownerEntity))],
+      names: new Set(changes.map((change) => change.tableName)),
+    };
+  }
+
+  /**
+   * Everything a new table is created with — what `synchronize` creates for
+   * it: the table, its indexes, then the foreign keys once every table
+   * exists, then the `@ManyToMany` join tables. A migration that stopped at
+   * CREATE TABLE left a schema the next diff reported as in sync, since
+   * indexes and constraints are not compared on an existing table.
+   */
+  private newTableUpSql(diff: SchemaDiffResult, dialect: SchemaDialect): string[] {
+    const sg = this.schemaGenerator(dialect);
+    const entities = this.sortTablesByDependency(diff).map((table) =>
+      this.requireEntityClass(diff, table),
+    );
+    const sqls: string[] = entities.map((entity) =>
+      sg.generateCreateTableDDL(entity),
+    );
+    for (const entity of entities) {
+      for (const indexed of this.tableEntities(entity)) {
+        sqls.push(
+          ...sg.generateCreateIndexDDL(indexed),
+          ...sg.generateCompositeIndexDDL(indexed),
+          ...sg.generateFullTextIndexDDL(indexed),
+          ...sg.generateJsonIndexDDL(indexed),
+          ...sg.generateUniqueIndexDDL(indexed),
+        );
+      }
+    }
+    for (const entity of entities) {
+      sqls.push(...sg.generateForeignKeyDDL(entity));
+    }
+    const joinTables = this.newJoinTables(diff);
+    sqls.push(
+      ...sg.generateManyToManyJoinTableDDL(joinTables.owners, joinTables.names),
+      ...sg.generateManyToManyForeignKeyDDL(joinTables.owners, joinTables.names),
+    );
+    return [...new Set(sqls)];
+  }
+
+  /**
+   * Reverse of {@link newTableUpSql}: the join tables, then the foreign keys
+   * of the new tables — so that tables referencing each other can go in any
+   * order — then the tables, dependents first. SQLite declares its foreign
+   * keys inside the table, so there the order alone has to do.
+   */
+  private newTableDownSql(diff: SchemaDiffResult, dialect: SchemaDialect): string[] {
+    const sg = this.schemaGenerator(dialect);
+    const sqls: string[] = [];
+    const joinTables = this.newJoinTables(diff);
+    sqls.push(
+      ...sg.generateManyToManyDropDDL(joinTables.owners, joinTables.names),
+    );
+
+    const tables = [...this.sortTablesByDependency(diff)].reverse();
+    if (dialect !== "sqlite") {
+      for (const table of tables) {
+        const entity = diff.addTableEntityMap?.[table];
+        if (!entity) continue;
+        const wrapped = this.escapeTable(
+          table,
+          this.addedTableSchema(diff, table, dialect),
+          dialect,
+        );
+        for (const fkName of sg.foreignKeyNames(entity)) {
+          sqls.push(
+            dialect === "mysql"
+              ? `ALTER TABLE ${wrapped} DROP FOREIGN KEY ${this.escapeId(fkName, dialect)}`
+              : `ALTER TABLE ${wrapped} DROP CONSTRAINT IF EXISTS ${this.escapeId(fkName, dialect)}`,
+          );
+        }
+      }
+    }
+    for (const table of tables) {
+      sqls.push(
+        `DROP TABLE IF EXISTS ${this.escapeTable(table, this.addedTableSchema(diff, table, dialect), dialect)}`,
+      );
+    }
+    return sqls;
+  }
+
   private buildUpSql(
     diff: SchemaDiffResult,
     dialect: SchemaDialect,
@@ -169,15 +295,8 @@ export class SchemaDiffMigrationGenerator {
       sqls.push(...this.buildEnumUpSql(ec, dialect));
     }
 
-    // Sort addTables by FK dependency order
-    const orderedTables = this.sortTablesByDependency(diff);
-
-    // New tables
-    for (const table of orderedTables) {
-      const entityClass = this.requireEntityClass(diff, table);
-      const sg = new SchemaGenerator({ dialect, capabilities: this.capabilities });
-      sqls.push(sg.generateCreateTableDDL(entityClass));
-    }
+    // New tables, with their indexes, foreign keys and join tables
+    sqls.push(...this.newTableUpSql(diff, dialect));
 
     // Add columns
     for (const col of diff.addColumns) {
@@ -254,11 +373,7 @@ export class SchemaDiffMigrationGenerator {
     }
 
     // Reverse of add tables
-    for (const table of diff.addTables) {
-      sqls.push(
-        `DROP TABLE IF EXISTS ${this.escapeTable(table, this.addedTableSchema(diff, table, dialect), dialect)}`,
-      );
-    }
+    sqls.push(...this.newTableDownSql(diff, dialect));
 
     return sqls;
   }
@@ -281,14 +396,8 @@ export class SchemaDiffMigrationGenerator {
       }
     }
 
-    // Sort addTables by FK dependency order
-    const orderedTables = this.sortTablesByDependency(diff);
-
-    // New tables
-    for (const table of orderedTables) {
-      const entityClass = this.requireEntityClass(diff, table);
-      const sg = new SchemaGenerator({ dialect, capabilities: this.capabilities });
-      const ddl = sg.generateCreateTableDDL(entityClass);
+    // New tables, with their indexes, foreign keys and join tables
+    for (const ddl of this.newTableUpSql(diff, dialect)) {
       stmts.push(this.wrapSqlInQuery(ddl));
     }
 
@@ -411,12 +520,8 @@ export class SchemaDiffMigrationGenerator {
     }
 
     // Reverse of new tables — drop them
-    for (const table of diff.addTables) {
-      stmts.push(
-        this.wrapSqlInQuery(
-          `DROP TABLE IF EXISTS ${this.escapeTable(table, this.addedTableSchema(diff, table, dialect), dialect)}`,
-        ),
-      );
+    for (const ddl of this.newTableDownSql(diff, dialect)) {
+      stmts.push(this.wrapSqlInQuery(ddl));
     }
 
     // Reverse of drop columns — cannot restore automatically
@@ -790,37 +895,19 @@ export class SchemaDiffMigrationGenerator {
   }
 
   /**
-   * Get table names that an entity depends on (via ManyToOne and OneToOne relations).
+   * The tables an entity's table references through a foreign key: its
+   * ManyToOne and owning OneToOne targets, and a JOINED child's root.
    */
   private getEntityDependencies(entity: ClazzType<any>): string[] {
-    const deps: string[] = [];
-
-    const m2o = (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) ??
-      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity.prototype) ??
-      []) as ManyToOneMetadata<any>[];
-    for (const rel of m2o) {
-      const related = rel.getMappingEntity();
-      if (related) {
-        const meta = Reflect.getMetadata(ENTITY_TOKEN, related) as
-          | EntityMetadata
-          | undefined;
-        deps.push(meta?.name ?? (related as any).name);
-      }
-    }
-
-    const o2o = (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) ??
-      []) as OneToOneMetadata<any>[];
-    for (const rel of o2o) {
-      if (!rel.joinColumn) continue;
-      const related = rel.getRelatedEntity();
-      if (related) {
-        const meta = Reflect.getMetadata(ENTITY_TOKEN, related) as
-          | EntityMetadata
-          | undefined;
-        deps.push(meta?.name ?? (related as any).name);
-      }
-    }
-
-    return deps;
+    const { foreignKeys } = collectTableForeignKeys(
+      entity,
+      "",
+      collectTableColumns(entity),
+      {
+        resolver: generatorRelationResolver(),
+        namingStrategy: DEPENDENCY_NAMING,
+      },
+    );
+    return foreignKeys.map((fk) => fk.referencedTable);
   }
 }

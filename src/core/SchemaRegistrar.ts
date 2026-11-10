@@ -39,11 +39,9 @@ import {
 } from "../decorators";
 import { collectTableComputedColumns } from "./generators/entityColumns";
 import {
-  RELATION_COLUMN_TOKEN,
-  RelationColumnMetadata,
-} from "../decorators/RelationColumn";
-import type { ManyToOneMetadata } from "../decorators/ManyToOne";
-import type { OneToOneMetadata } from "../decorators/OneToOne";
+  collectTableForeignKeys,
+  collectTableRelations,
+} from "./generators/tableRelations";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { EntityNotFound } from "../dialects/EntityNotFound";
 import type { CreateTableForeignKey, ISqlDriver } from "../dialects/SqlDriver";
@@ -90,14 +88,6 @@ interface SkippedSafeChange {
   target: string;
   /** The statement that a full sync would have executed. */
   ddl: string;
-}
-
-/** A relation whose join column a table holds, and the class declaring it. */
-interface TableRelation<R> {
-  relation: R;
-  declaredBy: ClazzType<any>;
-  /** A SINGLE_TABLE child's relation on the shared table: always nullable. */
-  shared: boolean;
 }
 
 /**
@@ -1930,68 +1920,8 @@ export class SchemaRegistrar {
    * holds every child's (`shared`: nullable whatever the relation says, since
    * a row of one subtype leaves the others' join columns empty).
    */
-  private tableRelations(TargetEntity: ClazzType<any>): {
-    manyToOnes: Array<TableRelation<ManyToOneMetadata<any>>>;
-    oneToOnes: Array<TableRelation<OneToOneMetadata<any>>>;
-  } {
-    const own = (entity: ClazzType<any>, shared: boolean) => ({
-      manyToOnes: this.resolver
-        .resolveManyToOneMetadata(entity)
-        .map((relation) => ({ relation, declaredBy: entity, shared })),
-      oneToOnes: this.resolver
-        .resolveOneToOneMetadata(entity)
-        .map((relation) => ({ relation, declaredBy: entity, shared })),
-    });
-    const result = own(TargetEntity, false);
-
-    const strategy = this.inheritanceResolver.getStrategy(TargetEntity);
-    const root = this.inheritanceResolver.getRoot(TargetEntity);
-    if (!root) return result;
-    const rootM2o = new Set(
-      this.resolver.resolveManyToOneMetadata(root).map((r) => r.columnName),
-    );
-    const rootO2o = new Set(
-      this.resolver.resolveOneToOneMetadata(root).map((r) => r.propertyKey),
-    );
-
-    if (strategy === "JOINED" && root !== TargetEntity) {
-      return {
-        manyToOnes: result.manyToOnes.filter(
-          (r) => !rootM2o.has(r.relation.columnName),
-        ),
-        oneToOnes: result.oneToOnes.filter(
-          (r) => !rootO2o.has(r.relation.propertyKey),
-        ),
-      };
-    }
-
-    if (strategy === "SINGLE_TABLE" && root === TargetEntity) {
-      const joinColumns = new Set(
-        [...result.manyToOnes, ...result.oneToOnes]
-          .map((r) => r.relation.joinColumn)
-          .filter((c): c is string => !!c),
-      );
-      const isNew = (joinColumn?: string) => {
-        if (!joinColumn || joinColumns.has(joinColumn)) return false;
-        joinColumns.add(joinColumn);
-        return true;
-      };
-      for (const child of this.inheritanceResolver.getConcreteEntities(root)) {
-        if (child === root) continue;
-        const childRelations = own(child, true);
-        for (const r of childRelations.manyToOnes) {
-          if (!rootM2o.has(r.relation.columnName) && isNew(r.relation.joinColumn)) {
-            result.manyToOnes.push(r);
-          }
-        }
-        for (const r of childRelations.oneToOnes) {
-          if (!rootO2o.has(r.relation.propertyKey) && isNew(r.relation.joinColumn)) {
-            result.oneToOnes.push(r);
-          }
-        }
-      }
-    }
-    return result;
+  private tableRelations(TargetEntity: ClazzType<any>) {
+    return collectTableRelations(TargetEntity, this.resolver);
   }
 
   /**
@@ -2013,161 +1943,11 @@ export class SchemaRegistrar {
     tableName: string,
     columns: Array<{ name?: string; propertyKey?: string }>,
   ): { foreignKeys: CreateTableForeignKey[]; extraColumns: any[] } {
-    const entityScanner = getScannerInstance(EntityScanner);
-    const foreignKeys: CreateTableForeignKey[] = [];
-    const extraColumns: any[] = [];
-    const existingCols = new Set(
-      columns.map((c) => (c.name ?? c.propertyKey ?? "").toLowerCase()),
-    );
-
-    const pushJoinColumnIfMissing = (
-      joinColumn: string,
-      referencedEntity: ClazzType<any>,
-      { declaredBy, shared }: Omit<TableRelation<unknown>, "relation">,
-    ) => {
-      const key = joinColumn.toLowerCase();
-      if (existingCols.has(key)) return;
-      existingCols.add(key);
-      const def = this.buildJoinColumnDef(joinColumn, referencedEntity, declaredBy);
-      if (shared) def.options.nullable = true;
-      extraColumns.push(def);
-    };
-
-    const { manyToOnes, oneToOnes } = this.tableRelations(TargetEntity);
-
-    // ManyToOne
-    for (const owned of manyToOnes) {
-      const rel = owned.relation;
-      if (!rel.joinColumn) continue;
-      const mappingEntity = rel.getMappingEntity();
-      if (!mappingEntity) continue;
-      const mappingMeta = entityScanner.scan(mappingEntity);
-      if (!mappingMeta) continue;
-      // The column is needed whether or not the constraint is: opting out of
-      // the FK constraint does not opt out of storing the FK value.
-      if (rel.option?.createForeignKeyConstraints === false) {
-        pushJoinColumnIfMissing(rel.joinColumn, mappingEntity, owned);
-        continue;
-      }
-      const referencedColumn =
-        rel.references ??
-        mappingMeta.columns.find((c: any) => c.options?.primary)?.name;
-      if (!referencedColumn) continue;
-      const referencedTable =
-        mappingMeta.name || this.ctx.getNameStrategy(mappingEntity);
-      foreignKeys.push({
-        columnName: rel.joinColumn,
-        referencedTable,
-        referencedColumn,
-        constraintName: this.namingStrategy.foreignKeyName(
-          tableName,
-          rel.joinColumn,
-          referencedTable,
-        ),
-        onDelete: rel.option?.onDelete,
-        onUpdate: rel.option?.onUpdate,
-      });
-      pushJoinColumnIfMissing(rel.joinColumn, mappingEntity, owned);
-    }
-
-    // OneToOne (owning side)
-    for (const owned of oneToOnes) {
-      const rel = owned.relation;
-      if (!rel.joinColumn) continue;
-      const relatedEntity = rel.getRelatedEntity();
-      if (!relatedEntity) continue;
-      const relatedMeta = entityScanner.scan(relatedEntity);
-      if (!relatedMeta) continue;
-      if (rel.option?.createForeignKeyConstraints === false) {
-        pushJoinColumnIfMissing(rel.joinColumn, relatedEntity, owned);
-        continue;
-      }
-      const referencedColumn = relatedMeta.columns.find(
-        (c: any) => c.options?.primary,
-      )?.name;
-      if (!referencedColumn) continue;
-      const referencedTable =
-        relatedMeta.name || this.ctx.getNameStrategy(relatedEntity);
-      foreignKeys.push({
-        columnName: rel.joinColumn,
-        referencedTable,
-        referencedColumn,
-        constraintName: this.namingStrategy.foreignKeyName(
-          tableName,
-          rel.joinColumn,
-          referencedTable,
-        ),
-        onDelete: rel.option?.onDelete,
-        onUpdate: rel.option?.onUpdate,
-      });
-      pushJoinColumnIfMissing(rel.joinColumn, relatedEntity, owned);
-    }
-
-    // TPT (JOINED) child: PK references the root table's PK.
-    if (
-      this.inheritanceResolver.isChildEntity(TargetEntity) &&
-      this.inheritanceResolver.getStrategy(TargetEntity) === "JOINED"
-    ) {
-      const root = this.inheritanceResolver.getRoot(TargetEntity);
-      const rootMeta = root
-        ? this.resolver.resolveEntityMetadata(root)
-        : undefined;
-      const pk = columns.find((c: any) => c.options?.primary) as any;
-      const rootPk = rootMeta?.columns.find((c: any) => c.options?.primary);
-      if (pk?.name && rootPk?.name && rootMeta?.name) {
-        foreignKeys.push({
-          columnName: pk.name,
-          referencedTable: rootMeta.name,
-          referencedColumn: rootPk.name,
-          constraintName: this.namingStrategy.foreignKeyName(
-            tableName,
-            pk.name,
-            rootMeta.name,
-          ),
-        });
-      }
-    }
-
-    return { foreignKeys, extraColumns };
-  }
-
-  /**
-   * Builds a column definition for a join column that has no explicit
-   * entity column, typed after the referenced entity's PK (#284) and
-   * nullable — mirroring the ALTER-based fallback in registerForeignKeys.
-   */
-  private buildJoinColumnDef(
-    joinColumn: string,
-    referencedEntity: ClazzType<any>,
-    owningEntity?: ClazzType<any>,
-  ): any {
-    const columns = (Reflect.getMetadata(
-      COLUMN_TOKEN,
-      referencedEntity.prototype,
-    ) ?? []) as ColumnMetadata[];
-    const pkCol = columns.find((c) => c.options?.primary);
-
-    // An explicit @RelationColumn wins over the inferred target-PK shape: it
-    // is the only place the FK column's own type and NOT NULL live.
-    const declared = owningEntity
-      ? ((Reflect.getMetadata(RELATION_COLUMN_TOKEN, owningEntity) ??
-          Reflect.getMetadata(
-            RELATION_COLUMN_TOKEN,
-            owningEntity.prototype,
-          ) ??
-          []) as RelationColumnMetadata[]).find(
-          (rc) => (rc.name ?? `${rc.propertyKey}Id`) === joinColumn,
-        )
-      : undefined;
-
-    return {
-      name: joinColumn,
-      options: {
-        type: declared?.type ?? pkCol?.options?.type ?? "int",
-        length: pkCol?.options?.length,
-        nullable: declared?.nullable ?? true,
-      },
-    };
+    return collectTableForeignKeys(TargetEntity, tableName, columns, {
+      resolver: this.resolver,
+      namingStrategy: this.namingStrategy,
+      tableNameOf: (entity) => this.ctx.getNameStrategy(entity),
+    });
   }
 
   async registerForeignKeys(TargetEntity: ClazzType<any>, tableName: string) {

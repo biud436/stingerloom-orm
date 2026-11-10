@@ -729,6 +729,8 @@ ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NU
 
 ### Schema Diff가 비교하지 않는 것
 
+아직 없는 테이블은 `synchronize`든 생성된 migration이든 전부 갖춰서 만듭니다. 컬럼, 각 관계의 외래 키 컬럼, 인덱스와 외래 키 제약, `@ManyToMany` 관계의 조인 테이블까지 포함합니다. 생성된 `down()`은 같은 것을 역순으로 지웁니다.
+
 이미 있는 테이블에서 diff가 비교하는 것은 컬럼입니다. 컬럼의 존재 여부, 타입, 길이, 정밀도, nullable과 함께 이름 변경, 생성 컬럼, PostgreSQL enum 값까지 봅니다. `synchronize`는 여기에 더해 엔티티에 새로 생긴 인덱스와 외래 키를 만듭니다. 아래 표의 나머지는 DB에 있는 그대로 남아요. PostgreSQL, MariaDB, SQLite에서 직접 측정한 결과입니다:
 
 | 기존 테이블의 변경 | `synchronize` | `migrate:generate` |
@@ -739,6 +741,7 @@ ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NU
 | PostgreSQL enum 값 추가 | 적용 | 생성 |
 | `@Index`, `@UniqueIndex`, 클래스 레벨 `@Index([...])`, `@FullTextIndex` 추가 | 생성 | **생성 안 함** |
 | 관계 추가(`@ManyToOne`, 소유 측 `@OneToOne`) | 컬럼과 제약 생성 -- SQLite는 기존 테이블에 제약을 추가할 수 없어 컬럼만 | **컬럼만** |
+| `@ManyToMany` 추가(조인 테이블이 없는 경우) | 조인 테이블 생성 | 생성 |
 | 관계 제거 | PostgreSQL은 컬럼 삭제. MySQL / MariaDB와 SQLite는 제약이 컬럼을 참조하고 있어 삭제가 경고와 함께 실패 | `DROP COLUMN`을 주석 처리해서 작성 |
 | 엔티티에서 인덱스·유니크 인덱스 제거 | **그대로 남음** | 생성 안 함 |
 | 같은 이름으로 인덱스 정의 변경 | **예전 정의 그대로** | 생성 안 함 |
