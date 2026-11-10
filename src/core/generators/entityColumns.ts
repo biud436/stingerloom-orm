@@ -9,8 +9,16 @@ import {
   COMPUTED_COLUMN_TOKEN,
   ComputedColumnMetadata,
 } from "../../decorators/ComputedColumn";
-import { inferRelatedPkType } from "./RelatedPkTypeResolver";
+import {
+  inferRelatedPkLength,
+  inferRelatedPkType,
+} from "./RelatedPkTypeResolver";
 import { InheritanceResolver } from "../InheritanceResolver";
+import { DefaultNamingStrategy } from "./NamingStrategy";
+import {
+  collectTableForeignKeys,
+  generatorRelationResolver,
+} from "./tableRelations";
 
 /** A column the schema generators render: its DB name plus its resolved options. */
 export interface EntityColumnDef {
@@ -22,7 +30,8 @@ export interface EntityColumnDef {
  * Collects the columns an entity declares, in DDL order.
  *
  * `@Column` metadata first, then the `@RelationColumn` FK shadows that have no
- * `@Column` of their own (their type is inferred from the related entity's PK).
+ * `@Column` of their own (their type and length are inferred from the related
+ * entity's PK).
  *
  * SchemaGenerator (migrate:generate CREATE TABLE) and SchemaDiff (runtime
  * synchronize) both read the entity through this one function — they used to
@@ -60,6 +69,7 @@ export function collectEntityColumns<T>(
       name: fkName,
       options: {
         type: fkType,
+        length: inferRelatedPkLength(entity, rc.propertyKey),
         nullable: rc.nullable ?? true,
       } as ColumnOption,
     });
@@ -97,11 +107,43 @@ export function tableOwnerEntity<T>(entity: ClazzType<T>): ClazzType<any> {
  *   inherited ones live on the root's table.
  * - TABLE_PER_CLASS and no hierarchy: the entity's columns.
  *
+ * Then the join columns of the table's relations that none of the above
+ * declares — a `joinColumn` option names a column no `@Column` or
+ * `@RelationColumn` carries.
+ *
  * The schema diff and migrate:generate read tables through this, so they
  * compare and create what the hierarchy stores rather than a table that
- * would drop its discriminator or copy the root's columns into a child's.
+ * would drop its discriminator, copy the root's columns into a child's, or
+ * leave out a foreign key column.
  */
 export function collectTableColumns<T>(
+  entity: ClazzType<T>,
+): EntityColumnDef[] {
+  const columns = collectDeclaredTableColumns(entity);
+  // Any naming strategy will do: only the join columns are read here, and
+  // their names come from the relations, not from the strategy.
+  const { extraColumns } = collectTableForeignKeys(
+    tableOwnerEntity(entity),
+    "",
+    columns,
+    {
+      resolver: generatorRelationResolver(),
+      namingStrategy: JOIN_COLUMN_NAMING,
+    },
+  );
+  return [
+    ...columns,
+    ...extraColumns.map((col) => ({
+      name: col.name,
+      options: col.options as ColumnOption,
+    })),
+  ];
+}
+
+const JOIN_COLUMN_NAMING = new DefaultNamingStrategy();
+
+/** The table's columns that `@Column` and `@RelationColumn` declare. */
+function collectDeclaredTableColumns<T>(
   entity: ClazzType<T>,
 ): EntityColumnDef[] {
   const owner = tableOwnerEntity(entity);

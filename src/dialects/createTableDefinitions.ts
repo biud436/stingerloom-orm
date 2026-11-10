@@ -1,6 +1,8 @@
 import type { ColumnOption } from "../decorators/Column";
 import type { ComputedColumnMetadata } from "../decorators/ComputedColumn";
 import type { ColumnDefinitionBuilder } from "./ColumnDefinitionBuilder";
+import type { CreateTableForeignKey } from "./SqlDriver";
+import { referentialActionClause } from "../types/ReferentialAction";
 
 /**
  * The definitions inside a `CREATE TABLE ... (...)`: each column, each
@@ -44,4 +46,28 @@ export function buildCreateTableDefinitions(
   }
 
   return definitions;
+}
+
+/**
+ * An inline `[CONSTRAINT name] FOREIGN KEY (...) REFERENCES ...` clause of a
+ * CREATE TABLE statement — how a dialect without ALTER TABLE ADD FOREIGN KEY
+ * (SQLite) declares its foreign keys. The driver's `createTable()` and the
+ * migration DDL generator both render it here. Referential actions are
+ * validated against the ReferentialAction whitelist, and an unknown one
+ * throws.
+ */
+export function buildInlineForeignKeyClause(
+  wrap: (identifier: string) => string,
+  fk: CreateTableForeignKey,
+): string {
+  let clause = "";
+  if (fk.constraintName) {
+    clause += `CONSTRAINT ${wrap(fk.constraintName)} `;
+  }
+  clause += `FOREIGN KEY (${wrap(fk.columnName)}) REFERENCES ${wrap(
+    fk.referencedTable,
+  )} (${wrap(fk.referencedColumn)})`;
+  clause += referentialActionClause("ON DELETE", fk.onDelete);
+  clause += referentialActionClause("ON UPDATE", fk.onUpdate);
+  return clause;
 }

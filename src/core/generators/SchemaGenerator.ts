@@ -25,18 +25,7 @@ import {
   JSON_INDEX_TOKEN,
   JsonIndexMetadata,
 } from "../../decorators/JsonIndex";
-import {
-  ReferentialAction,
-  referentialActionClause,
-} from "../../types/ReferentialAction";
-import {
-  MANY_TO_ONE_TOKEN,
-  ManyToOneMetadata,
-} from "../../decorators/ManyToOne";
-import {
-  ONE_TO_ONE_TOKEN,
-  OneToOneMetadata,
-} from "../../decorators/OneToOne";
+import { referentialActionClause } from "../../types/ReferentialAction";
 import {
   MANY_TO_MANY_TOKEN,
   ManyToManyMetadata,
@@ -54,7 +43,15 @@ import {
   EntityColumnDef,
 } from "./entityColumns";
 import { PrimaryKeyNotFoundError } from "../../errors/PrimaryKeyNotFoundError";
-import { buildCreateTableDefinitions } from "../../dialects/createTableDefinitions";
+import {
+  collectTableForeignKeys,
+  generatorRelationResolver,
+  TableForeignKey,
+} from "./tableRelations";
+import {
+  buildCreateTableDefinitions,
+  buildInlineForeignKeyClause,
+} from "../../dialects/createTableDefinitions";
 import {
   ColumnDefinitionBuilder,
   createColumnDefinitionBuilder,
@@ -83,15 +80,7 @@ export interface SchemaGeneratorOptions {
 
 type ColumnDef = EntityColumnDef;
 
-interface ForeignKeyDef {
-  column: string;
-  referencedTable: string;
-  referencedColumn: string;
-  /** Schema of the referenced entity when pinned via `@Entity({ schema })`. */
-  referencedSchema?: string;
-  onDelete?: ReferentialAction;
-  onUpdate?: ReferentialAction;
-}
+type ForeignKeyDef = TableForeignKey & { constraintName: string };
 
 /**
  * DDL generator. Reads entity metadata and produces CREATE TABLE / DROP TABLE DDL strings.
@@ -140,6 +129,14 @@ export class SchemaGenerator {
       collectTableComputedColumns(entity),
     );
 
+    // SQLite cannot ALTER TABLE ADD FOREIGN KEY: its constraints are part of
+    // the CREATE TABLE statement, exactly as the driver's createTable() does.
+    if (this.dialect === "sqlite") {
+      for (const fk of this.getForeignKeys(entity)) {
+        columnDefs.push(buildInlineForeignKeyClause((id) => this.wrapId(id), fk));
+      }
+    }
+
     const ddl = `CREATE TABLE IF NOT EXISTS ${this.wrapTable(tableName, this.schemaOf(entity))} (${columnDefs.join(", ")})`;
 
     if (this.dialect === "mysql") {
@@ -172,13 +169,15 @@ export class SchemaGenerator {
 
   /**
    * Generates the array of ALTER TABLE ... ADD FOREIGN KEY DDL statements for a single entity.
+   *
+   * Empty on SQLite, which cannot add a constraint to an existing table —
+   * {@link generateCreateTableDDL} declares the foreign keys inline there.
    */
   generateForeignKeyDDL<T>(entity: ClazzType<T>): string[] {
+    if (this.dialect === "sqlite") return [];
     const tableName = this.getTableName(entity);
     const schema = this.schemaOf(entity);
-    const fks = this.getForeignKeys(entity);
-    return fks.map((fk) => {
-      const fkName = this.namingStrategy.foreignKeyName(tableName, fk.column, fk.referencedTable);
+    return this.getForeignKeys(entity).map((fk) => {
       const onDelete = referentialActionClause(
         "ON DELETE",
         fk.onDelete ?? "NO ACTION",
@@ -187,8 +186,16 @@ export class SchemaGenerator {
         "ON UPDATE",
         fk.onUpdate ?? "NO ACTION",
       );
-      return `ALTER TABLE ${this.wrapTable(tableName, schema)} ADD CONSTRAINT ${fkName} FOREIGN KEY (${this.wrapId(fk.column)}) REFERENCES ${this.wrapTable(fk.referencedTable, fk.referencedSchema)}(${this.wrapId(fk.referencedColumn)})${onDelete}${onUpdate}`;
+      return `ALTER TABLE ${this.wrapTable(tableName, schema)} ADD CONSTRAINT ${this.wrapId(fk.constraintName)} FOREIGN KEY (${this.wrapId(fk.columnName)}) REFERENCES ${this.wrapTable(fk.referencedTable, this.schemaOf(fk.referencedEntity))}(${this.wrapId(fk.referencedColumn)})${onDelete}${onUpdate}`;
     });
+  }
+
+  /**
+   * The foreign key constraints {@link generateForeignKeyDDL} adds to an
+   * entity's table, by name — what a migration has to drop before the table.
+   */
+  foreignKeyNames<T>(entity: ClazzType<T>): string[] {
+    return this.getForeignKeys(entity).map((fk) => fk.constraintName);
   }
 
   /**
@@ -464,9 +471,13 @@ export class SchemaGenerator {
   /**
    * Generates CREATE TABLE DDL for ManyToMany join tables.
    * Only processes the owning side (the side that declares joinTable); duplicate table names are skipped.
+   * `only` narrows the result to the join tables it names.
    * Join column types are derived from the actual PK types of the referenced entities (#178).
    */
-  generateManyToManyJoinTableDDL(entities: ClazzType<any>[]): string[] {
+  generateManyToManyJoinTableDDL(
+    entities: ClazzType<any>[],
+    only?: ReadonlySet<string>,
+  ): string[] {
     const ddls: string[] = [];
     const processedTables = new Set<string>();
 
@@ -478,6 +489,7 @@ export class SchemaGenerator {
         if (!rel.joinTable) continue;
 
         const { name, joinColumn, inverseJoinColumn } = rel.joinTable;
+        if (only && !only.has(name)) continue;
         if (processedTables.has(name)) continue;
         processedTables.add(name);
 
@@ -497,6 +509,24 @@ export class SchemaGenerator {
           `PRIMARY KEY (${wrappedJoinCol}, ${wrappedInverseCol})`,
         ];
 
+        // SQLite cannot add the join table's foreign keys afterwards.
+        if (this.dialect === "sqlite") {
+          const ownerTable = this.getTableName(entity);
+          const relatedTable = this.getTableName(relatedEntity);
+          const ownerPk = this.findPrimaryKeyColumn(entity);
+          const relatedPk = this.findPrimaryKeyColumn(relatedEntity);
+          if (ownerPk) {
+            columnDefs.push(
+              `CONSTRAINT ${this.wrapId(this.namingStrategy.foreignKeyName(name, joinColumn, ownerTable))} FOREIGN KEY (${wrappedJoinCol}) REFERENCES ${this.wrapTable(ownerTable)}(${this.wrapId(ownerPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
+            );
+          }
+          if (relatedPk) {
+            columnDefs.push(
+              `CONSTRAINT ${this.wrapId(this.namingStrategy.foreignKeyName(name, inverseJoinColumn, relatedTable))} FOREIGN KEY (${wrappedInverseCol}) REFERENCES ${this.wrapTable(relatedTable)}(${this.wrapId(relatedPk)}) ON DELETE CASCADE ON UPDATE CASCADE`,
+            );
+          }
+        }
+
         let ddl = `CREATE TABLE IF NOT EXISTS ${wrappedTable} (${columnDefs.join(", ")})`;
         if (this.dialect === "mysql") {
           ddl += " ENGINE=InnoDB";
@@ -511,9 +541,14 @@ export class SchemaGenerator {
   /**
    * Generates FOREIGN KEY DDL for ManyToMany join tables.
    */
-  generateManyToManyForeignKeyDDL(entities: ClazzType<any>[]): string[] {
+  generateManyToManyForeignKeyDDL(
+    entities: ClazzType<any>[],
+    only?: ReadonlySet<string>,
+  ): string[] {
     const ddls: string[] = [];
     const processedTables = new Set<string>();
+    // Declared inline by generateManyToManyJoinTableDDL() on SQLite.
+    if (this.dialect === "sqlite") return ddls;
 
     for (const entity of entities) {
       const m2mMeta = (Reflect.getMetadata(MANY_TO_MANY_TOKEN, entity) ??
@@ -523,6 +558,7 @@ export class SchemaGenerator {
         if (!rel.joinTable) continue;
 
         const { name, joinColumn, inverseJoinColumn } = rel.joinTable;
+        if (only && !only.has(name)) continue;
         if (processedTables.has(name)) continue;
         processedTables.add(name);
 
@@ -557,7 +593,10 @@ export class SchemaGenerator {
   /**
    * Generates DROP TABLE DDL for ManyToMany join tables.
    */
-  generateManyToManyDropDDL(entities: ClazzType<any>[]): string[] {
+  generateManyToManyDropDDL(
+    entities: ClazzType<any>[],
+    only?: ReadonlySet<string>,
+  ): string[] {
     const ddls: string[] = [];
     const processedTables = new Set<string>();
 
@@ -569,6 +608,7 @@ export class SchemaGenerator {
         if (!rel.joinTable) continue;
 
         const { name } = rel.joinTable;
+        if (only && !only.has(name)) continue;
         if (processedTables.has(name)) continue;
         processedTables.add(name);
 
@@ -722,57 +762,31 @@ export class SchemaGenerator {
     );
   }
 
+  /**
+   * The foreign keys of the entity's table, read the way synchronize reads
+   * them: the join column from `@RelationColumn` or the `joinColumn` option,
+   * the `references` target, and a JOINED child's key to its root.
+   */
   private getForeignKeys<T>(entity: ClazzType<T>): ForeignKeyDef[] {
-    const fks: ForeignKeyDef[] = [];
-
-    // ManyToOne
-    const manyToOnes = (Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity) ??
-      Reflect.getMetadata(MANY_TO_ONE_TOKEN, entity.prototype) ??
-      []) as ManyToOneMetadata<any>[];
-
-    for (const rel of manyToOnes) {
-      if (!rel.joinColumn) continue;
-      if (rel.option?.createForeignKeyConstraints === false) continue;
-      const relatedEntity = rel.getMappingEntity();
-      const relatedTable = this.getTableName(relatedEntity as ClazzType<any>);
-      const relatedPk = this.findPrimaryKeyColumn(
-        relatedEntity as ClazzType<any>,
-      );
-      if (relatedPk) {
-        fks.push({
-          column: rel.joinColumn,
-          referencedTable: relatedTable,
-          referencedColumn: relatedPk,
-          referencedSchema: this.schemaOf(relatedEntity as ClazzType<any>),
-          onDelete: rel.option?.onDelete,
-          onUpdate: rel.option?.onUpdate,
-        });
-      }
-    }
-
-    // OneToOne (owning side — when joinColumn is present)
-    const oneToOnes = (Reflect.getMetadata(ONE_TO_ONE_TOKEN, entity) ??
-      []) as OneToOneMetadata<any>[];
-
-    for (const rel of oneToOnes) {
-      if (!rel.joinColumn) continue;
-      if (rel.option?.createForeignKeyConstraints === false) continue;
-      const relatedEntity = rel.getRelatedEntity();
-      const relatedTable = this.getTableName(relatedEntity);
-      const relatedPk = this.findPrimaryKeyColumn(relatedEntity);
-      if (relatedPk) {
-        fks.push({
-          column: rel.joinColumn,
-          referencedTable: relatedTable,
-          referencedColumn: relatedPk,
-          referencedSchema: this.schemaOf(relatedEntity),
-          onDelete: rel.option?.onDelete,
-          onUpdate: rel.option?.onUpdate,
-        });
-      }
-    }
-
-    return fks;
+    const { foreignKeys } = collectTableForeignKeys(
+      entity,
+      this.getTableName(entity),
+      this.getColumns(entity),
+      {
+        resolver: generatorRelationResolver(),
+        namingStrategy: this.namingStrategy,
+      },
+    );
+    return foreignKeys.map((fk) => ({
+      ...fk,
+      constraintName:
+        fk.constraintName ??
+        this.namingStrategy.foreignKeyName(
+          this.getTableName(entity),
+          fk.columnName,
+          fk.referencedTable,
+        ),
+    }));
   }
 
   private findPrimaryKeyColumn<T>(entity: ClazzType<T>): string | null {

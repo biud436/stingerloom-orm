@@ -256,11 +256,15 @@ describe("#109: sortTablesByDependency produces correct order", () => {
       "postgres",
     );
 
-    // Referenced table (users) must be created before the referencing one
-    expect(result.up).toHaveLength(2);
-    expect(result.up[0]).toContain("sort_users_109");
-    expect(result.up[1]).toContain("sort_posts_109");
+    // Referenced table (users) must be created before the referencing one,
+    // and the foreign key is added once both exist.
+    expect(result.up).toEqual([
+      'CREATE TABLE IF NOT EXISTS "public"."sort_users_109" ("id" SERIAL NOT NULL PRIMARY KEY)',
+      'CREATE TABLE IF NOT EXISTS "public"."sort_posts_109" ("id" SERIAL NOT NULL PRIMARY KEY, "user_id" INTEGER NULL)',
+      'ALTER TABLE "public"."sort_posts_109" ADD CONSTRAINT "fk_sort_posts_109_2e86d2e4" FOREIGN KEY ("user_id") REFERENCES "public"."sort_users_109"("id") ON DELETE NO ACTION ON UPDATE NO ACTION',
+    ]);
     expect(result.down).toEqual([
+      'ALTER TABLE "sort_posts_109" DROP CONSTRAINT IF EXISTS "fk_sort_posts_109_2e86d2e4"',
       'DROP TABLE IF EXISTS "sort_posts_109"',
       'DROP TABLE IF EXISTS "sort_users_109"',
     ]);

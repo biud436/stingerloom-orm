@@ -729,6 +729,8 @@ ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NU
 
 ### What the Schema Diff Does Not Compare
 
+A table that does not exist yet is created in full, by `synchronize` and by a generated migration alike: its columns, the foreign key column of every relation, its indexes and foreign key constraints, and the join tables of its `@ManyToMany` relations. The generated `down()` drops the same things in reverse.
+
 On a table that already exists, the diff compares columns: their presence, type, length, precision and nullability, plus renames, generated columns and PostgreSQL enum values. `synchronize` also creates the indexes and foreign keys an entity adds. Everything else in the table below stays as it is in the database. Both were measured on PostgreSQL, MariaDB and SQLite:
 
 | Change to an existing table | `synchronize` | `migrate:generate` |
@@ -739,6 +741,7 @@ On a table that already exists, the diff compares columns: their presence, type,
 | PostgreSQL enum value added | Applied | Generated |
 | `@Index`, `@UniqueIndex`, class-level `@Index([...])` or `@FullTextIndex` added | Created | **Not generated** |
 | Relation added (`@ManyToOne`, owning `@OneToOne`) | Column and constraint created -- SQLite: column only, it cannot add a constraint to an existing table | **Column only** |
+| `@ManyToMany` added (the join table does not exist) | Join table created | Generated |
 | Relation removed | Column dropped on PostgreSQL; on MySQL / MariaDB and SQLite the drop fails with a warning, because the constraint still uses the column | `DROP COLUMN` written commented out |
 | Index or unique index removed from the entity | **Left in place** | Not generated |
 | Index redefined under the same name | **Left as it was** | Not generated |
