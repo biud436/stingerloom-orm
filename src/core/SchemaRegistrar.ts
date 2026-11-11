@@ -389,6 +389,14 @@ export class SchemaRegistrar {
       tableExisted: boolean;
     }> = [];
 
+    // SINGLE_TABLE children create no table of their own, so they are left
+    // out of `entityList` — but the indexes they declare still belong on the
+    // shared table, under the name their metadata resolves to (the root's).
+    const stiChildren: Array<{
+      TargetEntity: ClazzType<any>;
+      tableName: string;
+    }> = [];
+
     while ((entity = entities.next())) {
       if (entity.done) {
         break;
@@ -426,6 +434,7 @@ export class SchemaRegistrar {
         if (strategy === "SINGLE_TABLE") {
           // No table of its own, but its INSERT stages the tenant value.
           this.injectTenantColumn(TargetEntity, metadata);
+          stiChildren.push({ TargetEntity, tableName });
           continue;
         }
       }
@@ -691,6 +700,17 @@ export class SchemaRegistrar {
         await this.registerCompositeIndexes(TargetEntity, tableName);
 
         // Create FULLTEXT (MySQL) / GIN+to_tsvector (PostgreSQL) indexes.
+        await this.registerFullTextIndexes(TargetEntity, tableName);
+      }
+
+      // SINGLE_TABLE children: their indexes go on the root's table, which
+      // pass 1 created (or pass 1.5 extended with the children's columns).
+      // An index a child inherits from the root resolves to the same name
+      // and is skipped as already present.
+      for (const { TargetEntity, tableName } of stiChildren) {
+        await this.registerIndex(TargetEntity, tableName);
+        await this.registerUniqueIndexes(TargetEntity, tableName);
+        await this.registerCompositeIndexes(TargetEntity, tableName);
         await this.registerFullTextIndexes(TargetEntity, tableName);
       }
 
