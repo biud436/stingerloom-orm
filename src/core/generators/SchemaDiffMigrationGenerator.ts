@@ -649,7 +649,12 @@ export class SchemaDiffMigrationGenerator {
    * Uses backtick template literals to avoid issues with single/double quote escaping.
    */
   private wrapSqlInQuery(sqlStr: string): string {
-    const escaped = sqlStr.replace(/`/g, "\\`").replace(/\$/g, "\\$");
+    // Backslashes first: the generated file is a template literal, where a
+    // backslash in the SQL would otherwise start a JavaScript escape.
+    const escaped = sqlStr
+      .replace(/\\/g, "\\\\")
+      .replace(/`/g, "\\`")
+      .replace(/\$/g, "\\$");
     return `await query(\`${escaped}\`);`;
   }
 

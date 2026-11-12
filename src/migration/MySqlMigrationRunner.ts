@@ -1,4 +1,5 @@
 import { MigrationRunner } from "./MigrationRunner";
+import { sqlStringLiteral } from "../utils/escapeSqlLiteral";
 
 /**
  * Migration runner for MySQL/MariaDB.
@@ -10,6 +11,10 @@ import { MigrationRunner } from "./MigrationRunner";
 export class MySqlMigrationRunner extends MigrationRunner {
   protected wrapIdentifier(name: string): string {
     return `\`${name.replace(/`/g, "``")}\``;
+  }
+
+  protected stringLiteral(value: string): string {
+    return sqlStringLiteral(value, "mysql");
   }
 
   protected autoIncrementPkDefinition(): string {

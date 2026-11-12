@@ -1,3 +1,5 @@
+import { sqlStringLiteral } from "../utils/escapeSqlLiteral";
+
 /** A `@Column({ default })` value. */
 export type ColumnDefaultValue = string | number | boolean | null | undefined;
 
@@ -13,7 +15,8 @@ export function isExpressionDefault(value: ColumnDefaultValue): boolean {
  * The ` DEFAULT …` clause of a column definition, or `""` when no default is
  * declared. A parenthesized string is emitted as a raw SQL expression; any
  * other string is a quoted literal. `renderBoolean` spells a boolean default
- * the dialect's way (TRUE/FALSE, or 1/0 on MySQL).
+ * the dialect's way (TRUE/FALSE, or 1/0 on MySQL); `dialect` decides how a
+ * string literal is escaped (see {@link sqlStringLiteral}).
  *
  * The one rendering CREATE TABLE and ADD COLUMN share, so a column added to an
  * existing table gets the default the same declaration gives a new table.
@@ -21,10 +24,11 @@ export function isExpressionDefault(value: ColumnDefaultValue): boolean {
 export function renderDefaultClause(
   value: ColumnDefaultValue,
   renderBoolean: (value: boolean) => string = (v) => ` DEFAULT ${v ? "TRUE" : "FALSE"}`,
+  dialect: "mysql" | "postgres" | "sqlite" = "sqlite",
 ): string {
   if (value === undefined) return "";
   if (typeof value === "boolean") return renderBoolean(value);
-  return ` DEFAULT ${renderDefaultValue(value)}`;
+  return ` DEFAULT ${renderDefaultValue(value, dialect)}`;
 }
 
 /**
@@ -33,12 +37,15 @@ export function renderDefaultClause(
  * boolean. Used where the value itself is written, such as a VALUES row on
  * SQLite, which has no DEFAULT keyword there.
  */
-export function renderDefaultValue(value: Exclude<ColumnDefaultValue, undefined>): string {
+export function renderDefaultValue(
+  value: Exclude<ColumnDefaultValue, undefined>,
+  dialect: "mysql" | "postgres" | "sqlite" = "sqlite",
+): string {
   if (value === null) return "NULL";
   if (typeof value === "number") return String(value);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   if (isExpressionDefault(value)) return value;
-  return `'${value.replace(/'/g, "''")}'`;
+  return sqlStringLiteral(value, dialect);
 }
 
 /**
@@ -57,5 +64,6 @@ export function addColumnDefaultClause(
   return renderDefaultClause(
     value,
     dialect === "mysql" ? (v) => ` DEFAULT ${v ? "1" : "0"}` : undefined,
+    dialect,
   );
 }

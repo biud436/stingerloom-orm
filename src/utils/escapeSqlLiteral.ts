@@ -28,3 +28,27 @@ export function escapeSqlLiteral(value: string): string {
   }
   return value.replace(/\\/g, "\\\\").replace(/'/g, "''");
 }
+
+/**
+ * A string as a quoted SQL literal the given dialect reads back unchanged.
+ *
+ * A single quote is doubled everywhere. A backslash differs by dialect:
+ *   - MySQL / MariaDB treat it as an escape character inside `'...'`
+ *     (`NO_BACKSLASH_ESCAPES` is off by default), so it is doubled.
+ *   - PostgreSQL keeps it literal under `standard_conforming_strings = on`
+ *     and treats it as an escape when that setting is off, so a value that
+ *     holds one is written as an escape string (`E'...'`), which reads the
+ *     same either way.
+ *   - SQLite always keeps it literal.
+ *
+ * Null bytes are rejected, as in {@link escapeSqlLiteral}.
+ */
+export function sqlStringLiteral(
+  value: string,
+  dialect: "mysql" | "postgres" | "sqlite",
+): string {
+  const escaped = escapeSqlLiteral(value);
+  if (dialect === "mysql") return `'${escaped}'`;
+  if (dialect === "postgres" && value.includes("\\")) return `E'${escaped}'`;
+  return `'${value.replace(/'/g, "''")}'`;
+}

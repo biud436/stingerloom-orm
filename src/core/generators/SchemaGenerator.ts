@@ -31,7 +31,7 @@ import {
   ManyToManyMetadata,
 } from "../../decorators/ManyToMany";
 import { ColumnMetadata } from "../../scanner/ColumnScanner";
-import { escapeSqlLiteral } from "../../utils/escapeSqlLiteral";
+import { escapeSqlLiteral, sqlStringLiteral } from "../../utils/escapeSqlLiteral";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { NamingStrategy, DefaultNamingStrategy } from "./NamingStrategy";
@@ -453,7 +453,7 @@ export class SchemaGenerator {
       if (typeof seg === "number") {
         acc = `${acc} -> ${seg}`;
       } else {
-        const literal = `'${seg.replace(/'/g, "''")}'`;
+        const literal = sqlStringLiteral(seg, "postgres");
         acc = `${acc} -> ${literal}`;
       }
     }

@@ -334,7 +334,7 @@ export abstract class BaseColumnDefinitionBuilder
   protected renderDefaultClause(
     value: string | number | boolean | null | undefined,
   ): string {
-    return renderDefaultClause(value, (v) => this.renderBooleanDefault(v));
+    return renderDefaultClause(value, (v) => this.renderBooleanDefault(v), this.dialectName);
   }
 
   /**
