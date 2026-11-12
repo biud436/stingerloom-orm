@@ -5,6 +5,7 @@ import { Logger } from "../utils";
 import { AdvisoryLockError } from "../errors/AdvisoryLockError";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
+import { sqlStringLiteral } from "../utils/escapeSqlLiteral";
 import type { SchemaDialect } from "../core/generators/SchemaGenerator";
 import type { EntityManagerInternals } from "../core/EntityManagerInternals";
 
@@ -360,7 +361,7 @@ export class SeederRunner {
     const quote = isMySql ? "`" : '"';
     const table = this.quotedTableName();
     await this.queryRunner.query(
-      `INSERT INTO ${table} (${quote}name${quote}) VALUES ('${name.replace(/'/g, "''")}')`,
+      `INSERT INTO ${table} (${quote}name${quote}) VALUES (${sqlStringLiteral(name, this.dialect())})`,
     );
   }
 
@@ -369,7 +370,7 @@ export class SeederRunner {
     const quote = isMySql ? "`" : '"';
     const table = this.quotedTableName();
     await this.queryRunner.query(
-      `DELETE FROM ${table} WHERE ${quote}name${quote} = '${name.replace(/'/g, "''")}'`,
+      `DELETE FROM ${table} WHERE ${quote}name${quote} = ${sqlStringLiteral(name, this.dialect())}`,
     );
   }
 

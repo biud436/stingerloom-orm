@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ISqlDriver } from "../dialects/SqlDriver";
+import { sqlStringLiteral } from "../utils/escapeSqlLiteral";
 import { Logger } from "../utils";
 import { Migration, MigrationContext } from "./Migration";
 import { AdvisoryLockError } from "../errors/AdvisoryLockError";
@@ -119,6 +120,15 @@ export abstract class MigrationRunner {
    * MySQL: backtick (`); PostgreSQL/SQLite: double-quote (").
    */
   protected abstract wrapIdentifier(name: string): string;
+
+  /**
+   * A string as a quoted SQL literal for this dialect. The default doubles
+   * single quotes only, which is what SQLite reads; a dialect that treats a
+   * backslash specially overrides it.
+   */
+  protected stringLiteral(value: string): string {
+    return sqlStringLiteral(value, "sqlite");
+  }
 
   /**
    * Returns the auto-increment primary key column definition.
@@ -561,7 +571,7 @@ export abstract class MigrationRunner {
   ): Promise<void> {
     const w = (n: string) => this.wrapIdentifier(n);
     await query(
-      `INSERT INTO ${w(this.tableName)} (${w("name")}) VALUES ('${name.replace(/'/g, "''")}')`,
+      `INSERT INTO ${w(this.tableName)} (${w("name")}) VALUES (${this.stringLiteral(name)})`,
     );
   }
 
@@ -571,7 +581,7 @@ export abstract class MigrationRunner {
   ): Promise<void> {
     const w = (n: string) => this.wrapIdentifier(n);
     await query(
-      `DELETE FROM ${w(this.tableName)} WHERE ${w("name")} = '${name.replace(/'/g, "''")}'`,
+      `DELETE FROM ${w(this.tableName)} WHERE ${w("name")} = ${this.stringLiteral(name)}`,
     );
   }
 
