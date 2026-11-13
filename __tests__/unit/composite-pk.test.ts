@@ -193,6 +193,20 @@ describe("SchemaGenerator 복합 PK DDL", () => {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const mockQuery = jest.fn();
+
+/**
+ * Answers save()'s existence probe for a caller-chosen key with `exists`,
+ * and every other statement with `row`.
+ */
+function mockSaveQueries(row: Record<string, unknown>, exists: boolean) {
+  mockQuery.mockImplementation(async (query: any) => {
+    const text = typeof query === "string" ? query : query?.text;
+    if (text?.includes('AS "probe"')) {
+      return { results: exists ? [{ probe: 1 }] : [], fields: [] };
+    }
+    return { results: [row], fields: [] };
+  });
+}
 const mockCommit = jest.fn();
 const mockRollback = jest.fn();
 const mockClose = jest.fn();
@@ -255,10 +269,7 @@ describe("EntityManager 복합 PK 통합 테스트", () => {
 
   describe("INSERT (복합 PK)", () => {
     it("모든 PK 값이 제공되면 INSERT를 수행해야 한다", async () => {
-      mockQuery.mockResolvedValue({
-        results: [{ userId: 1, roleId: 2 }],
-        fields: [],
-      });
+      mockSaveQueries({ userId: 1, roleId: 2 }, false);
 
       const result = await em.save(UserRole, {
         userId: 1,
@@ -277,10 +288,7 @@ describe("EntityManager 복합 PK 통합 테스트", () => {
     });
 
     it("INSERT 쿼리에 RETURNING 절이 모든 PK 컬럼을 포함해야 한다 (PostgreSQL)", async () => {
-      mockQuery.mockResolvedValue({
-        results: [{ userId: 1, roleId: 2 }],
-        fields: [],
-      });
+      mockSaveQueries({ userId: 1, roleId: 2 }, false);
 
       await em.save(UserRole, {
         userId: 1,
@@ -307,11 +315,8 @@ describe("EntityManager 복합 PK 통합 테스트", () => {
   });
 
   describe("수동 PK save() 동작", () => {
-    it("수동 PK(auto-increment 없음) 엔티티는 save() 시 항상 INSERT를 수행해야 한다", async () => {
-      mockQuery.mockResolvedValue({
-        results: [{ userId: 1, roleId: 2, assignedAt: "2026-02-01" }],
-        fields: [],
-      });
+    it("inserts a row with an assigned key when no row has that key", async () => {
+      mockSaveQueries({ userId: 1, roleId: 2, assignedAt: "2026-02-01" }, false);
 
       await em.save(UserRole, {
         userId: 1,
@@ -334,6 +339,22 @@ describe("EntityManager 복합 PK 통합 테스트", () => {
       });
 
       expect(updateCall).toBeUndefined();
+    });
+
+    it("updates the row with an assigned key when it already exists", async () => {
+      mockSaveQueries({ userId: 1, roleId: 2, assignedAt: "2026-03-01" }, true);
+
+      await em.save(UserRole, {
+        userId: 1,
+        roleId: 2,
+        assignedAt: "2026-03-01",
+      } as any);
+
+      const texts = mockQuery.mock.calls.map((call: any) =>
+        typeof call[0] === "string" ? call[0] : call[0]?.text,
+      );
+      expect(texts.some((text: string) => text?.includes("UPDATE"))).toBe(true);
+      expect(texts.some((text: string) => text?.includes("INSERT"))).toBe(false);
     });
   });
 
@@ -413,10 +434,7 @@ describe("@PrimaryColumn 단일 PK (수동)", () => {
   });
 
   it("수동 PK 값이 제공되면 INSERT를 수행해야 한다", async () => {
-    mockQuery.mockResolvedValue({
-      results: [{ id: "uuid-123", name: "Alice" }],
-      fields: [],
-    });
+    mockSaveQueries({ id: "uuid-123", name: "Alice" }, false);
 
     const result = await em.save(ManualIdEntity, {
       id: "uuid-123",

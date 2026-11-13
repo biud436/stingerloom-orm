@@ -527,18 +527,8 @@ export class WriteExecutor {
     const hasAutoIncrementPk = pkColumns.some(
       (col: ColumnMetadata) => col.options?.autoIncrement,
     );
-    const hasGeneratedPk = pkColumns.some(
-      (col: ColumnMetadata) =>
-        col.options?.autoIncrement ||
-        col.options?.generationStrategy === "uuid" ||
-        col.options?.generationStrategy === "uuid-v7",
-    );
     const itemFields = fieldsOf(item);
     const primaryKeyValue = pk ? itemFields[this.ctx.propKey(pk)] : undefined;
-
-    const isInsert = hasGeneratedPk
-      ? !primaryKeyValue
-      : true;
 
     const buildPkWhere = (pkValues?: DriverRow) => {
       return pkColumns.map((col: ColumnMetadata) => {
@@ -558,6 +548,29 @@ export class WriteExecutor {
       }
       return whereByProps<T>(where);
     };
+
+    // INSERT or UPDATE. A key the database generates decides by its
+    // presence: the caller cannot have one for a row that is not there. A key
+    // the caller chooses — an assigned or composite key, or a value given for
+    // a client-generated uuid — says nothing about whether the row exists, so
+    // the table is asked.
+    const hasCompleteKey =
+      pkColumns.length > 0 &&
+      pkColumns.every((col: ColumnMetadata) => {
+        const value = itemFields[this.ctx.propKey(col)];
+        return value !== undefined && value !== null;
+      });
+    let isInsert: boolean;
+    if (hasAutoIncrementPk) {
+      isInsert = !primaryKeyValue;
+    } else if (!hasCompleteKey) {
+      isInsert = true;
+    } else {
+      const probe = await session.query(
+        sql`SELECT 1 AS "probe" FROM ${raw(this.ctx.wrapTable(metadata.name))} WHERE ${join(buildPkWhere(), " AND ")} LIMIT 1`,
+      );
+      isInsert = resultRows(probe).length === 0;
+    }
 
     const op: SaveOperation<T> = {
       entity,
