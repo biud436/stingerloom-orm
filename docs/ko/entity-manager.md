@@ -153,6 +153,18 @@ save(User, data)
   |     NO  --> UPDATE (existing row)
 ```
 
+위 그림은 데이터베이스가 키를 만들어 주는 경우(`@PrimaryGeneratedColumn()`)의 이야기입니다. 값이 있다는 건 곧 행이 있다는 뜻이니까요. 키를 호출하는 쪽에서 정하는 경우에는 값이 있다는 사실만으로는 알 수 없으므로, `save()`가 같은 트랜잭션 안에서 그 키의 행이 있는지 먼저 확인하고 없으면 INSERT합니다.
+
+| 기본 키 | `data`의 키 | `save()` 동작 |
+|---|---|---|
+| `@PrimaryGeneratedColumn()` (auto-increment) | 없음 | `INSERT` |
+| | 있음 | `UPDATE`, 일치하는 행이 없으면 `EntityNotFoundError` |
+| `@PrimaryGeneratedColumn("uuid")` | 없음 | 생성한 id로 `INSERT` |
+| | 있음 | 행이 있으면 `UPDATE`, 없으면 준 id로 `INSERT` |
+| `@PrimaryColumn()` (직접 지정·복합 키) | 키 컬럼이 모두 있음 | 행이 있으면 `UPDATE`, 없으면 `INSERT` |
+
+존재 확인은 기본 키로 조회하는 `SELECT` 한 번입니다. `saveMany()`도 행마다 같은 규칙을 따릅니다.
+
 ### INSERT 예시
 
 ```typescript

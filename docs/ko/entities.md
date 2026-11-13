@@ -425,6 +425,8 @@ await em.save(Config, { key: "site.title", value: "My Blog" });
 // INSERT INTO "config" ("key", "value") VALUES ('site.title', 'My Blog')
 ```
 
+같은 키로 다시 `save()`하면 그 행을 UPDATE합니다. 키를 직접 정하는 엔티티는 `save()`가 행이 있는지 먼저 확인한 뒤 INSERT와 UPDATE 중 하나를 고릅니다.
+
 ## 인덱스로 쿼리 성능 개선
 
 ### 인덱스가 존재하는 이유

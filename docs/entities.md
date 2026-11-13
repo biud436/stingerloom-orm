@@ -420,6 +420,8 @@ await em.save(Config, { key: "site.title", value: "My Blog" });
 // INSERT INTO "config" ("key", "value") VALUES ('site.title', 'My Blog')
 ```
 
+Calling `save()` again with the same key updates that row. For an entity whose key the caller chooses, `save()` checks whether the row exists before it picks INSERT or UPDATE.
+
 ## Improving Query Performance with Indexes
 
 ### Why Indexes Exist

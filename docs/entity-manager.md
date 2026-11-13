@@ -157,6 +157,18 @@ save(User, data)
   |     NO  --> UPDATE (existing row)
 ```
 
+That tree is for a key the database generates (`@PrimaryGeneratedColumn()`): a value can only come from a row that exists. When the caller chooses the key, its presence says nothing, so `save()` first checks whether a row with that key exists, in the same transaction, and inserts when there is none:
+
+| Primary key | Key in `data` | What `save()` does |
+|---|---|---|
+| `@PrimaryGeneratedColumn()` (auto-increment) | absent | `INSERT` |
+| | present | `UPDATE`; `EntityNotFoundError` if no row matches |
+| `@PrimaryGeneratedColumn("uuid")` | absent | `INSERT` with a generated id |
+| | present | `UPDATE` if the row exists, otherwise `INSERT` with the given id |
+| `@PrimaryColumn()` (assigned or composite) | every key column present | `UPDATE` if the row exists, otherwise `INSERT` |
+
+The existence check is one extra `SELECT` by primary key. `saveMany()` follows the same rule row by row.
+
 ### INSERT example
 
 ```typescript
