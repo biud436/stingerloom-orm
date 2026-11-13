@@ -225,6 +225,28 @@ describe("SeederRunner", () => {
       expect(insertQuery).toContain("UserSeeder");
     });
 
+    it.each([
+      ["mysql", "'2026\\\\odd'"],
+      ["postgres", "E'2026\\\\odd'"],
+      ["sqlite", "'2026\\odd'"],
+    ] as const)(
+      "records a name holding a backslash as a %s literal",
+      async (dialect, literal) => {
+        class OddSeeder extends UserSeeder {
+          get name() {
+            return "2026\\odd";
+          }
+        }
+        const em = createMockEntityManagerWithDialect(dialect);
+        const qr = createMockQueryRunner();
+
+        await new SeederRunner([new OddSeeder()], em, qr).runAll();
+
+        const insertQuery = qr.queries.find((q) => q.includes("INSERT INTO"));
+        expect(insertQuery).toContain(`VALUES (${literal})`);
+      },
+    );
+
     it("should skip tracking when trackExecution is false", async () => {
       const em = createMockEntityManager(false);
       const qr = createMockQueryRunner();
