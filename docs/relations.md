@@ -319,6 +319,8 @@ owner!: Owner;
 
 (`@ManyToOne`'s `references` option expresses the same thing and remains the form used by the code-first `defineEntity()` / `EntitySchema` APIs; when both are present, `referencedColumn` wins.)
 
+> **Composite primary keys** A foreign key column references one column. When the target entity has a composite primary key (`@PrimaryColumn()` on more than one property) and `synchronize` builds the schema, a `@ManyToOne` or owning `@OneToOne` must either name the column it references with `referencedColumn` (a unique column of the target) or set `createForeignKeyConstraints: false`, and a `@ManyToMany` cannot use that entity on either side. `register()` rejects such a relation with a `SCHEMA_ERROR` that names the relation and the key columns.
+
 This generates:
 
 ```sql

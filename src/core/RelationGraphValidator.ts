@@ -24,7 +24,11 @@ type RelationKind = "ManyToOne" | "OneToMany" | "ManyToMany" | "OneToOne";
  *   otherwise the relation always loads as null;
  * - a `@ManyToMany` has a join table, its own `joinTable` or the one its
  *   `mappedBy` names — otherwise no join table is created and the relation
- *   never loads.
+ *   never loads;
+ * - with `createsForeignKeys` (synchronize builds the schema), a relation's
+ *   foreign key constraint points at a single column — a composite primary
+ *   key needs `referencedColumn`, or the constraint references part of the
+ *   key.
  *
  * Every problem is listed in one SCHEMA_ERROR, before any DDL runs.
  * `attach()` does not run it: an attached EntityManager may be scoped to a
@@ -36,6 +40,7 @@ export function validateRelationGraph(
   scope: readonly ClazzType<any>[],
   resolver: RelationMetadataResolver,
   connectionName?: string,
+  options: { createsForeignKeys?: boolean } = {},
 ): void {
   const entities =
     scope.length > 0
@@ -47,7 +52,7 @@ export function validateRelationGraph(
   const problems = new Set<string>();
   for (const entity of entities) {
     if (typeof entity !== "function") continue;
-    checkEntity(entity, scope, resolver, problems);
+    checkEntity(entity, scope, resolver, problems, options.createsForeignKeys === true);
   }
 
   if (problems.size > 0) {
@@ -65,13 +70,21 @@ function checkEntity(
   scope: readonly ClazzType<any>[],
   resolver: RelationMetadataResolver,
   problems: Set<string>,
+  createsForeignKeys: boolean,
 ): void {
+  // A relation declares a foreign key constraint when synchronize builds the
+  // schema and the relation does not opt out of the constraint.
+  const declaresForeignKey = (rel: { option?: { createForeignKeyConstraints?: boolean } }) =>
+    createsForeignKeys && rel.option?.createForeignKeyConstraints !== false;
   const site = (rel: { target?: unknown }, property: string, kind: RelationKind) =>
     `${nameOf(rel.target, entity)}.${property}: @${kind}`;
 
   for (const rel of resolver.resolveManyToOneMetadata(entity)) {
     const at = site(rel, rel.columnName, "ManyToOne");
-    checkTarget(at, () => rel.getMappingEntity(), scope, problems);
+    const target = checkTarget(at, () => rel.getMappingEntity(), scope, problems);
+    if (target && !rel.references && declaresForeignKey(rel)) {
+      checkSingleColumnKey(at, target, resolver, problems, true);
+    }
   }
 
   for (const rel of resolver.resolveOneToManyMetadata(entity)) {
@@ -86,6 +99,14 @@ function checkEntity(
     if (target && !rel.joinColumn && rel.inverseSide) {
       checkInverseSide(at, rel.inverseSide, target, resolver, problems);
     }
+    if (
+      target &&
+      rel.joinColumn &&
+      !(rel as { references?: string }).references &&
+      declaresForeignKey(rel as { option?: { createForeignKeyConstraints?: boolean } })
+    ) {
+      checkSingleColumnKey(at, target, resolver, problems, true);
+    }
   }
 
   for (const rel of resolver.resolveManyToManyMetadata(entity)) {
@@ -93,6 +114,11 @@ function checkEntity(
     const target = checkTarget(at, () => rel.getRelatedEntity(), scope, problems);
     if (target && !rel.joinTable) {
       checkJoinTableSource(at, rel.mappedBy, entity, target, resolver, problems);
+    }
+    // Each join table column references one side's key.
+    if (createsForeignKeys) {
+      checkSingleColumnKey(at, entity, resolver, problems, false);
+      if (target) checkSingleColumnKey(at, target, resolver, problems, false);
     }
   }
 }
@@ -224,6 +250,33 @@ function checkJoinTableSource(
       (owningBack
         ? ` ${target.name}.${owningBack.propertyKey} declares one: add mappedBy: "${owningBack.propertyKey}".`
         : ` Declare joinTable on one side and mappedBy on the other.`),
+  );
+}
+
+/**
+ * A foreign key column holds one value, and the schema, the writers and the
+ * loaders all pair it with the first primary key column of the entity it
+ * points at. Against a composite key the constraint synchronize creates
+ * references a column that is not unique: PostgreSQL rejects the constraint, SQLite rejects every write to
+ * either table with "foreign key mismatch". `canNameColumn` says whether the relation can name the column it
+ * references instead (`referencedColumn`).
+ */
+function checkSingleColumnKey(
+  at: string,
+  keyed: ClazzType<any>,
+  resolver: RelationMetadataResolver,
+  problems: Set<string>,
+  canNameColumn: boolean,
+): void {
+  const columns = resolver.resolveEntityMetadata(keyed)?.columns ?? [];
+  const keyColumns = columns.filter((c) => c.options?.primary).map((c) => c.name);
+  if (keyColumns.length < 2) return;
+  problems.add(
+    `${at} needs a single-column key on ${keyed.name}, which has the composite primary key (${keyColumns.join(", ")}): ` +
+      `a foreign key column cannot reference it. ` +
+      (canNameColumn
+        ? `Name a unique column of ${keyed.name} with @RelationColumn({ referencedColumn }), or give ${keyed.name} a single-column primary key.`
+        : `Give ${keyed.name} a single-column primary key.`),
   );
 }
 
