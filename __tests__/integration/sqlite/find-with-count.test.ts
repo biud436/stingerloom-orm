@@ -580,7 +580,13 @@ describe("[Integration] SQLite: withCount on a composite key", () => {
   let em: EntityManager;
 
   beforeAll(async () => {
-    em = await createTestEntityManager({ entities: [FwcOrder, FwcLine], connectionName: "fwc_composite" });
+    // No synchronize: the foreign key it would build references one part of
+    // the key, which register() refuses.
+    em = await createTestEntityManager({
+      entities: [FwcOrder, FwcLine],
+      connectionName: "fwc_composite",
+      synchronize: false,
+    });
   });
 
   afterAll(async () => {

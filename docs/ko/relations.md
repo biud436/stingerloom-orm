@@ -319,6 +319,8 @@ owner!: Owner;
 
 (`@ManyToOne`의 `references` 옵션도 같은 의미이며, 코드 우선 API인 `defineEntity()` / `EntitySchema`에서는 이 형태를 계속 사용합니다. 둘 다 지정되면 `referencedColumn`이 우선해요.)
 
+> **복합 기본 키** FK 컬럼은 컬럼 하나를 참조합니다. 대상 엔티티가 복합 기본 키(`@PrimaryColumn()`이 둘 이상)를 가지고 `synchronize`가 스키마를 만드는 경우, `@ManyToOne`이나 소유측 `@OneToOne`은 `referencedColumn`으로 참조할 컬럼(대상의 유니크 컬럼)을 지정하거나 `createForeignKeyConstraints: false`를 설정해야 하고, `@ManyToMany`는 그 엔티티를 어느 쪽에도 쓸 수 없습니다. 이런 관계는 `register()`가 관계와 키 컬럼 이름을 담은 `SCHEMA_ERROR`로 거부합니다.
+
 생성되는 SQL:
 
 ```sql

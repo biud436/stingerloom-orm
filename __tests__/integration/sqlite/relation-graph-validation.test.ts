@@ -21,6 +21,9 @@ import * as path from "path";
 import { Entity } from "../../../src/decorators/Entity";
 import { Column } from "../../../src/decorators/Column";
 import { PrimaryGeneratedColumn } from "../../../src/decorators/PrimaryGeneratedColumn";
+import { PrimaryColumn } from "../../../src/decorators/PrimaryColumn";
+import { UniqueIndex } from "../../../src/decorators/UniqueIndex";
+import { RelationColumn } from "../../../src/decorators/RelationColumn";
 import { ManyToOne } from "../../../src/decorators/ManyToOne";
 import { OneToMany } from "../../../src/decorators/OneToMany";
 import { ManyToMany } from "../../../src/decorators/ManyToMany";
@@ -280,5 +283,112 @@ describe("[SQLite] a relation payload no write persists follows unknownWriteKeys
     expect(error).toBeInstanceOf(InvalidQueryError);
     expect(error.message).toContain(`Relation "posts" in the data passed to save() for entity "RgiUser" holds a new row`);
     expect(await em.count(RgiUser, {})).toBe(0);
+  });
+});
+
+// A relation's foreign key column pairs with one column of the entity it
+// points at. Against a composite primary key it referenced the first key
+// column only: synchronize reported nothing, and SQLite then rejected every
+// write to either table with "foreign key mismatch".
+@Entity({ name: "rgi_ck_orders" })
+@UniqueIndex(["code"])
+class RgiCkOrder {
+  @PrimaryColumn({ type: "int" }) tenantId!: number;
+  @PrimaryColumn({ type: "int" }) orderNo!: number;
+  @Column({ type: "varchar", length: 40 }) code!: string;
+}
+
+@Entity({ name: "rgi_ck_lines" })
+class RgiCkLine {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToOne(() => RgiCkOrder, undefined as any)
+  @RelationColumn({ name: "order_id" })
+  order!: Relation<RgiCkOrder>;
+}
+
+@Entity({ name: "rgi_ck_named_lines" })
+class RgiCkNamedLine {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToOne(() => RgiCkOrder, undefined as any)
+  @RelationColumn({ name: "order_code", referencedColumn: "code", type: "varchar" } as any)
+  order!: Relation<RgiCkOrder>;
+}
+
+@Entity({ name: "rgi_ck_loose_lines" })
+class RgiCkLooseLine {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToOne(() => RgiCkOrder, undefined as any, { createForeignKeyConstraints: false })
+  @RelationColumn({ name: "order_no", type: "int" } as any)
+  order!: Relation<RgiCkOrder>;
+}
+
+@Entity({ name: "rgi_ck_tags" })
+class RgiCkTag {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column({ type: "varchar", length: 40 }) name!: string;
+}
+
+@Entity({ name: "rgi_ck_owners" })
+class RgiCkOwner {
+  @PrimaryColumn({ type: "int" }) tenantId!: number;
+  @PrimaryColumn({ type: "varchar", length: 20 }) code!: string;
+  @ManyToMany(() => RgiCkTag, {
+    joinTable: { name: "rgi_ck_owner_tags", joinColumn: "owner_code", inverseJoinColumn: "tag_id" },
+  } as any)
+  tags?: RgiCkTag[];
+}
+
+describe("[SQLite] a relation to a composite primary key is validated at register()", () => {
+  const open: EntityManager[] = [];
+
+  afterEach(async () => {
+    for (const em of open.splice(0)) {
+      await (em as unknown as { destroy?: () => Promise<void> }).destroy?.();
+    }
+  });
+
+  async function register(entities: any[], synchronize: boolean = true) {
+    const em = new EntityManager();
+    open.push(em);
+    await em.register({ type: "sqlite", database: ":memory:", entities, synchronize, logging: false } as any);
+    return em;
+  }
+
+  it("rejects a ManyToOne whose target has a composite key", async () => {
+    const error = await rejectionOf(() => register([RgiCkOrder, RgiCkLine]));
+
+    expect(error?.code).toBe(OrmErrorCode.SCHEMA_ERROR);
+    expect(error?.message).toContain(
+      "RgiCkLine.order: @ManyToOne needs a single-column key on RgiCkOrder, which has the composite primary key (tenantId, orderNo)",
+    );
+    expect(error?.message).toContain("referencedColumn");
+  });
+
+  it("accepts the relation when it names the column it references", async () => {
+    const em = await register([RgiCkOrder, RgiCkNamedLine]);
+
+    await em.save(RgiCkOrder, { tenantId: 1, orderNo: 7, code: "A-7" });
+    const order = await em.findOne(RgiCkOrder, { where: { code: "A-7" } });
+    expect(order).toMatchObject({ tenantId: 1, orderNo: 7 });
+  });
+
+  it("accepts the relation when it declares no foreign key constraint", async () => {
+    const em = await register([RgiCkOrder, RgiCkLooseLine]);
+
+    await em.save(RgiCkOrder, { tenantId: 1, orderNo: 7, code: "A-7" });
+    expect(await em.find(RgiCkOrder)).toHaveLength(1);
+  });
+
+  it("leaves a schema that synchronize does not build alone", async () => {
+    await expect(register([RgiCkOrder, RgiCkLine], false)).resolves.toBeDefined();
+  });
+
+  it("rejects a ManyToMany whose owner has a composite key", async () => {
+    const error = await rejectionOf(() => register([RgiCkOwner, RgiCkTag]));
+
+    expect(error?.code).toBe(OrmErrorCode.SCHEMA_ERROR);
+    expect(error?.message).toContain(
+      "RgiCkOwner.tags: @ManyToMany needs a single-column key on RgiCkOwner, which has the composite primary key (tenantId, code)",
+    );
   });
 });

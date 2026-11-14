@@ -4,6 +4,7 @@ import {
   DatabaseClientOptions,
   LoggingOptions,
   UnknownWriteKeyPolicy,
+  normalizeSynchronizePolicy,
   validateDatabaseClientOptions,
 } from "../DatabaseClientOptions";
 import { DeserializerRegistry } from "../deserializer/DeserializerRegistry";
@@ -102,7 +103,10 @@ export class ConnectionLifecycle {
     // Before any DDL, so a broken relation graph creates no tables. Not on
     // attach(): an attached scope may be a subset of what another
     // registration owns.
-    validateRelationGraph(this.ctx.getEntities(), this.ctx.getResolver(), connectionName);
+    validateRelationGraph(this.ctx.getEntities(), this.ctx.getResolver(), connectionName, {
+      createsForeignKeys:
+        normalizeSynchronizePolicy(databaseClientOptions.synchronize).mode !== false,
+    });
     await this.host.registerEntities();
 
     // Install plugins (in array order)
