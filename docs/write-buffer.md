@@ -304,7 +304,9 @@ INSERT INTO "user" ("name", "email") VALUES ($1, $2) RETURNING "id"
 -- MySQL: LAST_INSERT_ID() gives us the generated id
 ```
 
-If the instance already has a PK, `persist()` assumes it's an existing entity and delegates to `track()` for dirty checking instead.
+If the instance already has an auto-increment PK, `persist()` assumes it's an existing entity and delegates to `track()` for dirty checking instead.
+
+A key the application chooses is different: a `@PrimaryColumn()` key, or a uuid you set yourself on a `@PrimaryGeneratedColumn("uuid")` entity, is present on a brand-new instance too. Unless the buffer already knows the instance, `persist()` queues it, and the flush checks whether a row with that key exists: it inserts the row when there is none, and otherwise updates it, counting an update and firing `preUpdate` / `postUpdate` with every non-key column as the changed data. `preview()` does not read the database, so it lists such an instance as an INSERT.
 
 ### save — Plain object INSERT
 

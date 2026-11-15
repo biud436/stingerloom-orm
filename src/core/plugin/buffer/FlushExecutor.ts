@@ -282,6 +282,60 @@ export class FlushExecutor {
     }
   }
 
+  /**
+   * The persisted instances whose caller-chosen key names a row that already
+   * exists. Asked before any of them is written, so the answer reflects the
+   * table as the flush found it.
+   */
+  async existingPersists(
+    txEm: EntityManager,
+    persists: PersistEntry[],
+  ): Promise<Set<EntityInstance>> {
+    const existing = new Set<EntityInstance>();
+    for (const entry of persists) {
+      if (
+        await this.idMap.rowExistsForChosenKey(txEm, entry.entity, entry.instance, entry.pkColumns)
+      ) {
+        existing.add(entry.instance);
+      }
+    }
+    return existing;
+  }
+
+  /**
+   * Writes a persisted instance whose row already exists: `save()` updates
+   * it, so the flush reports an update and fires the update events, with
+   * every non-key column as the changed data (the instance has no snapshot
+   * to diff against).
+   */
+  async flushPersistedUpdate(
+    txEm: EntityManager,
+    entry: PersistEntry,
+    visited: Set<EntityInstance>,
+    result: BufferFlushResult,
+  ): Promise<void> {
+    if (visited.has(entry.instance)) return;
+    const changed = (): ColumnValueMap => {
+      const data = this.idMap.extractColumnData(entry.instance, entry.columnNames);
+      for (const pk of entry.pkColumns) delete data[pk];
+      return data;
+    };
+    await this.emitFlushEvent("preUpdate", entry.entity, entry.instance, changed());
+    const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
+    const saved = await txEm.save(entry.entity, saveData);
+    if (saved) {
+      for (const col of entry.columnNames) {
+        const v = (saved as EntityInstance)[col];
+        if (v !== undefined) entry.instance[col] = v;
+      }
+    }
+    this.ensureTimestamps(entry.entity, entry.instance, false);
+    result.updates++;
+    visited.add(entry.instance);
+    await this.emitFlushEvent("postUpdate", entry.entity, entry.instance, changed());
+    await this.cascade.processCascadeInsertUpdate(txEm, entry.entity, entry.instance, visited, result);
+  }
+
   /** An entity in a SINGLE_TABLE or JOINED hierarchy, which the multi-row INSERT cannot write. */
   private writesThroughSave(entityClass: ClazzType<any>): boolean {
     const strategy = this.inheritance.getStrategy(entityClass);

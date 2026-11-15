@@ -303,7 +303,9 @@ INSERT INTO "user" ("name", "email") VALUES ($1, $2) RETURNING "id"
 -- MySQL: LAST_INSERT_ID() gives us the generated id
 ```
 
-인스턴스에 이미 PK가 있으면, `persist()`는 기존 엔티티로 판단하고 dirty checking을 위해 `track()`으로 위임해요.
+인스턴스에 auto-increment PK가 이미 있으면, `persist()`는 기존 엔티티로 판단하고 dirty checking을 위해 `track()`으로 위임해요.
+
+애플리케이션이 정하는 키는 다릅니다. `@PrimaryColumn()` 키나, `@PrimaryGeneratedColumn("uuid")` 엔티티에 직접 넣은 uuid는 새 인스턴스에도 이미 들어 있습니다. 버퍼가 이미 알고 있는 인스턴스가 아니면 `persist()`는 이를 큐에 넣고, flush가 그 키의 행이 있는지 확인합니다. 없으면 INSERT하고, 있으면 UPDATE하면서 update로 집계하고 키가 아닌 모든 컬럼을 변경 데이터로 담아 `preUpdate` / `postUpdate`를 발화합니다. `preview()`는 데이터베이스를 읽지 않으므로 이런 인스턴스를 INSERT로 표시합니다.
 
 ### save -- 일반 객체 INSERT
 
