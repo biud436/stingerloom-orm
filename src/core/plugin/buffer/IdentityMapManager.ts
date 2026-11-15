@@ -19,6 +19,7 @@ import { InheritanceResolver } from "../../InheritanceResolver";
 import { PluginContext } from "../PluginContext";
 import { EntityState } from "./EntityUnitState";
 import type { TrackedEntry } from "./BufferEntry";
+import type { EntityManager } from "../../EntityManager";
 
 /**
  * Semantic type alias for entity instances crossing module boundaries.
@@ -282,27 +283,44 @@ export class IdentityMapManager {
   }
 
   /**
-   * Whether the entity's primary key is entirely DB-generated
-   * (auto-increment or a `generationStrategy` such as uuid / uuid-v7).
+   * Whether the database generates every primary key column
+   * (auto-increment).
    *
-   * When true, a present PK value reliably means the row already exists in the
-   * database (it was loaded, not constructed), so persist() can treat it as
-   * managed. When false, at least one PK column is application-assigned
-   * (@PrimaryColumn / natural key), and a present PK does NOT imply the row
-   * exists — a brand-new entity always carries its assigned PK.
+   * When true, a present key reliably means the row already exists: the
+   * value can only have come from the database. A key the application
+   * chooses — a natural or composite key (@PrimaryColumn), or a uuid the
+   * ORM generates on the client and the caller may set itself — is present
+   * on a brand-new entity too, so its presence says nothing about the row;
+   * see {@link rowExistsForChosenKey}.
    *
    * Returns false for keyless entities (no PK columns).
    */
-  hasGeneratedPk(entityClass: ClazzType<any>): boolean {
+  hasDatabaseGeneratedPk(entityClass: ClazzType<any>): boolean {
     const columns: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
     const pkColumns = columns.filter((c) => c.options?.primary);
     if (pkColumns.length === 0) return false;
-    return pkColumns.every(
-      (c) =>
-        c.options?.autoIncrement === true ||
-        c.options?.generationStrategy != null,
+    return pkColumns.every((c) => c.options?.autoIncrement === true);
+  }
+
+  /**
+   * Whether a row with the instance's key exists, for a key the application
+   * chooses. `save()` updates such a row and inserts otherwise, so the flush
+   * asks first to report and announce the write it is about to make.
+   * False when the key is incomplete or the database generates it.
+   */
+  async rowExistsForChosenKey(
+    txEm: EntityManager,
+    entityClass: ClazzType<any>,
+    instance: EntityInstance,
+    pkColumns: string[],
+  ): Promise<boolean> {
+    if (pkColumns.length === 0 || this.hasDatabaseGeneratedPk(entityClass)) return false;
+    const complete = pkColumns.every(
+      (pk) => instance[pk] !== undefined && instance[pk] !== null,
     );
+    if (!complete) return false;
+    return txEm.exists(entityClass, this.buildPkWhere(instance, pkColumns) as any, true);
   }
 
   /**

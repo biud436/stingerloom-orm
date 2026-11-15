@@ -190,6 +190,13 @@ export class CascadeProcessor {
       if (child[col] !== undefined) data[col] = child[col];
     }
     if (fk) assignFkValue(data, fk.keys, fk.parentPk);
+    // em.save UPDATEs a present auto-increment key, and a caller-chosen key
+    // whose row exists; it INSERTs everything else. Asked before the save,
+    // which creates the row.
+    const wasUpdate =
+      hadFullPk &&
+      (this.idMap.hasDatabaseGeneratedPk(ChildEntity) ||
+        (await this.idMap.rowExistsForChosenKey(txEm, ChildEntity, child, childInfo.pkColumns)));
     const saved = await txEm.save(ChildEntity, data);
     if (saved) {
       for (const col of childInfo.columnNames) {
@@ -197,9 +204,6 @@ export class CascadeProcessor {
         if (v !== undefined) child[col] = v;
       }
     }
-    // em.save UPDATEs only generated-PK entities whose PK is present;
-    // everything else INSERTs (an assigned PK is present on new rows too).
-    const wasUpdate = hadFullPk && this.idMap.hasGeneratedPk(ChildEntity);
     if (wasUpdate) result.updates++;
     else result.inserts++;
     return wasUpdate ? "updated" : "inserted";

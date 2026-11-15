@@ -563,17 +563,17 @@ export class WriteBuffer {
     });
 
     if (hasPk) {
-      // A DB-generated PK (auto-increment / uuid) is only present once the row
-      // exists, so a present value means the entity was loaded → track it as
-      // managed. An APPLICATION-ASSIGNED PK (@PrimaryColumn / natural key) is
-      // always set on a brand-new entity, so its presence tells us nothing about
+      // An auto-increment PK is only present once the row exists, so a present
+      // value means the entity was loaded → track it as managed. A key the
+      // application chooses (@PrimaryColumn, or a uuid the caller set) is set
+      // on a brand-new entity too, so its presence tells us nothing about
       // whether the row exists: only treat it as managed if the buffer already
       // knows the instance (tracked, or MANAGED from a prior flush). Otherwise
-      // it is a new entity that must be INSERTed — falling through to the queue.
+      // it is queued, and the flush asks the table whether to INSERT or UPDATE.
       const alreadyKnown =
         this.trackedEntries.has(instance) ||
         this.idMap.stateMap.get(instance) === EntityState.MANAGED;
-      if (this.idMap.hasGeneratedPk(entityClass) || alreadyKnown) {
+      if (this.idMap.hasDatabaseGeneratedPk(entityClass) || alreadyKnown) {
         this.cancelQueuedDelete(entityClass, instance, pkColumns);
         return this.track(instance);
       }
@@ -1388,11 +1388,28 @@ export class WriteBuffer {
 
         // 2. Persist queue (instance-based inserts — topological order)
         const sortedPersists = sortByIndex([...persistsCopy], indexMap);
+        // A persisted instance whose key the caller chose may name a row that
+        // is already there; save() updates that row, so it is flushed — and
+        // counted and announced — as an update.
+        const existing = await this.flushExec.existingPersists(txEm, sortedPersists);
 
         if (this.options.batchInsert && sortedPersists.length > 0) {
-          await this.flushExec.flushPersistsBatched(txEm, sortedPersists, visited, result);
+          const inserts = sortedPersists.filter((entry) => !existing.has(entry.instance));
+          if (inserts.length > 0) {
+            await this.flushExec.flushPersistsBatched(txEm, inserts, visited, result);
+          }
+          // After the inserts: an existing row may now point at a new one.
+          for (const entry of sortedPersists) {
+            if (existing.has(entry.instance)) {
+              await this.flushExec.flushPersistedUpdate(txEm, entry, visited, result);
+            }
+          }
         } else {
           for (const entry of sortedPersists) {
+            if (existing.has(entry.instance)) {
+              await this.flushExec.flushPersistedUpdate(txEm, entry, visited, result);
+              continue;
+            }
             if (this.options.logging) this.log("flush: INSERT", { entity: entry.entity.name });
             await this.flushExec.emitFlushEvent("preInsert", entry.entity, entry.instance);
             const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
