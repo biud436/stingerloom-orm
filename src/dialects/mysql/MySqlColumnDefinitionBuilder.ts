@@ -70,6 +70,8 @@ export class MySqlColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
       case "float":
         return "FLOAT";
       case "double":
+        return "DOUBLE";
+      case "decimal":
         return "DECIMAL($precision, $scale)";
       case "blob":
         return "BLOB";

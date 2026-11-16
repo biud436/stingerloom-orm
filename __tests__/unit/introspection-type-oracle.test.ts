@@ -24,8 +24,9 @@ const ORM_TYPES: OrmColumnType[] = [
   { type: "bigint" },
   { type: "float" },
   { type: "double" },
-  { type: "double", precision: 12, scale: 4 },
-  { type: "double", precision: 10, scale: 0 },
+  { type: "decimal" },
+  { type: "decimal", precision: 12, scale: 4 },
+  { type: "decimal", precision: 10, scale: 0 },
   { type: "boolean" },
   { type: "varchar", length: 255 },
   { type: "varchar", length: 36 },
@@ -43,7 +44,8 @@ const ORM_TYPES: OrmColumnType[] = [
   { type: "enum", enumValues: ["draft", "it's", "back\\slash"], enumName: "post_status" },
   { type: "array", arrayElementType: "int" },
   { type: "array", arrayElementType: "varchar", length: 20 },
-  { type: "array", arrayElementType: "double", precision: 8, scale: 3 },
+  { type: "array", arrayElementType: "decimal", precision: 8, scale: 3 },
+  { type: "array", arrayElementType: "double" },
   { type: "array", arrayElementType: "uuid" },
 ];
 
@@ -77,13 +79,11 @@ describe.each<IntrospectionDialect>(["postgres", "mysql", "sqlite"])(
 
 describe("TypeOracle reports what it cannot recreate", () => {
   const cases: Array<[IntrospectionDialect, string, RegExp]> = [
-    ["postgres", "double precision", /^REAL$/],
     ["postgres", "smallint", /^INTEGER$/],
     ["postgres", "numeric", /^NUMERIC\(10, 2\)$/],
     ["postgres", "timestamp(3) without time zone", /^TIMESTAMP$/],
     ["postgres", "inet", /^TEXT$/],
     ["postgres", "interval", /^TEXT$/],
-    ["mysql", "double", /^FLOAT$/],
     ["mysql", "int(10) unsigned", /^INT$/],
     ["mysql", "mediumtext", /^LONGTEXT$/],
     ["mysql", "tinyint(4)", /^INT$/],
@@ -101,10 +101,28 @@ describe("TypeOracle reports what it cannot recreate", () => {
     expect(choice.createdDdl).toMatch(createdAs);
   });
 
-  it("keeps floating-point semantics for a double precision column", () => {
-    const types = dialectTypes("postgres");
-    const choice = new TypeOracle(types).choose(types.parseType("double precision"), at);
-    expect(choice.orm.type).toBe("float");
+  it.each<[IntrospectionDialect, string, string]>([
+    ["postgres", "double precision", "DOUBLE PRECISION"],
+    ["mysql", "double", "DOUBLE"],
+    ["sqlite", "REAL", "REAL"],
+  ])("recovers a %s %s column as double", (dialect, native, createdAs) => {
+    const types = dialectTypes(dialect);
+    const choice = new TypeOracle(types).choose(types.parseType(native), at);
+    expect(choice).toMatchObject({ orm: { type: "double" }, createdDdl: createdAs, fidelity: "exact" });
+  });
+
+  it.each<[IntrospectionDialect, string, string]>([
+    ["postgres", "numeric(12,4)", "NUMERIC(12, 4)"],
+    ["mysql", "decimal(12,4)", "DECIMAL(12, 4)"],
+    ["sqlite", "DECIMAL(12,4)", "NUMERIC(12, 4)"],
+  ])("recovers a %s %s column as decimal", (dialect, native, createdAs) => {
+    const types = dialectTypes(dialect);
+    const choice = new TypeOracle(types).choose(types.parseType(native), at);
+    expect(choice).toMatchObject({
+      orm: { type: "decimal", precision: 12, scale: 4 },
+      createdDdl: createdAs,
+      fidelity: "exact",
+    });
   });
 
   it("judges SQLite declarations by the affinity SQLite keeps", () => {
@@ -117,7 +135,7 @@ describe("TypeOracle reports what it cannot recreate", () => {
     }
     // NUMERIC affinity turns '123' into an integer; the TEXT this ORM
     // declares keeps it text.
-    for (const declared of ["DATETIME", "DATE", "JSON", "UUID", "DECIMAL(10,2)"]) {
+    for (const declared of ["DATETIME", "DATE", "JSON", "UUID"]) {
       expect([declared, fidelity(declared)]).toEqual([declared, "different"]);
     }
   });

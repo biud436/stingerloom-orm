@@ -2774,7 +2774,7 @@ export class EntityManager implements BaseEntityManager {
   private warnIfNonSortablePk(entityName: string, pk: ColumnMetadata): void {
     const pkType = pk.options?.type as string | undefined;
     const numericTypes = new Set([
-      "int", "number", "float", "double", "bigint",
+      "int", "number", "float", "double", "decimal", "bigint",
     ]);
     if (!pkType || numericTypes.has(pkType)) {
       return;

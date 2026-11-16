@@ -1601,6 +1601,7 @@ MySQL이나 PostgreSQL에서 이미 운영 중인 `@Column() tags!: string[]`는
 | `int` / `number` | INT           | INTEGER          | INTEGER |
 | `float`          | FLOAT         | REAL             | REAL    |
 | `double`         | DOUBLE        | DOUBLE PRECISION | REAL    |
+| `decimal`        | DECIMAL(p, s) | NUMERIC(p, s)    | NUMERIC(p, s) (NUMERIC affinity) |
 | `bigint`         | BIGINT        | BIGINT           | BIGINT (INTEGER affinity) |
 | `boolean`        | TINYINT(1)    | BOOLEAN          | INTEGER |
 | `datetime`       | DATETIME      | TIMESTAMP        | TEXT    |
@@ -1630,6 +1631,49 @@ scores!: number[] | null; // INTEGER[]
 MySQL이나 SQLite에서 이전 버전이 기록해 둔 행이 남아 있다면 그 값은 JSON이 아니라 요소 문자열 하나(`x`)입니다. 그런 행을 읽으면 해당 컬럼에 대해 `Failed to JSON.parse` 경고가 한 번 남고 원본 문자열이 그대로 반환돼요. `UPDATE`로 한 번 변환하거나, `transformer`로 기존 형태를 유지하세요.
 
 참고로 스키마 diff는 PostgreSQL 배열 컬럼을 모두 단순히 `ARRAY`로 읽기 때문에 요소 타입 변경을 감지하지 못합니다. 엔티티 생성은 요소 타입까지 읽습니다(`integer[]` → `arrayElementType: "int"`).
+
+### double 컬럼과 decimal 컬럼
+
+`double`은 JS `number`와 같은 8바이트 이진 부동소수입니다. 어느 데이터베이스에서나 유효 숫자 15자리 정도를 담고 `number`로 읽혀요. 측정값, 비율, 좌표에 씁니다. `decimal`은 스케일이 고정된 정확한 숫자입니다(`precision`은 전체 자릿수, `scale`은 그중 소수점 아래 자릿수, 기본값 `(10, 2)`). 금액처럼 반올림 오차가 쌓이면 안 되는 값에 씁니다.
+
+| | `double` | `decimal` |
+|---|---|---|
+| MySQL / MariaDB | `DOUBLE` | `DECIMAL(p, s)` |
+| PostgreSQL | `DOUBLE PRECISION` | `NUMERIC(p, s)` |
+| SQLite | `REAL` | `NUMERIC(p, s)` |
+| 저장되는 값 | 가장 가까운 이진 부동소수 | `scale` 자리로 반올림 (MySQL / PostgreSQL) |
+
+`precision`과 `scale`은 `decimal`에만 적용됩니다. `double`에 선언하면 `register()`(그리고 `migrate:generate`)에서 `INVALID_CONFIG`로 실패합니다.
+
+PostgreSQL과 mysql2는 `decimal`을 문자열로, SQLite는 number로 돌려줍니다. 엔티티 프로퍼티에 무엇을 담을지는 `decimalMode`가 결정하며, 어느 드라이버에서나 같은 타입이 나와요.
+
+| `decimalMode` | 프로퍼티 타입 | JS number가 정확히 담지 못하는 값 |
+|---------------|---------------|-----------------------------------|
+| `"number"` (기본값) | `number` | 반올림하지 않고 `DECIMAL_PRECISION_LOSS` 코드의 `OrmError`를 던짐 |
+| `"string"` | `string` (10진수 문자열) | 정확함 |
+
+```typescript
+@Entity()
+export class Invoice {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "double" })
+  exchangeRate!: number; // 1234.56789
+
+  @Column({ type: "decimal", precision: 12, scale: 2 })
+  total!: number; // 19.9 — 데이터베이스는 "19.90"을 돌려줌
+
+  @Column({ type: "decimal", precision: 19, scale: 4, decimalMode: "string" })
+  ledgerAmount!: string; // "123456789012345.6789"
+}
+```
+
+JS number는 유효 숫자 15자리 정도를 담으므로 `"number"` 모드로도 `DECIMAL(10, 2)` 값은 손실 없이 읽힙니다. 더 넓은 컬럼(`DECIMAL(19, 4)`는 19자리)에서 그 범위를 넘는 값을 읽으려면 `decimalMode: "string"`이 필요해요. 쓰기는 어느 모드에서든 number와 숫자 문자열을 모두 받습니다. SQLite에는 정확한 십진수 저장 방식이 없습니다. `decimal` 컬럼은 NUMERIC affinity를 가지므로 값이 숫자로 정렬·비교되지만, 저장은 정수나 8바이트 부동소수로 되고 스케일도 강제되지 않아요. `"string"` 모드에서 SQLite가 돌려준 값은 PostgreSQL·MySQL과 같은 모양이 되도록 컬럼 스케일까지 0으로 채웁니다(`19.9`는 `"19.90"`으로 읽힘).
+
+::: warning 업그레이드 시 DDL 드리프트
+이번 릴리스 전까지 `double`은 MySQL에서 `DECIMAL(10, 2)`, PostgreSQL에서 `NUMERIC(10, 2)`를 만들었습니다. 이제 `double`로 선언된 기존 컬럼은 `DOUBLE` / `DOUBLE PRECISION`과 비교되고, `synchronize: true`는 컬럼을 변환합니다. 이 변환은 좁히는 변경으로 보고되므로 `failOnDestructiveChange: true`면 거부됩니다. 정확한 컬럼을 유지하려면 지금 가진 정밀도와 스케일로 `decimal`을 선언하세요(`@Column({ type: "decimal", precision: 10, scale: 2 })`). 그러면 스키마는 그대로입니다. `precision` / `scale`을 선언한 `double`은 원래 `DECIMAL`이었고, 이제는 `decimal`로 선언하기 전까지 `register()`에서 실패합니다. SQLite는 영향이 없습니다. `double`은 예전에도 지금도 `REAL`입니다.
+:::
 
 ### bigint 컬럼과 `bigintMode`
 
@@ -1675,13 +1719,14 @@ SQLite에서는 bigint 컬럼을 `BIGINT`로 선언합니다(INTEGER affinity와
 | `default`       | `unknown`      | 컬럼 기본값 (리터럴 또는 괄호로 감싼 원시 SQL) |
 | `transform`     | `(raw) => any` | **(폐기됨)** 읽기 전용 값 변환 함수            |
 | `transformer`   | `{ to, from }` | 양방향 값 트랜스포머 (쓰기와 읽기)             |
-| `precision`     | `number`       | 소수 정밀도                                    |
-| `scale`         | `number`       | 소수 스케일                                    |
+| `precision`     | `number`       | `type: "decimal"` 컬럼의 전체 자릿수 (기본값 10) |
+| `scale`         | `number`       | `type: "decimal"` 컬럼의 소수점 아래 자릿수 (기본값 2) |
 | `enumValues`    | `string[]`     | PostgreSQL ENUM 값 목록                        |
 | `enumName`      | `string`       | PostgreSQL ENUM 타입 이름                      |
 | `renamedFrom`   | `string`       | 이 컬럼이 예전에 쓰던 DB 컬럼 이름. synchronize가 drop + add 대신 이름을 바꿉니다 ([설명](./migrations.md#컬럼-이름-변경-감지)) |
 | `arrayElementType` | `ColumnType` | `type: "array"` 컬럼의 요소 타입 (PostgreSQL 전용, 기본값 `"text"`) |
 | `bigintMode`    | `"number" \| "string" \| "bigint"` | `type: "bigint"` 컬럼의 엔티티 측 타입 (기본값 `"number"`, ±2^53 초과 시 예외) |
+| `decimalMode`   | `"number" \| "string"` | `type: "decimal"` 컬럼의 엔티티 측 타입 (기본값 `"number"`, JS number가 정확히 담지 못하는 값이면 예외) |
 
 ## 데코레이터 없이 엔티티 정의하기 (EntitySchema)
 

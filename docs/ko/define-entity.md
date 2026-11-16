@@ -103,7 +103,8 @@ INSERT INTO "users" ("name") VALUES ('Alice');
 | `t.bigint({ mode: "string" })` / `t.bigint({ mode: "bigint" })` | `string` / `bigint` | `bigint` (±2^53 초과도 무손실) |
 | `t.float()` / `t.double()` | `number` | `float` / `double` |
 | `t.number()` | `number` | `number` |
-| `t.decimal(precision?, scale?)` | `number` | `number` |
+| `t.decimal(precision?, scale?)` | `number` | `decimal` (정확한 숫자, 기본값 `(10, 2)`) |
+| `t.decimal(precision, scale, { mode: "string" })` | `string` | `decimal` (정확한 숫자 문자열로 읽음) |
 | `t.varchar(length?)` | `string` | `varchar` |
 | `t.char(length?)` | `string` | `char` |
 | `t.text()` / `t.longtext()` | `string` | `text` / `longtext` |
@@ -117,6 +118,8 @@ INSERT INTO "users" ("name") VALUES ('Alice');
 | `t.array<T>(elementType?)` | `T[]` | `array` (PostgreSQL `element[]`, 기본 `TEXT[]`) |
 | `t.enum(["a", "b"])` | `"a" \| "b"` | `enum` |
 
+`t.decimal()`은 금액처럼 반올림 오차가 쌓이면 안 되는 값을 위한 정확한 타입이고, `t.double()`은 측정값을 위한 이진 부동소수입니다. `t.decimal()`의 기본값은 `decimalMode: "number"`입니다. JS number가 정확히 담지 못하는 저장 값은 읽을 때 반올림되는 대신 `DECIMAL_PRECISION_LOSS`를 던져요. 정확한 자릿수로 읽으려면 세 번째 인자로 `{ mode: "string" }`을 넘기면 되고, 추론 타입도 모드를 따라갑니다. [double 컬럼과 decimal 컬럼](./entities.md#double-컬럼과-decimal-컬럼)을 참고하세요.
+
 여러 타입을 섞은 현실적인 예와 그것이 추론하는 타입:
 
 ```typescript
@@ -124,7 +127,7 @@ export const Product = defineEntity("products", {
   id:          t.int().primary().generated(),
   name:        t.varchar(255),       // VARCHAR(255), 필수
   description: t.text(),             // TEXT (255자가 아니라 메가바이트)
-  price:       t.float(),           // FLOAT / REAL
+  price:       t.decimal(10, 2),    // DECIMAL(10, 2) / NUMERIC(10, 2), 정확한 숫자
   isAvailable: t.boolean(),         // TINYINT(1) / BOOLEAN
   releaseDate: t.datetime(),        // DATETIME / TIMESTAMP
   payload:     t.jsonb<{ kind: string; data: unknown }>(),
@@ -1071,7 +1074,7 @@ export const Comment = defineEntity("comments", {
 | 빌더 | 추론 TS 타입 |
 | --- | --- |
 | `t.int()`, `t.integer()`, `t.bigint()`, `t.float()`, `t.double()`, `t.number()`, `t.decimal()` | `number` |
-| `t.bigint({ mode: "string" })` | `string` |
+| `t.bigint({ mode: "string" })`, `t.decimal(p, s, { mode: "string" })` | `string` |
 | `t.bigint({ mode: "bigint" })` | `bigint` |
 | `t.varchar()`, `t.char()`, `t.text()`, `t.longtext()`, `t.uuid()` | `string` |
 | `t.boolean()` | `boolean` |
@@ -1092,6 +1095,7 @@ export const Comment = defineEntity("comments", {
 | `int` / `number` | INT | INTEGER | INTEGER |
 | `float` | FLOAT | REAL | REAL |
 | `double` | DOUBLE | DOUBLE PRECISION | REAL |
+| `decimal` | DECIMAL(p, s) | NUMERIC(p, s) | NUMERIC(p, s) (NUMERIC affinity) |
 | `bigint` | BIGINT | BIGINT | BIGINT (INTEGER affinity) |
 | `boolean` | TINYINT(1) | BOOLEAN | INTEGER |
 | `datetime` | DATETIME | TIMESTAMP | TEXT |

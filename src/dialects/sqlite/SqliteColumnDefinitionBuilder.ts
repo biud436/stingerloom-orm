@@ -66,6 +66,11 @@ export class SqliteColumnDefinitionBuilder extends BaseColumnDefinitionBuilder {
       case "float":
       case "double":
         return "REAL";
+      case "decimal":
+        // NUMERIC affinity: SQLite keeps no exact decimal, but sorts and
+        // compares the values as numbers; the precision and scale document
+        // the column and are read back by introspection.
+        return "NUMERIC($precision, $scale)";
       case "blob":
         return "BLOB";
       case "uuid":

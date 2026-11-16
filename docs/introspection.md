@@ -313,8 +313,8 @@ Some things genuinely cannot survive the trip. None of them is dropped silently:
 
 | Case | What happens |
 |------|--------------|
-| A type the ORM cannot create (`smallint`, `int unsigned`, PostgreSQL `double precision`, `timestamp(3)`, `mediumtext`, `inet`, `interval`, …) | The closest ORM type is used and the note gives both spellings — what the database declares and what the entity would create. Types with no counterpart at all become `text`, which holds any value's text form. See [Type Mapping](#type-mapping) |
-| SQLite declarations whose affinity the ORM changes (`DATETIME`, `DATE`, `JSON`, `DECIMAL`) | Flagged. The ORM declares `TEXT` / `REAL`, whose affinity stores some values differently (`'123'` stays text under TEXT but becomes an integer under the NUMERIC affinity of `DATETIME`). `BOOLEAN` → `INTEGER` keeps the affinity and is not flagged |
+| A type the ORM cannot create (`smallint`, `int unsigned`, `timestamp(3)`, `mediumtext`, `inet`, `interval`, …) | The closest ORM type is used and the note gives both spellings — what the database declares and what the entity would create. Types with no counterpart at all become `text`, which holds any value's text form. See [Type Mapping](#type-mapping) |
+| SQLite declarations whose affinity the ORM changes (`DATETIME`, `DATE`, `JSON`) | Flagged. The ORM declares `TEXT`, whose affinity stores some values differently (`'123'` stays text under TEXT but becomes an integer under the NUMERIC affinity of `DATETIME`). `BOOLEAN` → `INTEGER` keeps the affinity and is not flagged |
 | A composite foreign key | Its columns stay plain columns; the note names the constraint to recreate in a migration |
 | A foreign key to a table that is not generated (excluded, or in another schema) | Kept as a plain column instead of a relation that would import a class that does not exist |
 | A foreign key that references a non-primary-key column | Flagged. Schema generation always builds the constraint against the target's primary key |
@@ -341,9 +341,9 @@ The tables below are what the type selection produces — rendered through each 
 | `bigint`, `bigserial` | `bigint` | `BIGINT` | exact |
 | `smallint` | `int` | `INTEGER` | flagged |
 | `real` | `float` | `REAL` | exact |
-| `double precision` | `float` | `REAL` | flagged |
-| `numeric(p,s)` | `double` + `precision` / `scale` | `NUMERIC(p, s)` | exact |
-| `numeric` (unconstrained) | `double` | `NUMERIC(10, 2)` | flagged |
+| `double precision` | `double` | `DOUBLE PRECISION` | exact |
+| `numeric(p,s)` | `decimal` + `precision` / `scale` | `NUMERIC(p, s)` | exact |
+| `numeric` (unconstrained) | `decimal` | `NUMERIC(10, 2)` | flagged |
 | `boolean` | `boolean` | `BOOLEAN` | exact |
 | `character varying(n)` | `varchar` + `length` | `VARCHAR(n)` | exact |
 | `character varying` (no limit) | `text` | `TEXT` | equivalent |
@@ -372,8 +372,8 @@ Identity columns (`GENERATED … AS IDENTITY`) and `serial` columns are read as 
 | `tinyint`, `smallint`, `mediumint` | `int` | `INT` | flagged |
 | `… unsigned` | `int` / `bigint` | `INT` / `BIGINT` | flagged |
 | `float` | `float` | `FLOAT` | exact |
-| `double` | `float` | `FLOAT` | flagged |
-| `decimal(p,s)` | `double` + `precision` / `scale` | `DECIMAL(p, s)` | exact |
+| `double` | `double` | `DOUBLE` | exact |
+| `decimal(p,s)` | `decimal` + `precision` / `scale` | `DECIMAL(p, s)` | exact |
 | `varchar(n)` / `char(n)` | `varchar` / `char` + `length` | `VARCHAR(n)` / `CHAR(n)` | exact |
 | `text` / `longtext` | `text` / `longtext` | `TEXT` / `LONGTEXT` | exact |
 | `tinytext` / `mediumtext` | `text` / `longtext` | `TEXT` / `LONGTEXT` | flagged |
@@ -397,12 +397,13 @@ The reader asks the server for its version, so MariaDB's quoted defaults, its `J
 | `INTEGER`, `INT` | `int` | `INTEGER` | exact |
 | `BIGINT` | `bigint` | `BIGINT` | exact |
 | `TINYINT`, `SMALLINT`, `BOOLEAN` | `int` / `boolean` | `INTEGER` | equivalent |
-| `REAL`, `DOUBLE`, `FLOAT` | `float` | `REAL` | exact |
+| `REAL`, `DOUBLE`, `FLOAT` | `double` | `REAL` | exact |
 | `VARCHAR(n)`, `TEXT(n)` | `varchar` + `length` | `TEXT(n)` | exact |
 | `CHAR(n)` | `char` + `length` | `TEXT(n)` | equivalent |
 | `TEXT`, `CLOB`, `VARCHAR` | `text` | `TEXT` | exact / equivalent |
 | `BLOB` | `blob` | `BLOB` | exact |
-| `DECIMAL`, `NUMERIC` | `double` | `REAL` | flagged |
+| `DECIMAL(p,s)`, `NUMERIC(p,s)` | `decimal` + `precision` / `scale` | `NUMERIC(p, s)` | exact |
+| `DECIMAL`, `NUMERIC` (no precision) | `decimal` | `NUMERIC(10, 2)` | equivalent |
 | `DATETIME`, `TIMESTAMP`, `DATE` | `datetime` / `date` | `TEXT` | flagged |
 | `JSON`, `UUID` | `json` / `uuid` | `TEXT` / `VARCHAR(36)` | flagged |
 | no declared type, unknown names | by SQLite's affinity rules; `text` when none fits | | flagged |

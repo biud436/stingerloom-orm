@@ -133,7 +133,9 @@ type CachedLocation = InferRow<typeof CachedLocation>;
 
 | Builder | Row type | Conversion on read |
 |---|---|---|
-| `t.int()`, `t.integer()`, `t.float()`, `t.double()`, `t.number()`, `t.decimal(p, s)` | `number` | Numeric strings become numbers. This covers PostgreSQL `NUMERIC` and `COUNT(*)`, and mysql2 `DECIMAL` and `SUM()`. An integer outside ±2^53 throws `BIGINT_PRECISION_LOSS`. Text that isn't a number is passed through. |
+| `t.int()`, `t.integer()`, `t.float()`, `t.double()`, `t.number()` | `number` | Numeric strings become numbers. This covers PostgreSQL `NUMERIC` and `COUNT(*)`, and mysql2 `DECIMAL` and `SUM()`. An integer outside ±2^53 throws `BIGINT_PRECISION_LOSS`. Text that isn't a number is passed through. |
+| `t.decimal(p, s)` | `number` | Decimal text (PostgreSQL `NUMERIC`, mysql2 `DECIMAL` and `SUM()`) becomes a number. A value a JS number cannot hold exactly throws `DECIMAL_PRECISION_LOSS` instead of being rounded. |
+| `t.decimal(p, s, { mode: "string" })` | `string` | Exact decimal text. A SQLite number is padded with zeros to the scale (`19.9` → `"19.90"`) and never rounded. |
 | `t.bigint()` | `number` | Throws `BIGINT_PRECISION_LOSS` outside ±2^53 |
 | `t.bigint({ mode: "string" })` | `string` | Lossless decimal string |
 | `t.bigint({ mode: "bigint" })` | `bigint` | Lossless `BigInt` |
@@ -147,7 +149,7 @@ type CachedLocation = InferRow<typeof CachedLocation>;
 
 SQL `NULL` always reads as `null`, and conversion functions never receive it. `.nullable()` widens the field type to `T | null`.
 
-Apart from the numeric strings in the first row, these are exactly the conversions entity hydration applies. Numeric strings are the one rule `find()` does not apply: an entity column is read the way its driver returns it. A raw query, however, often returns these declared types from expressions such as `COUNT(*)`, `AVG()` or a `NUMERIC` column, which the drivers hand over as strings.
+Apart from the numeric strings in the first row, these are exactly the conversions entity hydration applies; a `decimal` entity column reads the way `t.decimal()` does. The first row's numeric strings are the one rule `find()` does not apply: an entity column of those types is read the way its driver returns it. A raw query, however, often returns these declared types from expressions such as `COUNT(*)`, `AVG()` or a `NUMERIC` column, which the drivers hand over as strings.
 
 ## Column names
 

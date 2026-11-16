@@ -49,10 +49,10 @@ describe("PostgresColumnDefinitionBuilder — array columns", () => {
     );
   });
 
-  it("arrayElementType double + precision/scale → NUMERIC(10,2)[]", () => {
+  it("arrayElementType decimal + precision/scale → NUMERIC(10,2)[]", () => {
     const option: ColumnOption = {
       type: "array",
-      arrayElementType: "double",
+      arrayElementType: "decimal",
       precision: 10,
       scale: 2,
       nullable: true,

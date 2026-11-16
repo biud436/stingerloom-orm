@@ -1546,6 +1546,7 @@ This table shows how each abstract `ColumnType` is translated to a concrete data
 | `int` / `number` | INT | INTEGER | INTEGER |
 | `float` | FLOAT | REAL | REAL |
 | `double` | DOUBLE | DOUBLE PRECISION | REAL |
+| `decimal` | DECIMAL(p, s) | NUMERIC(p, s) | NUMERIC(p, s) (NUMERIC affinity) |
 | `bigint` | BIGINT | BIGINT | BIGINT (INTEGER affinity) |
 | `boolean` | TINYINT(1) | BOOLEAN | INTEGER |
 | `datetime` | DATETIME | TIMESTAMP | TEXT |
@@ -1573,6 +1574,49 @@ scores!: number[] | null; // INTEGER[]
 Plain JS arrays round-trip through the `pg` driver's native array serialization. MySQL stores `array` columns as JSON and SQLite as TEXT, where `arrayElementType` is ignored; on those two drivers the ORM serializes the value with `JSON.stringify` on write and parses it back on read, so `["x", "y"]` comes out of `find()` as `["x", "y"]` there as well. Note that schema diffing reads every PostgreSQL array column simply as `ARRAY`, so it cannot detect element-type changes. Entity generation reads the element type (`integer[]` → `arrayElementType: "int"`).
 
 If the column already holds rows written by an earlier version on MySQL or SQLite, they are bare element text (`x`), not JSON. Reading one back logs a single `Failed to JSON.parse` warning for the column and yields the raw string; convert the rows once with an `UPDATE`, or keep the old shape with a `transformer`.
+
+### double and decimal Columns
+
+`double` is a binary floating-point number, the same 8-byte float as a JS `number`: it keeps about 15 significant digits on every database and reads back as a `number`. Use it for measurements, ratios and coordinates. `decimal` is an exact number with a fixed scale (`precision` total digits, `scale` of them after the point, default `(10, 2)`). Use it for money and anything else that must not drift by a rounding error.
+
+| | `double` | `decimal` |
+|---|---|---|
+| MySQL / MariaDB | `DOUBLE` | `DECIMAL(p, s)` |
+| PostgreSQL | `DOUBLE PRECISION` | `NUMERIC(p, s)` |
+| SQLite | `REAL` | `NUMERIC(p, s)` |
+| Stored value | nearest binary float | rounded to `scale` digits (MySQL / PostgreSQL) |
+
+`precision` and `scale` apply to `decimal` only. Declaring them on a `double` fails at `register()` (and in `migrate:generate`) with `INVALID_CONFIG`.
+
+PostgreSQL and mysql2 return a `decimal` as text, and SQLite returns a number. `decimalMode` decides what the entity property holds, on every driver:
+
+| `decimalMode` | Property type | A value a JS number cannot hold exactly |
+|---------------|---------------|------------------------------------------|
+| `"number"` (default) | `number` | throws `OrmError` with code `DECIMAL_PRECISION_LOSS` instead of rounding |
+| `"string"` | `string` (decimal digits) | exact |
+
+```typescript
+@Entity()
+export class Invoice {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: "double" })
+  exchangeRate!: number; // 1234.56789
+
+  @Column({ type: "decimal", precision: 12, scale: 2 })
+  total!: number; // 19.9 — "19.90" from the database
+
+  @Column({ type: "decimal", precision: 19, scale: 4, decimalMode: "string" })
+  ledgerAmount!: string; // "123456789012345.6789"
+}
+```
+
+A JS number holds about 15 significant digits, so `"number"` mode reads `DECIMAL(10, 2)` values without loss. A wider column (`DECIMAL(19, 4)` holds 19 digits) needs `decimalMode: "string"` for values past that. Writes accept a number or a digit string in either mode. SQLite has no exact decimal storage: a `decimal` column has NUMERIC affinity there, so values sort and compare as numbers but are stored as integers or 8-byte floats, and the scale is not enforced. In `"string"` mode the value read from SQLite is padded with zeros to the column's scale (`19.9` reads as `"19.90"`), as PostgreSQL and MySQL return it.
+
+::: warning DDL drift when upgrading
+Before this release `double` created `DECIMAL(10, 2)` on MySQL and `NUMERIC(10, 2)` on PostgreSQL. An existing column declared `double` now diffs against `DOUBLE` / `DOUBLE PRECISION`, and `synchronize: true` converts it. The conversion is reported as a narrowing change, so `failOnDestructiveChange: true` refuses it. To keep the exact column, declare it `decimal` with the precision and scale it has (`@Column({ type: "decimal", precision: 10, scale: 2 })`), and the schema stays as it is. A `double` that declared `precision` / `scale` was always a `DECIMAL`; it now fails at `register()` until it is declared `decimal`. SQLite is unaffected: `double` was and stays `REAL`.
+:::
 
 ### bigint Columns and `bigintMode`
 
@@ -1618,13 +1662,14 @@ On SQLite, bigint columns are declared `BIGINT` (the same INTEGER affinity and s
 | `default` | `unknown` | Column default value (literal or raw SQL in parentheses) |
 | `transform` | `(raw) => any` | **(deprecated)** Read-only value transform function |
 | `transformer` | `{ to, from }` | Bidirectional value transformer (write and read) |
-| `precision` | `number` | Decimal precision |
-| `scale` | `number` | Decimal scale |
+| `precision` | `number` | Total digits of a `type: "decimal"` column (default 10) |
+| `scale` | `number` | Digits after the point of a `type: "decimal"` column (default 2) |
 | `enumValues` | `string[]` | PostgreSQL ENUM value list |
 | `enumName` | `string` | PostgreSQL ENUM type name |
 | `renamedFrom` | `string` | DB column this one was renamed from, so synchronize renames instead of dropping + adding ([details](./migrations.md#column-rename-detection)) |
 | `arrayElementType` | `ColumnType` | Element type for `type: "array"` columns (PostgreSQL only, default `"text"`) |
 | `bigintMode` | `"number" \| "string" \| "bigint"` | Entity-side type of a `type: "bigint"` column (default `"number"`, which throws beyond ±2^53) |
+| `decimalMode` | `"number" \| "string"` | Entity-side type of a `type: "decimal"` column (default `"number"`, which throws on a value a JS number cannot hold exactly) |
 
 ## Defining Entities Without Decorators (EntitySchema)
 

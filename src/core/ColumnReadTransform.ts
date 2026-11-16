@@ -14,6 +14,11 @@ import {
   DEFAULT_BIGINT_MODE,
   makeBigintColumnRead,
 } from "./BigintColumnTransformer";
+import {
+  type DecimalMode,
+  DEFAULT_DECIMAL_MODE,
+  makeDecimalColumnRead,
+} from "./DecimalColumnTransformer";
 
 /** Read-side (DB → JS) conversion for a single column value. */
 export type ColumnRead = (raw: any) => any;
@@ -29,6 +34,9 @@ export interface ColumnReadSpec {
   /** Deprecated one-way read transform (`@Column({ transform })`). */
   transform?: (raw: unknown) => unknown;
   bigintMode?: BigintMode;
+  decimalMode?: DecimalMode;
+  /** Declared scale of a `decimal` column. */
+  scale?: number;
 }
 
 /**
@@ -46,7 +54,8 @@ export interface ColumnReadSpec {
  * - `array` parses MySQL/SQLite JSON text, pg arrays pass through;
  * - `boolean` normalizes MySQL/SQLite `0/1` to a real boolean;
  * - temporal types parse better-sqlite3 TEXT into `Date`;
- * - `bigint` follows the column's `bigintMode`.
+ * - `bigint` follows the column's `bigintMode`;
+ * - `decimal` follows the column's `decimalMode`.
  *
  * @param owner - label for warnings/errors, e.g. the entity name
  * @param key - property key, used with `owner` in those messages
@@ -94,6 +103,16 @@ export function resolveColumnRead(
     // ±2^53). The column's bigintMode picks one JS-side type.
     return makeBigintColumnRead(
       spec.bigintMode ?? DEFAULT_BIGINT_MODE,
+      owner,
+      key,
+    );
+  }
+  if (type === "decimal") {
+    // pg (NUMERIC) and mysql2 (DECIMAL) deliver text, better-sqlite3 a
+    // number. The column's decimalMode picks one JS-side type.
+    return makeDecimalColumnRead(
+      spec.decimalMode ?? DEFAULT_DECIMAL_MODE,
+      spec.scale,
       owner,
       key,
     );

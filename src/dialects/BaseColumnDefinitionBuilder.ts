@@ -43,6 +43,37 @@ export function assertColumnType(type: string, where?: string): void {
 }
 
 /**
+ * Throws for precision or scale on a `double` column.
+ *
+ * `double` is a binary floating-point type and keeps neither. It used to be
+ * created as DECIMAL / NUMERIC with them, so dropping them without a word
+ * would turn an exact column into a float; the column has to say which one
+ * it means. A `double` registered with {@link ColumnTypeRegistry} is the
+ * registrant's type and is not checked.
+ *
+ * @param where - The column, for the message.
+ */
+export function assertNumericOptions(option: ColumnOption, where?: string): void {
+  // A PostgreSQL array takes its element's precision and scale.
+  const numericType = option.type === "array" ? option.arrayElementType : option.type;
+  if (numericType !== "double") return;
+  if (option.precision == null && option.scale == null) return;
+  if (ColumnTypeRegistry.getInstance().has("double")) return;
+  const declared = [
+    option.precision != null ? `precision ${option.precision}` : null,
+    option.scale != null ? `scale ${option.scale}` : null,
+  ]
+    .filter(Boolean)
+    .join(" and ");
+  throw new OrmError(
+    OrmErrorCode.INVALID_CONFIG,
+    `Column ${where ?? "(unnamed)"} declares ${declared} on type "double", a binary floating-point type that keeps neither.`,
+    `Use type: "decimal" for an exact number with precision and scale (DECIMAL / NUMERIC), ` +
+      `or remove precision and scale to keep a double (DOUBLE / DOUBLE PRECISION / REAL).`,
+  );
+}
+
+/**
  * Abstract base class for column definition builders.
  *
  * Uses the Template Method pattern to define the algorithmic skeleton of
@@ -102,6 +133,7 @@ export abstract class BaseColumnDefinitionBuilder
     option: ColumnOption,
     ctx: ColumnDefContext,
   ): string {
+    assertNumericOptions(option, `${ctx.tableName}.${ctx.columnName}`);
     let type = this.castType(option.type ?? "varchar");
 
     // 1. Resolve boolean type

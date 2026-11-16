@@ -306,7 +306,7 @@ describe("SchemaDiff — declared types come from the dialect column builder", (
       ).toBe("VARCHAR(36)");
       expect(
         new PostgresColumnDefinitionBuilder().buildColumnTypeExpr(
-          { type: "double", precision: 12, scale: 4 } as any,
+          { type: "decimal", precision: 12, scale: 4 } as any,
           { columnName: "x", tableName: "t" },
         ),
       ).toBe("NUMERIC(12, 4)");

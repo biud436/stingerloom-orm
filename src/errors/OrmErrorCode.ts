@@ -71,6 +71,12 @@ export enum OrmErrorCode {
    * Set `bigintMode: "string" | "bigint"` on the column to read it losslessly.
    */
   BIGINT_PRECISION_LOSS = "ORM_BIGINT_PRECISION_LOSS",
+  /**
+   * A `decimal` column holds a value a JS number cannot represent digit for
+   * digit while the read contract is `number`. Set `decimalMode: "string"`
+   * on the column to read it exactly.
+   */
+  DECIMAL_PRECISION_LOSS = "ORM_DECIMAL_PRECISION_LOSS",
 
   // Configuration
   INVALID_CONFIG = "ORM_INVALID_CONFIG",
