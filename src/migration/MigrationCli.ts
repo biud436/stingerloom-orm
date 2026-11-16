@@ -20,6 +20,8 @@ import { SchemaDiffMigrationGenerator } from "../core/generators/SchemaDiffMigra
 import { SchemaDialect } from "../core/generators/SchemaGenerator";
 import { createColumnDefinitionBuilder } from "../dialects/ColumnDefinitionBuilder";
 import { EntityManager } from "../core/EntityManager";
+import { RelationMetadataResolver } from "../core/RelationMetadataResolver";
+import { validateRelationGraph } from "../core/RelationGraphValidator";
 
 export type MigrationCommand = "migrate:run" | "migrate:rollback" | "migrate:status" | "migrate:generate";
 
@@ -255,6 +257,14 @@ export class MigrationCli {
     // diff sees camelCase property names on the entities, generating spurious
     // DROP/ADD migrations.
     EntityManager.applyNamingStrategyToEntities(entities, this.options.namingStrategy);
+    // The migration creates the foreign keys synchronize would, so it is
+    // checked like a synchronize boot: a relation whose constraint would
+    // reference part of a composite key fails here, not at migrate:run.
+    if (entities.length > 0) {
+      validateRelationGraph(entities, new RelationMetadataResolver(), undefined, {
+        createsForeignKeys: true,
+      });
+    }
     const dbType = this.options.type;
     const dialect: SchemaDialect =
       dbType === "mysql" || dbType === "mariadb" ? "mysql"

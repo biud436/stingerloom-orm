@@ -488,9 +488,10 @@ npx stingerloom migrate:generate
 
 This will:
 1. Connect to the database using your config.
-2. Run `SchemaDiff.diff()` against all registered entities.
-3. If differences are found, generate a timestamped migration file.
-4. If the schema is already in sync, print "No schema changes" and exit.
+2. Check the relations of the configured entities the way `register()` checks them when `synchronize` builds the schema. A relation `register()` would reject, such as a foreign key to part of a composite primary key, stops the command with a `SCHEMA_ERROR`, and no file is written.
+3. Run `SchemaDiff.diff()` against all registered entities.
+4. If differences are found, generate a timestamped migration file.
+5. If the schema is already in sync, print "No schema changes" and exit.
 
 ### Using the Programmatic API
 
