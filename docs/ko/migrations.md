@@ -488,9 +488,10 @@ npx stingerloom migrate:generate
 
 이 명령은:
 1. 설정 파일을 사용해서 데이터베이스에 연결해요.
-2. 등록된 모든 엔티티에 대해 `SchemaDiff.diff()`를 실행해요.
-3. 차이가 발견되면 타임스탬프가 붙은 migration 파일을 생성해요.
-4. 스키마가 이미 동기화되어 있으면 "No schema changes"를 출력하고 종료해요.
+2. `synchronize`가 스키마를 만들 때 `register()`가 하는 것과 같은 방식으로 설정된 엔티티의 관계를 검사해요. 복합 기본 키의 일부를 참조하는 FK처럼 `register()`가 거부할 관계가 있으면 `SCHEMA_ERROR`로 멈추고 파일을 만들지 않아요.
+3. 등록된 모든 엔티티에 대해 `SchemaDiff.diff()`를 실행해요.
+4. 차이가 발견되면 타임스탬프가 붙은 migration 파일을 생성해요.
+5. 스키마가 이미 동기화되어 있으면 "No schema changes"를 출력하고 종료해요.
 
 ### 프로그래밍 방식 API
 
