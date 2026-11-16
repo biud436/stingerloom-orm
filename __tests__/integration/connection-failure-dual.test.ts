@@ -37,7 +37,9 @@ describe.each(getTestDrivers())(
 
     afterEach(async () => {
       jest.restoreAllMocks();
-      for (const em of open.splice(0)) await em.propagateShutdown().catch(() => undefined);
+      for (const em of open.splice(0)) {
+        await em.propagateShutdown({ closeConnections: true }).catch(() => undefined);
+      }
     });
 
     const register = async (overrides: Record<string, unknown>) => {
