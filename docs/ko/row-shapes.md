@@ -133,7 +133,9 @@ type CachedLocation = InferRow<typeof CachedLocation>;
 
 | 빌더 | 행 타입 | 읽을 때 하는 변환 |
 |---|---|---|
-| `t.int()`, `t.integer()`, `t.float()`, `t.double()`, `t.number()`, `t.decimal(p, s)` | `number` | 숫자 문자열을 숫자로 바꿉니다. PostgreSQL의 `NUMERIC`과 `COUNT(*)`, mysql2의 `DECIMAL`과 `SUM()`이 여기에 해당합니다. ±2^53을 넘는 정수는 `BIGINT_PRECISION_LOSS`를 던집니다. 숫자가 아닌 텍스트는 그대로 둡니다. |
+| `t.int()`, `t.integer()`, `t.float()`, `t.double()`, `t.number()` | `number` | 숫자 문자열을 숫자로 바꿉니다. PostgreSQL의 `NUMERIC`과 `COUNT(*)`, mysql2의 `DECIMAL`과 `SUM()`이 여기에 해당합니다. ±2^53을 넘는 정수는 `BIGINT_PRECISION_LOSS`를 던집니다. 숫자가 아닌 텍스트는 그대로 둡니다. |
+| `t.decimal(p, s)` | `number` | 십진수 문자열(PostgreSQL `NUMERIC`, mysql2 `DECIMAL`과 `SUM()`)을 숫자로 바꿉니다. JS number가 정확히 담지 못하는 값은 반올림하지 않고 `DECIMAL_PRECISION_LOSS`를 던집니다. |
+| `t.decimal(p, s, { mode: "string" })` | `string` | 정확한 십진수 문자열. SQLite의 number는 스케일까지 0으로 채우고(`19.9` → `"19.90"`) 반올림하지 않습니다. |
 | `t.bigint()` | `number` | ±2^53을 넘으면 `BIGINT_PRECISION_LOSS` |
 | `t.bigint({ mode: "string" })` | `string` | 손실 없는 10진 문자열 |
 | `t.bigint({ mode: "bigint" })` | `bigint` | 손실 없는 `BigInt` |
@@ -147,7 +149,7 @@ type CachedLocation = InferRow<typeof CachedLocation>;
 
 SQL `NULL`은 언제나 `null`로 읽히고, 변환 함수에는 넘어가지 않습니다. `.nullable()`을 붙이면 필드 타입이 `T | null`로 넓어집니다.
 
-첫 줄의 숫자 문자열 변환을 빼면, 나머지는 엔티티 하이드레이션이 하는 변환과 정확히 같습니다. 숫자 문자열 변환은 `find()`에는 없는 규칙입니다. 엔티티 컬럼은 드라이버가 준 값 그대로 읽히는데, raw 쿼리는 이 타입들을 `COUNT(*)`, `AVG()`, `NUMERIC` 컬럼 같은 표현식에서 돌려주는 경우가 많고, 드라이버는 이런 값을 문자열로 넘기거든요.
+첫 줄의 숫자 문자열 변환을 빼면, 나머지는 엔티티 하이드레이션이 하는 변환과 정확히 같습니다. `decimal` 엔티티 컬럼도 `t.decimal()`과 같은 방식으로 읽혀요. 첫 줄의 숫자 문자열 변환은 `find()`에는 없는 규칙입니다. 그 타입의 엔티티 컬럼은 드라이버가 준 값 그대로 읽히는데, raw 쿼리는 이 타입들을 `COUNT(*)`, `AVG()`, `NUMERIC` 컬럼 같은 표현식에서 돌려주는 경우가 많고, 드라이버는 이런 값을 문자열로 넘기거든요.
 
 ## 컬럼 이름 맞추기
 

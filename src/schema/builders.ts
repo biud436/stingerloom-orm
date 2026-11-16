@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ColumnType, ColumnTransformer } from "../decorators/Column";
 import type { BigintMode } from "../core/BigintColumnTransformer";
+import type { DecimalMode } from "../core/DecimalColumnTransformer";
 import { GenerationStrategy } from "../decorators/PrimaryGeneratedColumn";
 import { JsonIndexOptions } from "../decorators/JsonIndex";
 import { JoinTableOption } from "../decorators/ManyToMany";
@@ -314,6 +315,37 @@ function bigintColumn(options?: BigintBuilderOptions): ColumnBuilder<unknown> {
   });
 }
 
+/** Options for {@link t.decimal}. */
+export interface DecimalBuilderOptions<M extends DecimalMode = DecimalMode> {
+  /**
+   * Entity-side representation — see `ColumnSchemaDef.decimalMode`. The
+   * inferred TypeScript type follows: `"number"` (default) → `number`,
+   * `"string"` → `string`.
+   */
+  mode?: M;
+}
+
+type DecimalInfer<M extends DecimalMode> = M extends "string" ? string : number;
+
+function decimalColumn(precision?: number, scale?: number): ColumnBuilder<number>;
+function decimalColumn<M extends DecimalMode>(
+  precision: number | undefined,
+  scale: number | undefined,
+  options: DecimalBuilderOptions<M>,
+): ColumnBuilder<DecimalInfer<M>>;
+function decimalColumn(
+  precision?: number,
+  scale?: number,
+  options?: DecimalBuilderOptions,
+): ColumnBuilder<unknown> {
+  return column<unknown>({
+    type: "decimal",
+    ...(precision != null ? { precision } : {}),
+    ...(scale != null ? { scale } : {}),
+    ...(options?.mode != null ? { decimalMode: options.mode } : {}),
+  });
+}
+
 /**
  * Fluent, type-carrying field builders for {@link defineEntity}.
  *
@@ -342,12 +374,7 @@ export const t = {
   float: () => column<number>({ type: "float" }),
   double: () => column<number>({ type: "double" }),
   number: () => column<number>({ type: "number" }),
-  decimal: (precision?: number, scale?: number) =>
-    column<number>({
-      type: "number",
-      ...(precision != null ? { precision } : {}),
-      ...(scale != null ? { scale } : {}),
-    }),
+  decimal: decimalColumn,
 
   // ── string ───────────────────────────────────────────────────────────────
   varchar: (length?: number) =>

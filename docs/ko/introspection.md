@@ -313,8 +313,8 @@ code-first 출력에는 빠지면 안 되는 부분이 두 가지 있습니다.
 
 | 상황 | 동작 |
 |------|------|
-| ORM이 만들 수 없는 타입(`smallint`, `int unsigned`, PostgreSQL `double precision`, `timestamp(3)`, `mediumtext`, `inet`, `interval` 등) | 가장 가까운 ORM 타입을 쓰고, NOTE에 DB가 선언한 표기와 엔티티가 만들 표기를 나란히 적습니다. 대응 타입이 전혀 없으면 어떤 값이든 텍스트로 담을 수 있는 `text`가 됩니다. [타입 매핑](#타입-매핑) 참고 |
-| ORM이 어피니티를 바꾸게 되는 SQLite 선언(`DATETIME`, `DATE`, `JSON`, `DECIMAL`) | NOTE를 답니다. ORM은 `TEXT` / `REAL`로 선언하는데, 어피니티가 달라지면 일부 값이 다르게 저장됩니다(`'123'`은 TEXT에서는 텍스트로 남지만 `DATETIME`의 NUMERIC 어피니티에서는 정수가 됩니다). `BOOLEAN` → `INTEGER`는 어피니티가 같으므로 NOTE를 달지 않습니다 |
+| ORM이 만들 수 없는 타입(`smallint`, `int unsigned`, `timestamp(3)`, `mediumtext`, `inet`, `interval` 등) | 가장 가까운 ORM 타입을 쓰고, NOTE에 DB가 선언한 표기와 엔티티가 만들 표기를 나란히 적습니다. 대응 타입이 전혀 없으면 어떤 값이든 텍스트로 담을 수 있는 `text`가 됩니다. [타입 매핑](#타입-매핑) 참고 |
+| ORM이 어피니티를 바꾸게 되는 SQLite 선언(`DATETIME`, `DATE`, `JSON`) | NOTE를 답니다. ORM은 `TEXT`로 선언하는데, 어피니티가 달라지면 일부 값이 다르게 저장됩니다(`'123'`은 TEXT에서는 텍스트로 남지만 `DATETIME`의 NUMERIC 어피니티에서는 정수가 됩니다). `BOOLEAN` → `INTEGER`는 어피니티가 같으므로 NOTE를 달지 않습니다 |
 | 복합 외래 키 | 컬럼은 일반 컬럼으로 남기고, 마이그레이션으로 다시 만들어야 할 제약을 NOTE에 적습니다 |
 | 생성 대상이 아닌 테이블(제외됐거나 다른 스키마에 있는)을 참조하는 외래 키 | 존재하지 않는 클래스를 import하게 될 관계 대신 일반 컬럼으로 남깁니다 |
 | 기본 키가 아닌 컬럼을 참조하는 외래 키 | NOTE를 답니다. 스키마 생성은 항상 대상 테이블의 기본 키를 기준으로 제약을 만듭니다 |
@@ -341,9 +341,9 @@ code-first 출력에는 빠지면 안 되는 부분이 두 가지 있습니다.
 | `bigint`, `bigserial` | `bigint` | `BIGINT` | exact |
 | `smallint` | `int` | `INTEGER` | NOTE |
 | `real` | `float` | `REAL` | exact |
-| `double precision` | `float` | `REAL` | NOTE |
-| `numeric(p,s)` | `double` + `precision` / `scale` | `NUMERIC(p, s)` | exact |
-| `numeric`(제약 없음) | `double` | `NUMERIC(10, 2)` | NOTE |
+| `double precision` | `double` | `DOUBLE PRECISION` | exact |
+| `numeric(p,s)` | `decimal` + `precision` / `scale` | `NUMERIC(p, s)` | exact |
+| `numeric`(제약 없음) | `decimal` | `NUMERIC(10, 2)` | NOTE |
 | `boolean` | `boolean` | `BOOLEAN` | exact |
 | `character varying(n)` | `varchar` + `length` | `VARCHAR(n)` | exact |
 | `character varying`(길이 제한 없음) | `text` | `TEXT` | equivalent |
@@ -372,8 +372,8 @@ identity 컬럼(`GENERATED … AS IDENTITY`)과 `serial` 컬럼은 DB가 값을 
 | `tinyint`, `smallint`, `mediumint` | `int` | `INT` | NOTE |
 | `… unsigned` | `int` / `bigint` | `INT` / `BIGINT` | NOTE |
 | `float` | `float` | `FLOAT` | exact |
-| `double` | `float` | `FLOAT` | NOTE |
-| `decimal(p,s)` | `double` + `precision` / `scale` | `DECIMAL(p, s)` | exact |
+| `double` | `double` | `DOUBLE` | exact |
+| `decimal(p,s)` | `decimal` + `precision` / `scale` | `DECIMAL(p, s)` | exact |
 | `varchar(n)` / `char(n)` | `varchar` / `char` + `length` | `VARCHAR(n)` / `CHAR(n)` | exact |
 | `text` / `longtext` | `text` / `longtext` | `TEXT` / `LONGTEXT` | exact |
 | `tinytext` / `mediumtext` | `text` / `longtext` | `TEXT` / `LONGTEXT` | NOTE |
@@ -397,12 +397,13 @@ identity 컬럼(`GENERATED … AS IDENTITY`)과 `serial` 컬럼은 DB가 값을 
 | `INTEGER`, `INT` | `int` | `INTEGER` | exact |
 | `BIGINT` | `bigint` | `BIGINT` | exact |
 | `TINYINT`, `SMALLINT`, `BOOLEAN` | `int` / `boolean` | `INTEGER` | equivalent |
-| `REAL`, `DOUBLE`, `FLOAT` | `float` | `REAL` | exact |
+| `REAL`, `DOUBLE`, `FLOAT` | `double` | `REAL` | exact |
 | `VARCHAR(n)`, `TEXT(n)` | `varchar` + `length` | `TEXT(n)` | exact |
 | `CHAR(n)` | `char` + `length` | `TEXT(n)` | equivalent |
 | `TEXT`, `CLOB`, `VARCHAR` | `text` | `TEXT` | exact / equivalent |
 | `BLOB` | `blob` | `BLOB` | exact |
-| `DECIMAL`, `NUMERIC` | `double` | `REAL` | NOTE |
+| `DECIMAL(p,s)`, `NUMERIC(p,s)` | `decimal` + `precision` / `scale` | `NUMERIC(p, s)` | exact |
+| `DECIMAL`, `NUMERIC`(정밀도 없음) | `decimal` | `NUMERIC(10, 2)` | equivalent |
 | `DATETIME`, `TIMESTAMP`, `DATE` | `datetime` / `date` | `TEXT` | NOTE |
 | `JSON`, `UUID` | `json` / `uuid` | `TEXT` / `VARCHAR(36)` | NOTE |
 | 선언 타입 없음, 모르는 이름 | SQLite 어피니티 규칙을 따르고, 맞는 것이 없으면 `text` | | NOTE |

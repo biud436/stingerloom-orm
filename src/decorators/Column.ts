@@ -3,16 +3,19 @@ import { ReflectManager, Logger } from "../utils";
 import { ColumnMetadata, ColumnScanner } from "../scanner/ColumnScanner";
 import { getScannerInstance } from "../scanner/ScannerContainer";
 import type { BigintMode } from "../core/BigintColumnTransformer";
+import type { DecimalMode } from "../core/DecimalColumnTransformer";
 
 const columnLogger = new Logger("Column");
 
 /**
  * Built-in database-independent abstract column types.
  *
- * These are the 22 types that every driver supports out-of-the-box.
+ * These are the 21 types that every driver supports out-of-the-box.
  * Each DB Driver's `castType()` method converts these to actual database types.
  *
  * Examples:
+ * - `"double"` → MySQL: `DOUBLE`, PostgreSQL: `DOUBLE PRECISION`, SQLite: `REAL`
+ * - `"decimal"` → MySQL: `DECIMAL(p, s)`, PostgreSQL / SQLite: `NUMERIC(p, s)`
  * - `"datetime"` → MySQL: `DATETIME`, PostgreSQL: `TIMESTAMP`
  * - `"boolean"` → MySQL: `TINYINT(1)`, PostgreSQL: `BOOLEAN`
  * - `"blob"` → MySQL: `BLOB`, PostgreSQL: `BYTEA`
@@ -22,6 +25,7 @@ export type KnownColumnType =
   | "number"
   | "float"
   | "double"
+  | "decimal"
   /** Date */
   | "timestamp"
   | "timestamptz"
@@ -70,6 +74,7 @@ const KNOWN_COLUMN_TYPES: Readonly<Record<KnownColumnType, true>> = {
   number: true,
   float: true,
   double: true,
+  decimal: true,
   timestamp: true,
   timestamptz: true,
   date: true,
@@ -178,7 +183,13 @@ export interface ColumnOption {
    */
   generationStrategy?: "increment" | "uuid" | "uuid-v7";
 
+  /**
+   * Total digits of a `type: "decimal"` column (default 10). Only `decimal`
+   * takes precision and scale; `double` is a binary floating-point type and
+   * rejects them.
+   */
   precision?: number;
+  /** Digits after the decimal point of a `type: "decimal"` column (default 2). */
   scale?: number;
 
   /**
@@ -251,6 +262,22 @@ export interface ColumnOption {
    * balance!: string;
    */
   bigintMode?: BigintMode;
+
+  /**
+   * Entity-side representation of a `type: "decimal"` column.
+   *
+   * - `"number"` (default): a JS number. A stored value the number cannot
+   *   hold digit for digit throws `DECIMAL_PRECISION_LOSS` on read instead of
+   *   being rounded silently.
+   * - `"string"`: the decimal digits as text, exact.
+   *
+   * Only meaningful for `type: "decimal"`; ignored for other types.
+   *
+   * @example
+   * @Column({ type: "decimal", precision: 19, scale: 4, decimalMode: "string" })
+   * balance!: string;
+   */
+  decimalMode?: DecimalMode;
 }
 
 /**

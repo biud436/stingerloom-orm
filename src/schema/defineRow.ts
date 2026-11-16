@@ -163,6 +163,8 @@ export function defineRow<Cols extends RowColumns>(
           transformer: def.transformer,
           transform: def.transform,
           bigintMode: def.bigintMode,
+          decimalMode: def.decimalMode,
+          scale: def.scale,
         }),
       }),
     );

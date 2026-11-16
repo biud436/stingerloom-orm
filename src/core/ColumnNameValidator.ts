@@ -65,6 +65,7 @@ const SCALAR_COLUMN_TYPES: ReadonlySet<string> = new Set([
   "number",
   "float",
   "double",
+  "decimal",
   "bigint",
   "timestamp",
   "timestamptz",

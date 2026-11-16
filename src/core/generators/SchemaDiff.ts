@@ -302,9 +302,9 @@ function sqliteStorageToken(bare: string): string {
   // to read the column with safe integers (SqliteSafeIntegers), so it is not
   // folded into INTEGER even though the affinity is the same.
   if (bare === "BIGINT") return "BIGINT";
-  if (["REAL", "FLOAT", "DOUBLE", "NUMERIC", "DECIMAL"].includes(bare)) {
-    return "REAL";
-  }
+  if (["REAL", "FLOAT", "DOUBLE"].includes(bare)) return "REAL";
+  // `decimal` is declared NUMERIC(p, s): NUMERIC affinity, not REAL.
+  if (["NUMERIC", "DECIMAL"].includes(bare)) return "NUMERIC";
   return bare;
 }
 
@@ -661,6 +661,8 @@ export class SchemaDiff {
           data_type: parsed.type,
           is_nullable: row.notnull === 0 ? "YES" : "NO",
           character_maximum_length: parsed.length ?? null,
+          numeric_precision: parsed.precision ?? null,
+          numeric_scale: parsed.scale ?? null,
         };
       });
     }
@@ -707,12 +709,23 @@ export class SchemaDiff {
 
   /**
    * Parse SQLite type string to extract type and length.
-   * e.g. "VARCHAR(255)" → { type: "VARCHAR", length: 255 }
+   * e.g. "VARCHAR(255)" → { type: "VARCHAR", length: 255 },
+   * "NUMERIC(10, 2)" → { type: "NUMERIC", precision: 10, scale: 2 }
    */
   private parseSqliteTypeLength(typeStr: string): {
     type: string;
     length?: number;
+    precision?: number;
+    scale?: number;
   } {
+    const numeric = typeStr.match(/^(NUMERIC|DECIMAL)\s*\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)$/i);
+    if (numeric) {
+      return {
+        type: numeric[1].toUpperCase(),
+        precision: parseInt(numeric[2], 10),
+        scale: numeric[3] !== undefined ? parseInt(numeric[3], 10) : 0,
+      };
+    }
     const match = typeStr.match(/^(\w+)\((\d+)\)$/);
     if (match) {
       return { type: match[1], length: parseInt(match[2], 10) };
@@ -779,6 +792,7 @@ export class SchemaDiff {
         // INTEGER; identical affinity, so it is not a type change.
         BIGINT: ["BIGINT", "INTEGER", "INT", "INT8"],
         REAL: ["REAL", "FLOAT", "DOUBLE"],
+        NUMERIC: ["NUMERIC", "DECIMAL"],
         BLOB: ["BLOB", "BYTEA"],
       };
       const eAliases = sqliteAffinity[e];

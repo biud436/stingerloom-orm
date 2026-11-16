@@ -62,7 +62,8 @@ describe("MySqlColumnDefinitionBuilder", () => {
     it("timestamp → TIMESTAMP", () => expect(builder.castType("timestamp")).toBe("TIMESTAMP"));
     it("timestamptz → DATETIME", () => expect(builder.castType("timestamptz")).toBe("DATETIME"));
     it("float → FLOAT", () => expect(builder.castType("float")).toBe("FLOAT"));
-    it("double → DECIMAL($precision, $scale)", () => expect(builder.castType("double")).toBe("DECIMAL($precision, $scale)"));
+    it("double → DOUBLE", () => expect(builder.castType("double")).toBe("DOUBLE"));
+    it("decimal → DECIMAL($precision, $scale)", () => expect(builder.castType("decimal")).toBe("DECIMAL($precision, $scale)"));
     it("blob → BLOB", () => expect(builder.castType("blob")).toBe("BLOB"));
     it("text → TEXT", () => expect(builder.castType("text")).toBe("TEXT"));
     it("longtext → LONGTEXT", () => expect(builder.castType("longtext")).toBe("LONGTEXT"));
@@ -162,19 +163,19 @@ describe("MySqlColumnDefinitionBuilder", () => {
     });
 
     it("decimal with precision/scale", () => {
-      const option: ColumnOption = { type: "double", precision: 8, scale: 3, nullable: false };
+      const option: ColumnOption = { type: "decimal", precision: 8, scale: 3, nullable: false };
       const result = builder.buildColumnDef(option, ctx);
       expect(result).toContain("DECIMAL(8, 3)");
     });
 
     it("decimal default precision/scale", () => {
-      const option: ColumnOption = { type: "double", nullable: false };
+      const option: ColumnOption = { type: "decimal", nullable: false };
       const result = builder.buildColumnDef(option, ctx);
       expect(result).toContain("DECIMAL(10, 2)");
     });
 
     it("decimal precision > 65 throws", () => {
-      const option: ColumnOption = { type: "double", precision: 100, nullable: false };
+      const option: ColumnOption = { type: "decimal", precision: 100, nullable: false };
       expect(() => builder.buildColumnDef(option, ctx)).toThrow("65");
     });
 
@@ -233,7 +234,8 @@ describe("PostgresColumnDefinitionBuilder", () => {
     it("timestamp → TIMESTAMP", () => expect(builder.castType("timestamp")).toBe("TIMESTAMP"));
     it("timestamptz → TIMESTAMPTZ", () => expect(builder.castType("timestamptz")).toBe("TIMESTAMPTZ"));
     it("float → REAL", () => expect(builder.castType("float")).toBe("REAL"));
-    it("double → NUMERIC($precision, $scale)", () => expect(builder.castType("double")).toBe("NUMERIC($precision, $scale)"));
+    it("double → DOUBLE PRECISION", () => expect(builder.castType("double")).toBe("DOUBLE PRECISION"));
+    it("decimal → NUMERIC($precision, $scale)", () => expect(builder.castType("decimal")).toBe("NUMERIC($precision, $scale)"));
     it("blob → BYTEA", () => expect(builder.castType("blob")).toBe("BYTEA"));
     it("text → TEXT", () => expect(builder.castType("text")).toBe("TEXT"));
     it("longtext → TEXT", () => expect(builder.castType("longtext")).toBe("TEXT"));
@@ -309,13 +311,13 @@ describe("PostgresColumnDefinitionBuilder", () => {
     });
 
     it("decimal with precision/scale", () => {
-      const option: ColumnOption = { type: "double", precision: 12, scale: 4, nullable: false };
+      const option: ColumnOption = { type: "decimal", precision: 12, scale: 4, nullable: false };
       const result = builder.buildColumnDef(option, ctx);
       expect(result).toContain("NUMERIC(12, 4)");
     });
 
     it("decimal precision > 1000 throws", () => {
-      const option: ColumnOption = { type: "double", precision: 1500, nullable: false };
+      const option: ColumnOption = { type: "decimal", precision: 1500, nullable: false };
       expect(() => builder.buildColumnDef(option, ctx)).toThrow("1000");
     });
 
@@ -396,6 +398,7 @@ describe("SqliteColumnDefinitionBuilder", () => {
     it("bigint → BIGINT", () => expect(builder.castType("bigint")).toBe("BIGINT"));
     it("float → REAL", () => expect(builder.castType("float")).toBe("REAL"));
     it("double → REAL", () => expect(builder.castType("double")).toBe("REAL"));
+    it("decimal → NUMERIC($precision, $scale)", () => expect(builder.castType("decimal")).toBe("NUMERIC($precision, $scale)"));
     it("blob → BLOB", () => expect(builder.castType("blob")).toBe("BLOB"));
     it("uuid → VARCHAR(36)", () => expect(builder.castType("uuid")).toBe("VARCHAR(36)"));
   });

@@ -225,6 +225,8 @@ function getCachedColumnInfo(entityClass: MyClassConstructor<any>): CachedColumn
         transformer: col.transformer,
         transform: col.transform,
         bigintMode: col.options?.bigintMode,
+        decimalMode: col.options?.decimalMode,
+        scale: col.options?.scale,
       },
       entityName,
       key,

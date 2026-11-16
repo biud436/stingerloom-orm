@@ -128,6 +128,11 @@ export {
   normalizeBigintValue,
 } from "./core/BigintColumnTransformer";
 export {
+  DecimalMode,
+  DEFAULT_DECIMAL_MODE,
+  normalizeDecimalValue,
+} from "./core/DecimalColumnTransformer";
+export {
   alias,
   ArrayValidator,
   ColumnCondition,

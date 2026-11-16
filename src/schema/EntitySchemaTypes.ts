@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ColumnType, ColumnTransformer, KnownColumnType } from "../decorators/Column";
 import type { BigintMode } from "../core/BigintColumnTransformer";
+import type { DecimalMode } from "../core/DecimalColumnTransformer";
 import { GenerationStrategy } from "../decorators/PrimaryGeneratedColumn";
 import { ComputedColumnOption } from "../decorators/ComputedColumn";
 import { JsonIndexOptions } from "../decorators/JsonIndex";
@@ -61,6 +62,13 @@ export interface ColumnSchemaDef {
    * values beyond ±2^53), `"string"` or `"bigint"`.
    */
   bigintMode?: BigintMode;
+
+  /**
+   * Entity-side representation of a `type: "decimal"` column. Decorator-free
+   * equivalent of `@Column({ decimalMode })`: `"number"` (default, throws on
+   * a value a JS number cannot hold exactly) or `"string"`.
+   */
+  decimalMode?: DecimalMode;
 
   /**
    * One-way read transform (DB → entity).

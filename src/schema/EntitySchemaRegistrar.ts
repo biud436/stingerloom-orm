@@ -52,6 +52,7 @@ function columnTypeToDesignType(type: ColumnType): any {
     case "number":
     case "float":
     case "double":
+    case "decimal":
     case "bigint":
       return Number;
     case "boolean":
@@ -110,6 +111,7 @@ function resolveColumnOption(
     renamedFrom: def.renamedFrom,
     arrayElementType: def.arrayElementType,
     bigintMode: def.bigintMode,
+    decimalMode: def.decimalMode,
     generationStrategy: def.generationStrategy,
     transform: def.transform as any,
     transformer: def.transformer,

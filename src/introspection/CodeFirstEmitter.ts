@@ -115,6 +115,12 @@ function baseBuilder(field: ModelColumnField): string {
       return field.arrayElementType !== undefined
         ? `t.array(${lit(field.arrayElementType)})`
         : "t.array()";
+    case "decimal":
+      // decimal carries its precision and scale in the factory call.
+      if (field.precision === undefined) return "t.decimal()";
+      return field.scale !== undefined
+        ? `t.decimal(${field.precision}, ${field.scale})`
+        : `t.decimal(${field.precision})`;
     case "int":
     case "bigint":
     case "float":
@@ -150,7 +156,7 @@ function columnChain(field: ModelColumnField): string {
   ) {
     parts.push(`length(${field.length})`);
   }
-  if (field.precision !== undefined) {
+  if (field.precision !== undefined && field.columnType !== "decimal") {
     parts.push(`precision(${field.precision})`);
     if (field.scale !== undefined) parts.push(`scale(${field.scale})`);
   }

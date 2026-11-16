@@ -30,8 +30,8 @@ export class IntrospectionTypeMapper {
     FLOAT4: "float",
     "DOUBLE PRECISION": "double",
     FLOAT8: "double",
-    NUMERIC: "double",
-    DECIMAL: "double",
+    NUMERIC: "decimal",
+    DECIMAL: "decimal",
 
     // Boolean
     BOOLEAN: "boolean",
@@ -83,8 +83,8 @@ export class IntrospectionTypeMapper {
     FLOAT: "float",
     DOUBLE: "double",
     "DOUBLE PRECISION": "double",
-    NUMERIC: "double",
-    DECIMAL: "double",
+    NUMERIC: "decimal",
+    DECIMAL: "decimal",
 
     // Boolean (SQLite stores as 0/1 INTEGER but the declared type "BOOLEAN"
     // is honored)
@@ -123,8 +123,8 @@ export class IntrospectionTypeMapper {
     BIGINT: "bigint",
     FLOAT: "float",
     DOUBLE: "double",
-    DECIMAL: "double",
-    NUMERIC: "double",
+    DECIMAL: "decimal",
+    NUMERIC: "decimal",
 
     // Boolean (MySQL TINYINT(1) is typically boolean)
     // Note: TINYINT is mapped to boolean above
@@ -269,6 +269,7 @@ export class IntrospectionTypeMapper {
       case "int":
       case "float":
       case "double":
+      case "decimal":
       case "bigint":
         return "number";
       case "boolean":

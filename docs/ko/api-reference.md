@@ -626,7 +626,7 @@ interface ColumnOption {
 
 ```typescript
 type KnownColumnType =
-  | "varchar" | "char" | "int" | "number" | "float" | "double" | "bigint"
+  | "varchar" | "char" | "int" | "number" | "float" | "double" | "decimal" | "bigint"
   | "boolean" | "datetime" | "timestamp" | "timestamptz" | "date"
   | "text" | "longtext" | "blob" | "uuid"
   | "json" | "jsonb" | "enum" | "array";

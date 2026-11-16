@@ -150,14 +150,11 @@ export function candidates(t: CanonicalType): OrmColumnType[] {
     case "decimal":
       return [
         t.precision === null
-          ? { type: "double" }
-          : { type: "double", precision: t.precision, scale: t.scale ?? 0 },
+          ? { type: "decimal" }
+          : { type: "decimal", precision: t.precision, scale: t.scale ?? 0 },
       ];
     case "float":
-      // `double` is DECIMAL/NUMERIC on MySQL and PostgreSQL, so a double
-      // precision float keeps floating-point semantics as `float` and is
-      // reported, rather than turning into a fixed-point number.
-      return t.bytes === 4 ? [{ type: "float" }] : [{ type: "float" }, { type: "double" }];
+      return t.bytes === 4 ? [{ type: "float" }] : [{ type: "double" }, { type: "float" }];
     case "string":
       if (t.length === null) return [{ type: "text" }];
       return [{ type: t.fixed ? "char" : "varchar", length: t.length }];

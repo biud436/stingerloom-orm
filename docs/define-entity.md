@@ -103,7 +103,8 @@ Every field value must be a **called** builder. A value `defineEntity` does not 
 | `t.bigint({ mode: "string" })` / `t.bigint({ mode: "bigint" })` | `string` / `bigint` | `bigint` (lossless beyond ±2^53) |
 | `t.float()` / `t.double()` | `number` | `float` / `double` |
 | `t.number()` | `number` | `number` |
-| `t.decimal(precision?, scale?)` | `number` | `number` |
+| `t.decimal(precision?, scale?)` | `number` | `decimal` (exact, default `(10, 2)`) |
+| `t.decimal(precision, scale, { mode: "string" })` | `string` | `decimal` (read as exact digits) |
 | `t.varchar(length?)` | `string` | `varchar` |
 | `t.char(length?)` | `string` | `char` |
 | `t.text()` / `t.longtext()` | `string` | `text` / `longtext` |
@@ -117,6 +118,8 @@ Every field value must be a **called** builder. A value `defineEntity` does not 
 | `t.array<T>(elementType?)` | `T[]` | `array` (PostgreSQL `element[]`, default `TEXT[]`) |
 | `t.enum(["a", "b"])` | `"a" \| "b"` | `enum` |
 
+`t.decimal()` is the exact type for money and other values that must not drift by a rounding error, and `t.double()` the binary float for measurements. `t.decimal()` defaults to `decimalMode: "number"`: a stored value a JS number cannot hold exactly throws `DECIMAL_PRECISION_LOSS` on read instead of being rounded. Pass `{ mode: "string" }` as the third argument to read the exact digits; the inferred type follows. See [double and decimal Columns](./entities.md#double-and-decimal-columns).
+
 A realistic mix of types and the type it infers:
 
 ```typescript
@@ -124,7 +127,7 @@ export const Product = defineEntity("products", {
   id:          t.int().primary().generated(),
   name:        t.varchar(255),       // VARCHAR(255), required
   description: t.text(),             // TEXT (megabytes, not 255 chars)
-  price:       t.float(),           // FLOAT / REAL
+  price:       t.decimal(10, 2),    // DECIMAL(10, 2) / NUMERIC(10, 2), exact
   isAvailable: t.boolean(),         // TINYINT(1) / BOOLEAN
   releaseDate: t.datetime(),        // DATETIME / TIMESTAMP
   payload:     t.jsonb<{ kind: string; data: unknown }>(),
@@ -1071,7 +1074,7 @@ Adopt the builder API incrementally — new entities code-first, existing decora
 | Builder | Inferred TS type |
 | --- | --- |
 | `t.int()`, `t.integer()`, `t.bigint()`, `t.float()`, `t.double()`, `t.number()`, `t.decimal()` | `number` |
-| `t.bigint({ mode: "string" })` | `string` |
+| `t.bigint({ mode: "string" })`, `t.decimal(p, s, { mode: "string" })` | `string` |
 | `t.bigint({ mode: "bigint" })` | `bigint` |
 | `t.varchar()`, `t.char()`, `t.text()`, `t.longtext()`, `t.uuid()` | `string` |
 | `t.boolean()` | `boolean` |
@@ -1092,6 +1095,7 @@ Each abstract `ColumnType` is translated to a concrete database type by the driv
 | `int` / `number` | INT | INTEGER | INTEGER |
 | `float` | FLOAT | REAL | REAL |
 | `double` | DOUBLE | DOUBLE PRECISION | REAL |
+| `decimal` | DECIMAL(p, s) | NUMERIC(p, s) | NUMERIC(p, s) (NUMERIC affinity) |
 | `bigint` | BIGINT | BIGINT | BIGINT (INTEGER affinity) |
 | `boolean` | TINYINT(1) | BOOLEAN | INTEGER |
 | `datetime` | DATETIME | TIMESTAMP | TEXT |

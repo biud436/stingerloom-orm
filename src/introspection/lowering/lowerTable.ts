@@ -42,7 +42,7 @@ export interface LoweringContext {
 }
 
 const TIMESTAMP_TYPES = new Set<ColumnType>(["datetime", "timestamp", "timestamptz", "date"]);
-const NUMERIC_TYPES = new Set<ColumnType>(["int", "bigint", "float", "double", "number"]);
+const NUMERIC_TYPES = new Set<ColumnType>(["int", "bigint", "float", "double", "decimal", "number"]);
 
 /**
  * Lowers one table of the IR to the {@link EntityModel} both emitters print.

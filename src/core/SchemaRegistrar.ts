@@ -46,7 +46,7 @@ import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundErr
 import { EntityNotFound } from "../dialects/EntityNotFound";
 import type { CreateTableForeignKey, ISqlDriver } from "../dialects/SqlDriver";
 import { createColumnDefinitionBuilder } from "../dialects/ColumnDefinitionBuilder";
-import { assertColumnType } from "../dialects/BaseColumnDefinitionBuilder";
+import { assertColumnType, assertNumericOptions } from "../dialects/BaseColumnDefinitionBuilder";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { PrimaryKeyNotFoundError } from "../errors/PrimaryKeyNotFoundError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
@@ -313,6 +313,9 @@ export class SchemaRegistrar {
       /^(DATE|TIME|TIMESTAMP|DATETIME)/.test(t);
 
     if (isTextLike(cur) && isNumeric(next)) return true;
+    // An exact decimal becomes a binary float: values wider than a double's
+    // 15–17 significant digits are rounded, and none stay exact.
+    if (/^(DECIMAL|NUMERIC)/.test(cur) && /^(DOUBLE|FLOAT|REAL)/.test(next)) return true;
     if (isDateLike(cur) && isNumeric(next)) return true;
     if (isTextLike(cur) && isDateLike(next)) return true;
 
@@ -1837,7 +1840,7 @@ export class SchemaRegistrar {
 
   /**
    * Throws for a column type that is neither built in nor registered with
-   * `ColumnTypeRegistry`. Like {@link assertRelationActions}, it is a
+   * `ColumnTypeRegistry`, and for precision or scale on a `double`. Like {@link assertRelationActions}, it is a
    * mistake in the entity rather than a failing statement, so it is checked
    * before the entity's DDL and is not downgraded by `continueOnError`.
    */
@@ -1848,6 +1851,7 @@ export class SchemaRegistrar {
     for (const col of metadata.columns) {
       const where = `${table}.${col.name}`;
       assertColumnType(col.options?.type ?? "varchar", where);
+      if (col.options) assertNumericOptions(col.options, where);
       if (col.options?.arrayElementType) {
         assertColumnType(col.options.arrayElementType, where);
       }

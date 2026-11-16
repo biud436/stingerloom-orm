@@ -34,7 +34,7 @@ describe("IntrospectionTypeMapper", () => {
       ["BYTEA", "blob"],
       ["REAL", "float"],
       ["FLOAT4", "float"],
-      ["NUMERIC", "double"],
+      ["NUMERIC", "decimal"],
       ["DOUBLE PRECISION", "double"],
       ["CHARACTER", "char"],
       ["BPCHAR", "char"],
@@ -71,7 +71,7 @@ describe("IntrospectionTypeMapper", () => {
       ["ENUM", "enum"],
       ["FLOAT", "float"],
       ["DOUBLE", "double"],
-      ["DECIMAL", "double"],
+      ["DECIMAL", "decimal"],
     ];
 
     it.each(cases)("should map %s to %s", (dbType, expected) => {
@@ -91,13 +91,13 @@ describe("IntrospectionTypeMapper", () => {
       ["TEXT", "text"],
       ["VARCHAR", "varchar"],
       ["VARCHAR(255)", "varchar"],
-      ["DECIMAL(10,2)", "double"],
+      ["DECIMAL(10,2)", "decimal"],
       ["BLOB", "blob"],
       ["BOOLEAN", "boolean"],
       ["DATETIME", "datetime"],
       ["DATE", "date"],
       ["REAL", "float"],
-      ["NUMERIC", "double"],
+      ["NUMERIC", "decimal"],
       ["JSON", "json"],
     ];
 
@@ -483,7 +483,7 @@ describe("EntityCodeBuilder", () => {
 
       const code = builder.build("payments", columns, ["id"], [], "postgres");
 
-      expect(code).toContain('@Column({ type: "double", precision: 12, scale: 2 })');
+      expect(code).toContain('@Column({ type: "decimal", precision: 12, scale: 2 })');
     });
   });
 
@@ -1139,7 +1139,7 @@ describe("IntrospectionGenerator", () => {
           readings: {
             columns: [
               pgCol("id", "integer"),
-              pgCol("value", "double precision"),
+              pgCol("value", "smallint"),
               pgCol("peer", "inet", { not_null: false }),
             ],
             pk: ["id"],
@@ -1149,7 +1149,7 @@ describe("IntrospectionGenerator", () => {
       );
       const [reading] = await generator.generate();
       expect(reading.notes).toEqual([
-        'value: The database declares "double precision", but this entity creates "REAL" — synchronizing it would change the column.',
+        'value: The database declares "smallint", but this entity creates "INTEGER" — synchronizing it would change the column.',
         'peer: No ORM column type matches "inet" — mapped to "text", which is created as "TEXT". Synchronizing this entity will NOT recreate the original type; register a custom column type or edit this column by hand.',
       ]);
     });

@@ -1444,7 +1444,7 @@ describe("SchemaDiff — Phase 2 improvements", () => {
       @PrimaryGeneratedColumn()
       id!: number;
 
-      @Column({ type: "double", precision: 10, scale: 2 })
+      @Column({ type: "decimal", precision: 10, scale: 2 })
       price!: number;
     }
 

@@ -79,6 +79,8 @@ export class PostgresColumnDefinitionBuilder extends BaseColumnDefinitionBuilder
       case "float":
         return "REAL";
       case "double":
+        return "DOUBLE PRECISION";
+      case "decimal":
         return "NUMERIC($precision, $scale)";
       case "blob":
         return "BYTEA";
