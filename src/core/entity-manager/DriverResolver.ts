@@ -74,6 +74,6 @@ export async function resolveDriverPair(
       };
     }
     default:
-      throw new NotSupportedDatabaseTypeError();
+      throw new NotSupportedDatabaseTypeError(dbType);
   }
 }

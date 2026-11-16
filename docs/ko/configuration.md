@@ -259,6 +259,25 @@ await em.register({
 
 두 필드 모두 선택 사항입니다. 생략한 필드는 기본값을 쓰므로 `retry: {}`는 1000ms부터 시작해 세 번 시도합니다.
 
+### 실패한 시도로 치는 경우
+
+시도마다 서버에 연결을 하나 엽니다. 서버가 내려가 있거나, 로그인을 거부하거나, 데이터베이스가 없으면 그 시도는 실패합니다. 마지막 시도까지 실패하면 `register()`는 코드가 `ORM_CONNECTION_FAILED`인 `OrmError`를 던지고, `cause`에 드라이버 원본 에러를 담습니다. 그래서 실패 원인을 구분할 수 있습니다:
+
+```typescript
+try {
+  await em.register(options);
+} catch (e) {
+  if (e instanceof OrmError && e.code === OrmErrorCode.CONNECTION_FAILED) {
+    const driverCode = (e.cause as { code?: string } | undefined)?.code;
+    // "ECONNREFUSED"   서버가 연결을 받지 않음 (모든 데이터베이스)
+    // "28P01"          비밀번호 틀림 (PostgreSQL), "ER_ACCESS_DENIED_ERROR" (MySQL)
+    // "3D000"          없는 데이터베이스 (PostgreSQL), "ER_BAD_DB_ERROR" (MySQL)
+  }
+}
+```
+
+`retry`가 없으면 첫 실패에서 같은 방식으로 던집니다. 이전 버전의 `register()`는 직접 연결을 열지 않아서, 서버가 내려가 있어도 성공했고 `retry`는 한 번도 재시도하지 않았어요. 실패는 대신 첫 쿼리에서 돌아왔습니다.
+
 ### 지수 백오프 공식
 
 재시도 간 대기 시간은 일정하지 않아요. 매번 두 배로 늘어나요:

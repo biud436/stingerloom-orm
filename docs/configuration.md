@@ -259,6 +259,25 @@ await em.register({
 
 Both fields are optional: a field left out takes its default, so `retry: {}` makes three attempts starting at 1000ms.
 
+### What counts as a failed attempt
+
+Each attempt opens one connection to the server. A server that is down, a login it refuses and a database that does not exist all fail the attempt. Once the last attempt has failed, `register()` throws an `OrmError` with code `ORM_CONNECTION_FAILED` whose `cause` is the driver's own error, so you can tell the failures apart:
+
+```typescript
+try {
+  await em.register(options);
+} catch (e) {
+  if (e instanceof OrmError && e.code === OrmErrorCode.CONNECTION_FAILED) {
+    const driverCode = (e.cause as { code?: string } | undefined)?.code;
+    // "ECONNREFUSED"   server not accepting connections (any database)
+    // "28P01"          wrong password (PostgreSQL), "ER_ACCESS_DENIED_ERROR" (MySQL)
+    // "3D000"          unknown database (PostgreSQL), "ER_BAD_DB_ERROR" (MySQL)
+  }
+}
+```
+
+Without `retry`, the first failure throws the same way. Earlier versions opened no connection of their own in `register()`, so it succeeded against a server that was down, `retry` never retried, and the failure came back from the first query instead.
+
 ### The exponential backoff formula
 
 The wait time between retries is not constant. It doubles each time:

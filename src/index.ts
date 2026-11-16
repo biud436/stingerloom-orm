@@ -706,7 +706,7 @@ export {
   NotSupportedDatabaseTypeError,
 } from "./errors/NotSupportedDatabaseTypeError";
 export { OptimisticLockError } from "./errors/OptimisticLockError";
-export { OrmError } from "./errors/OrmError";
+export { OrmError, OrmErrorOptions } from "./errors/OrmError";
 export { OrmErrorCode } from "./errors/OrmErrorCode";
 export { PrimaryKeyNotFoundError } from "./errors/PrimaryKeyNotFoundError";
 export { QueryTimeoutError } from "./errors/QueryTimeoutError";

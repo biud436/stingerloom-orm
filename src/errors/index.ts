@@ -15,7 +15,7 @@ export { Exception } from "./Exception";
 export { InvalidQueryError } from "./InvalidQueryError";
 export { NotSupportedDatabaseTypeError } from "./NotSupportedDatabaseTypeError";
 export { OptimisticLockError } from "./OptimisticLockError";
-export { OrmError } from "./OrmError";
+export { OrmError, OrmErrorOptions } from "./OrmError";
 export { OrmErrorCode } from "./OrmErrorCode";
 export { PrimaryKeyNotFoundError } from "./PrimaryKeyNotFoundError";
 export { QueryTimeoutError } from "./QueryTimeoutError";

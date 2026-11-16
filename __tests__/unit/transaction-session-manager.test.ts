@@ -111,6 +111,23 @@ describe("TransactionSessionManager", () => {
       await expect(session.connect()).rejects.toThrow(DatabaseConnectionFailedError);
     });
 
+    it("wraps a driver error as CONNECTION_FAILED and keeps it as the cause", async () => {
+      const driverError = Object.assign(new Error("timeout exceeded when trying to connect"), { code: "ETIMEDOUT" });
+      mockGetConnection.mockRejectedValueOnce(driverError);
+
+      const error = await session.connect().catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(DatabaseConnectionFailedError);
+      expect(error).toMatchObject({ code: OrmErrorCode.CONNECTION_FAILED, cause: driverError });
+    });
+
+    it("throws an OrmError from the connection lookup as it is", async () => {
+      const notConnected = new DatabaseNotConnectedError();
+      mockGetConnection.mockRejectedValueOnce(notConnected);
+
+      await expect(session.connect()).rejects.toBe(notConnected);
+    });
+
     it("should create PostgresDataSource for postgres type", async () => {
       dbInstance.type = "postgres";
       await session.connect();
@@ -137,7 +154,10 @@ describe("TransactionSessionManager", () => {
 
     it("should throw for unsupported database type", async () => {
       dbInstance.type = "oracle";
-      await expect(session.connect()).rejects.toThrow(DatabaseConnectionFailedError);
+      const error = await session.connect().catch((e: unknown) => e);
+
+      expect(error).not.toBeInstanceOf(DatabaseConnectionFailedError);
+      expect(error).toMatchObject({ code: OrmErrorCode.UNSUPPORTED_DATABASE });
     });
   });
 

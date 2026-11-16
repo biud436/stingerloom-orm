@@ -1161,70 +1161,111 @@ class IntrospectionTypeMapper {
 
 ## Errors
 
-All ORM errors extend `OrmError`, which includes an optional `suggestion` field with an actionable fix hint. This helps you diagnose problems without consulting documentation:
+Every error the ORM throws is an `OrmError`. It carries a `code` from `OrmErrorCode`, a `suggestion` (a fix hint, or `null`) that is also appended to `message` as a trailing `Suggestion:` line, and a `cause` when it wraps another error. Driver errors from the statements themselves (a duplicate key, a syntax error) are not wrapped: they reach you as the driver threw them.
 
 ```typescript
 try {
   await em.find(UnregisteredEntity);
 } catch (e) {
   if (e instanceof OrmError) {
-    console.error(e.message);      // "Entity metadata not found for UnregisteredEntity"
-    console.error(e.suggestion);   // "Did you register the entity in the entities array?"
-    console.error(e.code);         // "ORM_ENTITY_METADATA_NOT_FOUND"
+    console.error(e.code);       // "ORM_ENTITY_METADATA_NOT_FOUND"
+    console.error(e.message);    // 'Entity metadata for "UnregisteredEntity" does not exist. …\nSuggestion: Decorate UnregisteredEntity with @Entity() …'
+    console.error(e.suggestion); // 'Decorate UnregisteredEntity with @Entity() …' (the same hint, without the prefix)
   }
 }
 ```
 
-`ValidationError` additionally carries `actual` and `expected` fields for quick diagnosis:
+`ValidationError` additionally carries `actual` and `expected`. `actual` is the measured value: the length for `@MinLength` / `@MaxLength`, the value itself for `@Min` / `@Max`.
 
 ```typescript
 try {
   await em.save(User, { name: "A" }); // @MinLength(2) fails
 } catch (e) {
   if (e instanceof ValidationError) {
-    console.error(e.message);    // "name must be at least 2 characters long"
-    console.error(e.actual);     // "A"
-    console.error(e.expected);   // "minLength: 2"
+    console.error(e.message);  // 'name must be at least 2 characters long (actual: 1, expected: 2)\nSuggestion: Check the "name" field — it failed the "minLength" validation.'
+    console.error(e.actual);   // 1
+    console.error(e.expected); // 2
   }
 }
 ```
 
-| Error | Description |
-|-------|-------------|
-| `OrmError` | Base ORM error (includes `code`, `message`, and optional `suggestion`) |
-| `ValidationError` | Validation failure (includes `actual` and `expected` fields) |
-| `InvalidQueryError` | Invalid query (includes optional `suggestion` for fix hints) |
-| `EntityNotFoundError` | Entity not found |
-| `EntityMetadataNotFoundError` | Metadata not found |
-| `PrimaryKeyNotFoundError` | PK not found |
-| `DeleteWithoutConditionsError` | Delete without conditions |
-| `QueryTimeoutError` | Query timeout |
-| `TransactionError` | Transaction error |
-| `DatabaseNotConnectedError` | DB not connected |
-| `DatabaseConnectionFailedError` | DB connection failed |
-| `NotSupportedDatabaseTypeError` | Unsupported DB type |
+`cause` holds the driver error behind `ORM_CONNECTION_FAILED`, `ORM_SCHEMA_SYNC_FAILED` and `ORM_QUERY_TIMEOUT`, and the original error behind `ORM_TRANSACTION_ROLLBACK_FAILED`, so its own fields stay readable: `(e.cause as { code?: string }).code` is `"ECONNREFUSED"`, a PostgreSQL SQLSTATE such as `"28P01"`, or a MySQL code such as `"ER_BAD_DB_ERROR"` ([which failures fail `register()`](./configuration.md#what-counts-as-a-failed-attempt)).
+
+| Error | Code | Thrown when |
+|-------|------|-------------|
+| `OrmError` | any | Base class; also thrown directly with codes that have no subclass |
+| `ValidationError` | `ORM_VALIDATION_FAILED` | A validation decorator rejects a value (includes `actual` and `expected`) |
+| `InvalidQueryError` | `ORM_INVALID_QUERY` | A query option names an unknown column or is malformed |
+| `EntityNotFoundError` | `ORM_ENTITY_NOT_FOUND` | `findOneOrFail()` and similar find no row |
+| `EntityMetadataNotFoundError` | `ORM_ENTITY_METADATA_NOT_FOUND` | The class is not an entity, or not registered on the connection |
+| `PrimaryKeyNotFoundError` | `ORM_PRIMARY_KEY_NOT_FOUND` | The operation needs a primary key the entity does not declare |
+| `DeleteWithoutConditionsError` | `ORM_DELETE_WITHOUT_CONDITIONS` | A delete runs with empty conditions, which would remove every row |
+| `OptimisticLockError` | `ORM_OPTIMISTIC_LOCK_FAILED` | A `@Version` check finds the row changed |
+| `AdvisoryLockError` | `ORM_ADVISORY_LOCK_FAILED` | The migration or seeder lock is not acquired within its timeout |
+| `UnsupportedFeatureError` | `ORM_UNSUPPORTED_OPERATION` | The connected database version lacks a feature a DDL statement needs |
+| `QueryTimeoutError` | `ORM_QUERY_TIMEOUT` | PostgreSQL or MySQL/MariaDB cancels a read that ran past `timeout` / `queryTimeout`; the driver error is `cause` |
+| `DatabaseNotConnectedError` | `ORM_NOT_CONNECTED` | Nothing is registered under the connection name, e.g. a query before `register()` |
+| `DatabaseConnectionFailedError` | `ORM_CONNECTION_FAILED` | A query cannot get a connection (server down, pool exhausted); the driver error is `cause`. Also has `status: 500` |
+| `NotSupportedDatabaseTypeError` | `ORM_UNSUPPORTED_DATABASE` | `type` names a database the ORM has no driver for. Also has `status: 500` |
+| `TransactionError` | `ORM_TRANSACTION_FAILED` | Exported, but the ORM does not throw it. A rollback that fails is an `OrmError` with `ORM_TRANSACTION_ROLLBACK_FAILED` |
+
+`register()` reports a connection it cannot open as an `OrmError` with `ORM_CONNECTION_FAILED` too. `DatabaseConnectionFailedError` and `NotSupportedDatabaseTypeError` used to extend a separate `Exception` class and had no `code`; `Exception` is still exported, but no ORM error extends it.
 
 ### OrmErrorCode
 
 ```typescript
 enum OrmErrorCode {
+  // Connection
   CONNECTION_FAILED = "ORM_CONNECTION_FAILED",
   NOT_CONNECTED = "ORM_NOT_CONNECTED",
   UNSUPPORTED_DATABASE = "ORM_UNSUPPORTED_DATABASE",
+  // Entity
   ENTITY_NOT_FOUND = "ORM_ENTITY_NOT_FOUND",
   ENTITY_METADATA_NOT_FOUND = "ORM_ENTITY_METADATA_NOT_FOUND",
   PRIMARY_KEY_NOT_FOUND = "ORM_PRIMARY_KEY_NOT_FOUND",
+  // Query
   INVALID_QUERY = "ORM_INVALID_QUERY",
   DELETE_WITHOUT_CONDITIONS = "ORM_DELETE_WITHOUT_CONDITIONS",
   QUERY_TIMEOUT = "ORM_QUERY_TIMEOUT",
+  QUERY_ERROR = "ORM_QUERY_ERROR",
+  BIGINT_PRECISION_LOSS = "ORM_BIGINT_PRECISION_LOSS",
+  DECIMAL_PRECISION_LOSS = "ORM_DECIMAL_PRECISION_LOSS",
+  MISSING_REQUIRED_COLUMNS = "ORM_MISSING_REQUIRED_COLUMNS",
+  MISSING_PLACEHOLDER = "ORM_MISSING_PLACEHOLDER",
+  // Transaction
   TRANSACTION_FAILED = "ORM_TRANSACTION_FAILED",
   TRANSACTION_ROLLBACK_FAILED = "ORM_TRANSACTION_ROLLBACK_FAILED",
+  INVALID_SAVEPOINT_NAME = "ORM_INVALID_SAVEPOINT_NAME",
+  // Locking
+  ADVISORY_LOCK_FAILED = "ORM_ADVISORY_LOCK_FAILED",
+  OPTIMISTIC_LOCK_FAILED = "ORM_OPTIMISTIC_LOCK_FAILED",
+  // Validation
   VALIDATION_FAILED = "ORM_VALIDATION_FAILED",
+  VALIDATION_ERROR = "ORM_VALIDATION_ERROR",
+  // Constraint violations: declared, but the ORM does not produce them —
+  // a constraint violation reaches you as the driver's error
   UNIQUE_VIOLATION = "ORM_UNIQUE_VIOLATION",
   FK_VIOLATION = "ORM_FK_VIOLATION",
+  // Unsupported operation
+  UNSUPPORTED_OPERATION = "ORM_UNSUPPORTED_OPERATION",
+  // Configuration, entity loading and optional dependencies
+  INVALID_CONFIG = "ORM_INVALID_CONFIG",
+  ENTITY_GLOB_NO_MATCH = "ORM_ENTITY_GLOB_NO_MATCH",
+  ENTITY_GLOB_LOAD_FAILED = "ORM_ENTITY_GLOB_LOAD_FAILED",
+  MISSING_DEPENDENCY = "ORM_MISSING_DEPENDENCY",
+  // Plugins
   PLUGIN_DEPENDENCY_MISSING = "ORM_PLUGIN_DEPENDENCY_MISSING",
   PLUGIN_CONFLICT = "ORM_PLUGIN_CONFLICT",
   BUFFER_NOT_INSTALLED = "ORM_BUFFER_NOT_INSTALLED",
+  // Schema
+  SCHEMA_ERROR = "ORM_SCHEMA_ERROR",
+  SCHEMA_SYNC_FAILED = "ORM_SCHEMA_SYNC_FAILED",
+  SCHEMA_SYNC_DESTRUCTIVE_CHANGE = "ORM_SCHEMA_SYNC_DESTRUCTIVE_CHANGE",
+  // Multi-tenancy
+  MISSING_TENANT_CONTEXT = "ORM_MISSING_TENANT_CONTEXT",
+  TENANT_MISMATCH = "ORM_TENANT_MISMATCH",
+  CROSS_TENANT_TRANSACTION = "ORM_CROSS_TENANT_TRANSACTION",
+  TENANT_RESOLVER_MISSING = "ORM_TENANT_RESOLVER_MISSING",
 }
 ```
 

@@ -70,7 +70,8 @@ export class TransactionSessionManager extends IQueryEngine {
   /**
    * Establishes a connection to the database and initializes the data source.
    *
-   * @throws {DatabaseConnectionFailedError} If the connection to the database fails.
+   * @throws {DatabaseConnectionFailedError} If the driver cannot hand out a connection.
+   * @throws {DatabaseNotConnectedError} If nothing is registered under the connection name.
    */
   public async connect(connectionName?: string) {
     this.registeredConnection = connectionName ?? "default";
@@ -86,7 +87,7 @@ export class TransactionSessionManager extends IQueryEngine {
 
       await this.dataSource.createConnection();
     } catch (error: unknown) {
-      throw new DatabaseConnectionFailedError(error);
+      throw connectionFailure(error);
     }
   }
 
@@ -114,7 +115,7 @@ export class TransactionSessionManager extends IQueryEngine {
       this.dataSource = await this.createDataSource(dbType, connector);
       await this.dataSource.createConnection();
     } catch (error: unknown) {
-      throw new DatabaseConnectionFailedError(error);
+      throw connectionFailure(error);
     }
   }
 
@@ -143,7 +144,7 @@ export class TransactionSessionManager extends IQueryEngine {
       await this.dataSource.createConnection();
     } catch (error: unknown) {
       await this.closeOwnedConnector();
-      throw new DatabaseConnectionFailedError(error);
+      throw connectionFailure(error);
     }
   }
 
@@ -377,4 +378,13 @@ export class TransactionSessionManager extends IQueryEngine {
       await this.closeOwnedConnector();
     }
   }
+}
+
+/**
+ * What a failed connect throws: an {@link OrmError} as it is — it already
+ * names the problem (`NOT_CONNECTED` before register(),
+ * `UNSUPPORTED_DATABASE`) — and a driver error wrapped, kept as its cause.
+ */
+function connectionFailure(error: unknown): OrmError {
+  return error instanceof OrmError ? error : new DatabaseConnectionFailedError(error);
 }

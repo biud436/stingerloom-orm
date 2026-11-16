@@ -88,6 +88,8 @@ export class MySqlConnector extends IConnector {
 
       this.pool = pool;
 
+      await this.checkOutOneConnection(pool);
+
       // Detect the server version (validated `versionOverride` wins).
       this._dbVersion = options.versionOverride
         ? DbVersion.parse(options.versionOverride)
@@ -101,8 +103,25 @@ export class MySqlConnector extends IConnector {
       throw new OrmError(
         OrmErrorCode.CONNECTION_FAILED,
         `Failed to connect to MySQL. ${e}`,
-        "Check that the MySQL server is running and reachable",
+        "Check that the MySQL server is running and reachable, and that host, port, username, password and database are right",
+        { cause: e },
       );
+    }
+  }
+
+  /**
+   * Opens one connection and hands it back, so a server that is down or
+   * refuses the login fails connect() — where `retry` retries it — and not
+   * every query after it. On failure the pool is ended: a retry builds a
+   * new one.
+   */
+  private async checkOutOneConnection(pool: Pool): Promise<void> {
+    try {
+      (await this.acquireRawConnection()).release();
+    } catch (e) {
+      if (this.pool === pool) this.pool = undefined;
+      await new Promise<void>((resolve) => pool.end(() => resolve()));
+      throw e;
     }
   }
 

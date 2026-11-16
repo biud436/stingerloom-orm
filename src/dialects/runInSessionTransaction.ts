@@ -48,8 +48,9 @@ export function runInSessionTransaction<R>(
           const combined = new OrmError(
             OrmErrorCode.TRANSACTION_ROLLBACK_FAILED,
             `Transaction failed and rollback also failed: ${original.message}`,
+            undefined,
+            { cause: original },
           );
-          (combined as any).cause = original;
           (combined as any).rollbackError = rollbackError;
           throw combined;
         }

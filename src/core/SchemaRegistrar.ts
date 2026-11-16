@@ -258,6 +258,7 @@ export class SchemaRegistrar {
       OrmErrorCode.SCHEMA_SYNC_FAILED,
       `[sync] ${context}: ${msg}`,
       "synchronize.continueOnError is false — fix the failing DDL or re-enable continueOnError to downgrade DDL failures to warnings.",
+      { cause: err },
     );
   }
 
@@ -947,6 +948,7 @@ export class SchemaRegistrar {
         OrmErrorCode.SCHEMA_SYNC_FAILED,
         `[sync] Could not compare the entities with the existing tables, so no column change was applied: ${msg}`,
         "Fix the cause above, or set synchronize to false and apply schema changes with migrations.",
+        { cause: err },
       );
     }
 
