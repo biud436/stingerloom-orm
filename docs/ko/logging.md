@@ -336,7 +336,7 @@ const users = await em.find(User, {
 });
 ```
 
-타임아웃이 발생하면 원본 SQL과 타임아웃 값이 포함된 `QueryTimeoutError`가 throw돼요.
+타임아웃이 발생하면 `QueryTimeoutError`가 throw됩니다. 메시지에 타임아웃 값이 들어가고, 취소를 알린 드라이버 에러는 `cause`에 담깁니다.
 
 ### 데이터베이스 레벨에서의 동작
 

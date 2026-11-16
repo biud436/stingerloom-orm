@@ -336,7 +336,7 @@ const users = await em.find(User, {
 });
 ```
 
-When the timeout fires, a `QueryTimeoutError` is thrown with the original SQL and the timeout value.
+When the timeout fires, a `QueryTimeoutError` is thrown. Its message names the timeout, and the driver's error that reported the cancellation is its `cause`.
 
 ### What happens at the database level
 

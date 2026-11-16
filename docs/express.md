@@ -247,10 +247,10 @@ Express 5 forwards rejected async handlers to the error middleware automatically
 // middleware/error-handler.ts
 import {
   OrmError,
+  OrmErrorCode,
   EntityNotFoundError,
   OptimisticLockError,
   ValidationError,
-  DatabaseNotConnectedError,
 } from "@stingerloom/orm";
 import type { NextFunction, Request, Response } from "express";
 
@@ -287,7 +287,11 @@ export function errorHandler(
   if (isForeignKeyViolation(err)) {
     return res.status(409).json({ error: "referenced record is missing or still in use" });
   }
-  if (err instanceof DatabaseNotConnectedError) {
+  if (
+    err instanceof OrmError &&
+    (err.code === OrmErrorCode.NOT_CONNECTED || err.code === OrmErrorCode.CONNECTION_FAILED)
+  ) {
+    // Not registered yet, or no connection to be had: the server is down or the pool is exhausted.
     return res.status(503).json({ error: "database unavailable" });
   }
   if (err instanceof OrmError) {
@@ -304,10 +308,10 @@ export function errorHandler(
 Register it last, after all routers: `app.use(errorHandler)`.
 
 ::: warning Constraint violations are not normalized
-The ORM does **not** translate driver constraint errors into its own error classes. A duplicate key reaches your handler as a raw `mysql2` / `pg` / `better-sqlite3` error, which is why the middleware above sniffs driver codes. Two related traps: `OrmErrorCode.UNIQUE_VIOLATION` and `FK_VIOLATION` exist in the enum but nothing ever produces them, and the exported `QueryTimeoutError` / `TransactionError` classes are likewise never thrown — a query timeout surfaces as the driver's own timeout error. Do not write `catch (e) { if (e instanceof QueryTimeoutError) ... }` and expect it to fire.
+The ORM does **not** translate driver constraint errors into its own error classes. A duplicate key reaches your handler as a raw `mysql2` / `pg` / `better-sqlite3` error, which is why the middleware above sniffs driver codes. Two related traps: `OrmErrorCode.UNIQUE_VIOLATION` and `FK_VIOLATION` exist in the enum but nothing ever produces them, and the exported `TransactionError` class is never thrown either. `QueryTimeoutError` is thrown: when a `timeout` or `queryTimeout` makes PostgreSQL or MySQL/MariaDB cancel a read (`find()` and the other read methods), with the driver's error as `cause`. SQLite has no statement timeout, so it never throws one there.
 :::
 
-Two errors sit outside the `OrmError` hierarchy entirely — `DatabaseConnectionFailedError` and `NotSupportedDatabaseTypeError` extend a separate `Exception` base with a `status` field. The final `console.error(err)` fallback above catches them.
+Every error the ORM itself throws is an `OrmError`. A query that cannot get a connection throws `DatabaseConnectionFailedError` (code `ORM_CONNECTION_FAILED`) with the driver's error as `cause`, which the 503 branch above handles. Earlier versions threw it as a plain `Error` with no `code`, and a query before `register()` came back wrapped in it instead of as `DatabaseNotConnectedError`. The final `console.error(err)` fallback is for everything else: raw driver errors and your own.
 
 Without an error middleware, Express's default handler returns an HTML page that includes the stack trace — fine in development, not something to ship.
 

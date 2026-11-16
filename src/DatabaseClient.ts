@@ -110,7 +110,7 @@ export class DatabaseClient {
         return new SqliteConnector();
       }
       default:
-        throw new NotSupportedDatabaseTypeError();
+        throw new NotSupportedDatabaseTypeError(type);
     }
   }
 

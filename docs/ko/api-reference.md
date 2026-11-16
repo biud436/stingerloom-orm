@@ -1159,70 +1159,111 @@ class IntrospectionTypeMapper {
 
 ## Errors
 
-모든 ORM 에러는 `OrmError`를 상속하고, `suggestion` 필드에 해결 힌트가 포함될 수 있어요. 문서를 찾아보지 않아도 문제를 진단할 수 있어요:
+ORM이 던지는 에러는 모두 `OrmError`입니다. `OrmErrorCode`의 `code`, 해결 힌트인 `suggestion`(없으면 `null`), 다른 에러를 감쌀 때의 `cause`를 담습니다. `suggestion`은 `message` 끝에도 `Suggestion:` 줄로 붙습니다. 문장 자체에서 난 드라이버 에러(중복 키, 문법 오류 등)는 감싸지 않고 드라이버가 던진 그대로 올라옵니다.
 
 ```typescript
 try {
   await em.find(UnregisteredEntity);
 } catch (e) {
   if (e instanceof OrmError) {
-    console.error(e.message);      // "Entity metadata not found for UnregisteredEntity"
-    console.error(e.suggestion);   // "Did you register the entity in the entities array?"
-    console.error(e.code);         // "ORM_ENTITY_METADATA_NOT_FOUND"
+    console.error(e.code);       // "ORM_ENTITY_METADATA_NOT_FOUND"
+    console.error(e.message);    // 'Entity metadata for "UnregisteredEntity" does not exist. …\nSuggestion: Decorate UnregisteredEntity with @Entity() …'
+    console.error(e.suggestion); // 'Decorate UnregisteredEntity with @Entity() …' (같은 힌트, 접두어 없이)
   }
 }
 ```
 
-`ValidationError`는 빠른 진단을 위해 `actual`과 `expected` 필드도 함께 제공해요:
+`ValidationError`는 `actual`과 `expected`도 담습니다. `actual`은 측정한 값입니다. `@MinLength` / `@MaxLength`는 길이, `@Min` / `@Max`는 값 자체예요.
 
 ```typescript
 try {
-  await em.save(User, { name: "A" }); // @MinLength(2) fails
+  await em.save(User, { name: "A" }); // @MinLength(2) 실패
 } catch (e) {
   if (e instanceof ValidationError) {
-    console.error(e.message);    // "name must be at least 2 characters long"
-    console.error(e.actual);     // "A"
-    console.error(e.expected);   // "minLength: 2"
+    console.error(e.message);  // 'name must be at least 2 characters long (actual: 1, expected: 2)\nSuggestion: Check the "name" field — it failed the "minLength" validation.'
+    console.error(e.actual);   // 1
+    console.error(e.expected); // 2
   }
 }
 ```
 
-| Error | 설명 |
-|-------|------|
-| `OrmError` | 기본 ORM 에러 (`code`, `message`, 선택적 `suggestion` 포함) |
-| `ValidationError` | 유효성 검증 실패 (`actual`, `expected` 필드 포함) |
-| `InvalidQueryError` | 잘못된 쿼리 (선택적 `suggestion` 포함) |
-| `EntityNotFoundError` | 엔티티를 찾을 수 없음 |
-| `EntityMetadataNotFoundError` | 메타데이터를 찾을 수 없음 |
-| `PrimaryKeyNotFoundError` | PK를 찾을 수 없음 |
-| `DeleteWithoutConditionsError` | 조건 없는 삭제 |
-| `QueryTimeoutError` | 쿼리 타임아웃 |
-| `TransactionError` | 트랜잭션 에러 |
-| `DatabaseNotConnectedError` | DB 미연결 |
-| `DatabaseConnectionFailedError` | DB 연결 실패 |
-| `NotSupportedDatabaseTypeError` | 지원하지 않는 DB 타입 |
+`cause`에는 `ORM_CONNECTION_FAILED`, `ORM_SCHEMA_SYNC_FAILED`, `ORM_QUERY_TIMEOUT` 뒤의 드라이버 에러와 `ORM_TRANSACTION_ROLLBACK_FAILED` 뒤의 원래 에러가 담깁니다. 그래서 그 에러의 필드를 그대로 읽을 수 있습니다. `(e.cause as { code?: string }).code`는 `"ECONNREFUSED"`, `"28P01"` 같은 PostgreSQL SQLSTATE, `"ER_BAD_DB_ERROR"` 같은 MySQL 코드입니다([어떤 실패가 `register()`를 실패시키는지](./configuration.md#실패한-시도로-치는-경우)).
+
+| Error | 코드 | 던지는 경우 |
+|-------|------|-------------|
+| `OrmError` | 전부 | 기본 클래스. 하위 클래스가 없는 코드는 이 클래스로 직접 던집니다 |
+| `ValidationError` | `ORM_VALIDATION_FAILED` | 유효성 검증 데코레이터가 값을 거부할 때 (`actual`, `expected` 포함) |
+| `InvalidQueryError` | `ORM_INVALID_QUERY` | 쿼리 옵션이 없는 컬럼을 가리키거나 형식이 잘못됐을 때 |
+| `EntityNotFoundError` | `ORM_ENTITY_NOT_FOUND` | `findOneOrFail()` 등이 행을 찾지 못했을 때 |
+| `EntityMetadataNotFoundError` | `ORM_ENTITY_METADATA_NOT_FOUND` | 클래스가 엔티티가 아니거나 그 커넥션에 등록되지 않았을 때 |
+| `PrimaryKeyNotFoundError` | `ORM_PRIMARY_KEY_NOT_FOUND` | 작업에 필요한 기본 키를 엔티티가 선언하지 않았을 때 |
+| `DeleteWithoutConditionsError` | `ORM_DELETE_WITHOUT_CONDITIONS` | 조건이 비어 있어 모든 행을 지우게 될 삭제를 실행할 때 |
+| `OptimisticLockError` | `ORM_OPTIMISTIC_LOCK_FAILED` | `@Version` 검사에서 행이 바뀐 것을 발견했을 때 |
+| `AdvisoryLockError` | `ORM_ADVISORY_LOCK_FAILED` | 마이그레이션·시더 잠금을 제한 시간 안에 얻지 못했을 때 |
+| `UnsupportedFeatureError` | `ORM_UNSUPPORTED_OPERATION` | 연결한 데이터베이스 버전에 DDL 문장이 필요로 하는 기능이 없을 때 |
+| `QueryTimeoutError` | `ORM_QUERY_TIMEOUT` | PostgreSQL이나 MySQL/MariaDB가 `timeout` / `queryTimeout`을 넘긴 읽기를 취소했을 때. 드라이버 에러가 `cause` |
+| `DatabaseNotConnectedError` | `ORM_NOT_CONNECTED` | 그 커넥션 이름으로 등록된 것이 없을 때 (예: `register()` 전의 쿼리) |
+| `DatabaseConnectionFailedError` | `ORM_CONNECTION_FAILED` | 쿼리가 연결을 얻지 못했을 때 (서버 다운, 풀 고갈). 드라이버 에러가 `cause`이고 `status: 500`도 있음 |
+| `NotSupportedDatabaseTypeError` | `ORM_UNSUPPORTED_DATABASE` | `type`이 ORM에 드라이버가 없는 데이터베이스일 때. `status: 500`도 있음 |
+| `TransactionError` | `ORM_TRANSACTION_FAILED` | export만 되어 있고 ORM은 던지지 않습니다. 롤백 실패는 `ORM_TRANSACTION_ROLLBACK_FAILED` 코드의 `OrmError`입니다 |
+
+`register()`도 열지 못한 연결을 `ORM_CONNECTION_FAILED` 코드의 `OrmError`로 알립니다. `DatabaseConnectionFailedError`와 `NotSupportedDatabaseTypeError`는 예전에는 별도의 `Exception` 클래스를 상속했고 `code`가 없었어요. `Exception`은 지금도 export되지만, 이를 상속하는 ORM 에러는 없습니다.
 
 ### OrmErrorCode
 
 ```typescript
 enum OrmErrorCode {
+  // Connection
   CONNECTION_FAILED = "ORM_CONNECTION_FAILED",
   NOT_CONNECTED = "ORM_NOT_CONNECTED",
   UNSUPPORTED_DATABASE = "ORM_UNSUPPORTED_DATABASE",
+  // Entity
   ENTITY_NOT_FOUND = "ORM_ENTITY_NOT_FOUND",
   ENTITY_METADATA_NOT_FOUND = "ORM_ENTITY_METADATA_NOT_FOUND",
   PRIMARY_KEY_NOT_FOUND = "ORM_PRIMARY_KEY_NOT_FOUND",
+  // Query
   INVALID_QUERY = "ORM_INVALID_QUERY",
   DELETE_WITHOUT_CONDITIONS = "ORM_DELETE_WITHOUT_CONDITIONS",
   QUERY_TIMEOUT = "ORM_QUERY_TIMEOUT",
+  QUERY_ERROR = "ORM_QUERY_ERROR",
+  BIGINT_PRECISION_LOSS = "ORM_BIGINT_PRECISION_LOSS",
+  DECIMAL_PRECISION_LOSS = "ORM_DECIMAL_PRECISION_LOSS",
+  MISSING_REQUIRED_COLUMNS = "ORM_MISSING_REQUIRED_COLUMNS",
+  MISSING_PLACEHOLDER = "ORM_MISSING_PLACEHOLDER",
+  // Transaction
   TRANSACTION_FAILED = "ORM_TRANSACTION_FAILED",
   TRANSACTION_ROLLBACK_FAILED = "ORM_TRANSACTION_ROLLBACK_FAILED",
+  INVALID_SAVEPOINT_NAME = "ORM_INVALID_SAVEPOINT_NAME",
+  // Locking
+  ADVISORY_LOCK_FAILED = "ORM_ADVISORY_LOCK_FAILED",
+  OPTIMISTIC_LOCK_FAILED = "ORM_OPTIMISTIC_LOCK_FAILED",
+  // Validation
   VALIDATION_FAILED = "ORM_VALIDATION_FAILED",
+  VALIDATION_ERROR = "ORM_VALIDATION_ERROR",
+  // 제약 조건 위반: 선언만 되어 있고 ORM이 만들지 않습니다 —
+  // 제약 조건 위반은 드라이버 에러 그대로 올라옵니다
   UNIQUE_VIOLATION = "ORM_UNIQUE_VIOLATION",
   FK_VIOLATION = "ORM_FK_VIOLATION",
+  // Unsupported operation
+  UNSUPPORTED_OPERATION = "ORM_UNSUPPORTED_OPERATION",
+  // Configuration, entity loading and optional dependencies
+  INVALID_CONFIG = "ORM_INVALID_CONFIG",
+  ENTITY_GLOB_NO_MATCH = "ORM_ENTITY_GLOB_NO_MATCH",
+  ENTITY_GLOB_LOAD_FAILED = "ORM_ENTITY_GLOB_LOAD_FAILED",
+  MISSING_DEPENDENCY = "ORM_MISSING_DEPENDENCY",
+  // Plugins
   PLUGIN_DEPENDENCY_MISSING = "ORM_PLUGIN_DEPENDENCY_MISSING",
   PLUGIN_CONFLICT = "ORM_PLUGIN_CONFLICT",
   BUFFER_NOT_INSTALLED = "ORM_BUFFER_NOT_INSTALLED",
+  // Schema
+  SCHEMA_ERROR = "ORM_SCHEMA_ERROR",
+  SCHEMA_SYNC_FAILED = "ORM_SCHEMA_SYNC_FAILED",
+  SCHEMA_SYNC_DESTRUCTIVE_CHANGE = "ORM_SCHEMA_SYNC_DESTRUCTIVE_CHANGE",
+  // Multi-tenancy
+  MISSING_TENANT_CONTEXT = "ORM_MISSING_TENANT_CONTEXT",
+  TENANT_MISMATCH = "ORM_TENANT_MISMATCH",
+  CROSS_TENANT_TRANSACTION = "ORM_CROSS_TENANT_TRANSACTION",
+  TENANT_RESOLVER_MISSING = "ORM_TENANT_RESOLVER_MISSING",
 }
 ```
 

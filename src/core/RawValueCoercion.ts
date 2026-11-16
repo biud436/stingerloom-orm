@@ -133,6 +133,8 @@ export function coerceRow<T>(
         `getRawMany: failed to coerce column "${key}" to "${type}" ` +
           `(value: ${String(out[key])}): ` +
           (err instanceof Error ? err.message : String(err)),
+        undefined,
+        { cause: err },
       );
     }
   }

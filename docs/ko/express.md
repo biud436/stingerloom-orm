@@ -247,10 +247,10 @@ Express 5는 async 핸들러에서 발생한 rejection을 에러 미들웨어까
 // middleware/error-handler.ts
 import {
   OrmError,
+  OrmErrorCode,
   EntityNotFoundError,
   OptimisticLockError,
   ValidationError,
-  DatabaseNotConnectedError,
 } from "@stingerloom/orm";
 import type { NextFunction, Request, Response } from "express";
 
@@ -287,7 +287,11 @@ export function errorHandler(
   if (isForeignKeyViolation(err)) {
     return res.status(409).json({ error: "referenced record is missing or still in use" });
   }
-  if (err instanceof DatabaseNotConnectedError) {
+  if (
+    err instanceof OrmError &&
+    (err.code === OrmErrorCode.NOT_CONNECTED || err.code === OrmErrorCode.CONNECTION_FAILED)
+  ) {
+    // 아직 register() 전이거나, 서버가 내려갔거나 풀이 고갈되어 연결을 얻지 못한 경우
     return res.status(503).json({ error: "database unavailable" });
   }
   if (err instanceof OrmError) {
@@ -304,10 +308,10 @@ export function errorHandler(
 라우터를 전부 등록한 뒤 마지막에 `app.use(errorHandler)`로 붙이면 됩니다.
 
 ::: warning 제약 조건 위반은 ORM 에러로 변환되지 않습니다
-ORM은 드라이버의 제약 조건 에러를 자체 에러 클래스로 바꾸지 않습니다. 중복 키는 `mysql2` / `pg` / `better-sqlite3`의 원본 에러 그대로 핸들러까지 올라오고, 그래서 위 미들웨어가 드라이버 코드를 직접 확인하는 것입니다. 관련해서 함정이 두 개 더 있습니다. `OrmErrorCode.UNIQUE_VIOLATION`과 `FK_VIOLATION`은 enum에 존재하지만 이 코드를 만드는 곳이 없고, export되어 있는 `QueryTimeoutError` / `TransactionError` 클래스도 실제로는 어디에서도 던져지지 않습니다. 쿼리 타임아웃은 드라이버 자체 타임아웃 에러로 올라옵니다. `catch (e) { if (e instanceof QueryTimeoutError) ... }`를 써 놓고 동작하리라 기대하면 안 됩니다.
+ORM은 드라이버의 제약 조건 에러를 자체 에러 클래스로 바꾸지 않습니다. 중복 키는 `mysql2` / `pg` / `better-sqlite3`의 원본 에러 그대로 핸들러까지 올라오고, 그래서 위 미들웨어가 드라이버 코드를 직접 확인하는 것입니다. 관련해서 함정이 두 개 더 있습니다. `OrmErrorCode.UNIQUE_VIOLATION`과 `FK_VIOLATION`은 enum에 존재하지만 이 코드를 만드는 곳이 없고, export되어 있는 `TransactionError` 클래스도 어디에서도 던져지지 않습니다. 반면 `QueryTimeoutError`는 던져집니다. `timeout`이나 `queryTimeout` 때문에 PostgreSQL 또는 MySQL/MariaDB가 읽기(`find()`를 비롯한 읽기 메서드)를 취소하면, 드라이버 에러를 `cause`에 담아 던집니다. SQLite에는 문장 타임아웃이 없어서 SQLite에서는 던지지 않습니다.
 :::
 
-`OrmError` 계층 밖에 있는 에러도 둘 있습니다. `DatabaseConnectionFailedError`와 `NotSupportedDatabaseTypeError`는 `status` 필드를 가진 별도의 `Exception`을 상속합니다. 위 미들웨어의 마지막 `console.error(err)` 분기가 이들을 받아 냅니다.
+ORM이 직접 던지는 에러는 모두 `OrmError`입니다. 연결을 얻지 못한 쿼리는 드라이버 에러를 `cause`에 담은 `DatabaseConnectionFailedError`(코드 `ORM_CONNECTION_FAILED`)를 던지고, 위 미들웨어의 503 분기가 이를 처리합니다. 이전 버전에서는 이 에러가 `code` 없는 평범한 `Error`였고, `register()` 전에 들어온 쿼리도 `DatabaseNotConnectedError` 대신 이 에러에 감싸여 올라왔어요. 마지막 `console.error(err)` 분기는 그 밖의 에러, 즉 드라이버 원본 에러와 애플리케이션 자체 에러를 받습니다.
 
 에러 미들웨어가 없으면 Express 기본 핸들러가 스택 트레이스가 그대로 담긴 HTML 페이지를 돌려줍니다. 개발 중에는 편하지만 운영 환경에 내보낼 응답은 아니죠.
 

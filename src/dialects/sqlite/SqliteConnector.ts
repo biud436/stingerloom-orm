@@ -93,6 +93,7 @@ export class SqliteConnector extends IConnector {
         OrmErrorCode.CONNECTION_FAILED,
         `Failed to connect to SQLite. ${e}`,
         "Check that the database path is valid and writable",
+        { cause: e },
       );
     }
   }

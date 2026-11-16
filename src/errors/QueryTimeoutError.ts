@@ -10,16 +10,13 @@ import { OrmErrorCode } from "./OrmErrorCode";
  * `57014`, MySQL errno `3024`, MariaDB errno `1969`.
  */
 export class QueryTimeoutError extends OrmError {
-  /** The driver error that reported the cancellation, when available. */
-  public readonly cause?: unknown;
-
   constructor(timeoutMs: number, cause?: unknown) {
     super(
       OrmErrorCode.QUERY_TIMEOUT,
       `Query execution exceeded the timeout of ${timeoutMs}ms.`,
       "Raise the per-query `timeout` (or the connection-level `queryTimeout`), or make the query cheaper — an index, a narrower filter, or a smaller lock scope.",
+      cause === undefined ? undefined : { cause },
     );
     this.name = "QueryTimeoutError";
-    this.cause = cause;
   }
 }

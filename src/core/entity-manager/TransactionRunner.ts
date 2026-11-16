@@ -82,15 +82,18 @@ export class TransactionRunner {
     txOptions: ExecuteTransactionOptions | undefined,
   ): Promise<R> {
     const session = new TransactionSessionManager();
+    // Outside the try: a session that never got a connection has nothing to
+    // roll back or close, and its connect error is the one to report — not a
+    // "rollback also failed" about a transaction that never began.
+    if (readNodeOverride) {
+      await this.ctx.connectToReadNode(session, readNodeOverride);
+    } else {
+      await session.connect(
+        txOptions?.connectionName ?? this.ctx.getConnectionName(),
+      );
+    }
     let committed = false;
     try {
-      if (readNodeOverride) {
-        await this.ctx.connectToReadNode(session, readNodeOverride);
-      } else {
-        await session.connect(
-          txOptions?.connectionName ?? this.ctx.getConnectionName(),
-        );
-      }
       await this.ctx.notifyTransactionSubscribers("beforeTransactionStart");
       this.ctx.notifyPluginBeforeTransaction(txOptions?.isolationLevel);
       await session.startTransaction(txOptions?.isolationLevel);
@@ -120,8 +123,9 @@ export class TransactionRunner {
         const combined = new OrmError(
           OrmErrorCode.TRANSACTION_ROLLBACK_FAILED,
           `Transaction failed and rollback also failed: ${original.message}`,
+          undefined,
+          { cause: original },
         );
-        (combined as any).cause = original;
         (combined as any).rollbackError = rollbackError;
         throw combined;
       }
@@ -225,13 +229,13 @@ export class TransactionRunner {
 
     // 3. Lightweight read-only path (no BEGIN/COMMIT)
     const session = new TransactionSessionManager();
+    // A session that never got a connection has nothing to close.
+    if (readNodeOverride) {
+      await this.ctx.connectToReadNode(session, readNodeOverride);
+    } else {
+      await session.connect(this.ctx.getConnectionName());
+    }
     try {
-      if (readNodeOverride) {
-        await this.ctx.connectToReadNode(session, readNodeOverride);
-      } else {
-        await session.connect(this.ctx.getConnectionName());
-      }
-
       const result = await run(session);
       return result;
     } finally {

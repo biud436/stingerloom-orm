@@ -1,7 +1,16 @@
-import { Exception } from "./Exception";
+import { OrmError } from "./OrmError";
+import { OrmErrorCode } from "./OrmErrorCode";
 
-export class DatabaseConnectionFailedError extends Exception {
-  readonly cause?: unknown;
+/**
+ * Thrown when a query or transaction cannot get a database connection: the
+ * server went away, refused the connection, or the pool had no connection
+ * to hand out in time. Code
+ * {@link OrmErrorCode.CONNECTION_FAILED}; the driver's error is kept as
+ * {@link cause}.
+ */
+export class DatabaseConnectionFailedError extends OrmError {
+  /** HTTP-style status, kept from the time this class extended `Exception`. */
+  public readonly status = 500;
 
   constructor(originalError?: unknown) {
     const detail =
@@ -11,13 +20,13 @@ export class DatabaseConnectionFailedError extends Exception {
           ? String(originalError)
           : undefined;
     super(
+      OrmErrorCode.CONNECTION_FAILED,
       detail
         ? `Failed to connect to the database: ${detail}`
         : "Failed to connect to the database.",
-      500,
+      "Check that the database server is running and reachable. A pool that ran out of connections fails the same way: raise pool.max, or hold connections for less time.",
+      originalError === undefined ? undefined : { cause: originalError },
     );
-    if (originalError !== undefined) {
-      this.cause = originalError;
-    }
+    this.name = "DatabaseConnectionFailedError";
   }
 }
