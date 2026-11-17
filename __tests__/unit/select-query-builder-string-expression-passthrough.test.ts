@@ -29,6 +29,7 @@ import { createDialectExpression } from "../../src/dialects/DialectExpression";
 import {
   isBareColumnRef,
   resolveColumnOrExpression,
+  withColumnNames,
 } from "../../src/core/expressions/bareColumnRef";
 import { OrmError } from "../../src/errors/OrmError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
@@ -276,5 +277,60 @@ describe("bareColumnRef helper", () => {
     expect(resolveColumnOrExpression(" UPPER(name) ", resolve, "x")).toBe(
       "UPPER(name)",
     );
+  });
+
+  it("routes a string the resolver names as a column through it, whatever its shape", () => {
+    const known = new Set(["first-name", "u.tag label"]);
+    const resolve = withColumnNames(
+      (ref) => `<${ref}>`,
+      (ref) => known.has(ref),
+    );
+    expect(resolveColumnOrExpression(" first-name ", resolve, "x")).toBe("<first-name>");
+    expect(resolveColumnOrExpression("u.tag label", resolve, "x")).toBe("<u.tag label>");
+    expect(resolveColumnOrExpression("first-nam", resolve, "x")).toBe("first-nam");
+    expect(resolveColumnOrExpression("name", resolve, "x")).toBe("<name>");
+  });
+});
+
+describe("column names that are not plain identifiers", () => {
+  function hyphenQb() {
+    const qb = new SelectQueryBuilder<Cat>(Cat, "node", createMockEm());
+    qb.setPropertyToColumnMap(
+      new Map([
+        ["id", "CTGR_SQ"],
+        ["name", "CTGR-NM"],
+        ["left", "2_LFT"],
+      ]),
+    );
+    return qb;
+  }
+
+  it("quotes a DB column name in groupBy(), addOrderBy() and selectRaw()", () => {
+    const { text } = hyphenQb()
+      .selectRaw(["node.CTGR-NM", "COUNT(*) AS cnt"])
+      .groupBy(["CTGR-NM"])
+      .addOrderBy("2_LFT", "DESC")
+      .getSql();
+    expect(text).toContain("SELECT `node`.`CTGR-NM`, COUNT(*) AS cnt");
+    expect(text).toContain("GROUP BY `node`.`CTGR-NM`");
+    expect(text).toContain("ORDER BY `node`.`2_LFT` DESC");
+  });
+
+  it("leaves a string that is no column name of the alias verbatim", () => {
+    const { text } = hyphenQb().addOrderBy("CTGR_SQ-2_LFT", "ASC").getSql();
+    expect(text).toContain("ORDER BY CTGR_SQ-2_LFT ASC");
+  });
+});
+
+describe("addSelect() after an expression select()", () => {
+  it("keeps the added string and aggregate in the SELECT list", () => {
+    const n = new ColumnExpression("node.name");
+    const { text } = newQb()
+      .select([n.as("nm")])
+      .addSelect("left", "lft")
+      .addSelect(new ColumnExpression("node.id").count().as("cnt"))
+      .getSql();
+    expect(text).toContain("`node`.`LFT_NO` AS `lft`");
+    expect(text).toContain("AS `cnt`");
   });
 });

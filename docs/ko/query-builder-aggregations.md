@@ -47,7 +47,7 @@ await em.createQueryBuilder(Post, "p")
 
 ### 표현식으로 그룹화하기
 
-`groupBy()`의 문자열 항목은 모양에 따라 컬럼 참조 아니면 표현식으로 해석됩니다. `prop`이나 `alias.prop` 형태의 맨 이름은 컬럼 참조예요. NamingStrategy와 `@Column({ name })`을 거쳐 실제 컬럼명으로 바뀌고 별칭과 함께 인용됩니다. 함수 호출, 연산자, 공백처럼 SQL 문법이 섞여 있으면 표현식으로 보고 그대로 내보냅니다.
+`groupBy()`의 문자열 항목은 컬럼 참조 아니면 표현식으로 해석됩니다. `prop`이나 `alias.prop` 형태의 맨 이름은 컬럼 참조예요. NamingStrategy와 `@Column({ name })`을 거쳐 실제 컬럼명으로 바뀌고 별칭과 함께 인용됩니다. 그 별칭의 컬럼명이나 속성명과 정확히 같은 문자열도 어떤 문자가 들어 있든 컬럼 참조로 봅니다. `groupBy(["first-name"])`은 `first - name`이 아니라 `"p"."first-name"`이 됩니다. 그 밖에 함수 호출, 연산자, 공백처럼 SQL 문법이 섞여 있으면 표현식으로 보고 그대로 내보냅니다.
 
 ```typescript
 const byCategory = await em
@@ -75,7 +75,7 @@ const byCategory = await em
     .getRawMany();
   ```
 
-- **표현식 문자열은 raw SQL입니다.** 코드에 리터럴로 적으세요. 요청 입력으로 조립하면 안 됩니다. 값은 바인딩 파라미터로 넘깁니다: `groupBy([sql\`ROUND(price / ${100})\`])`.
+- **표현식 문자열은 raw SQL입니다.** 코드에 리터럴로 적으세요. 요청 입력으로 조립하면 안 됩니다. 값은 바인딩 파라미터로 넘깁니다: `groupBy([sql\`ROUND(price / ${100})\`])`. 어떤 컬럼도 가리키지 않는 문자열은 SQL로 나가므로, 요청에서 받은 정렬·그룹 키를 그대로 `addOrderBy()` / `groupBy()`에 넘기면 안 됩니다. 허용한 컬럼 목록과 대조하거나, 키를 항상 컬럼으로 인용하는 `orderBy({ [key]: dir })`를 쓰세요.
 
 맨 이름은 언제나 컬럼 참조입니다. `selectRaw(["... AS month"])` 뒤에 `groupBy(["month"])`를 쓰면 `"p"."month"`가 되어 DB가 거부해요. SELECT 별칭으로 그룹화하려면 `sql` 조각을 넘기세요 — `groupBy([sql\`month\`])`. 위 `addOrderBy("postCount", ...)` 설명과 같은 이치입니다. 빈 문자열 항목은 SQL을 만들기 전에 `INVALID_QUERY`로 거부됩니다.
 
