@@ -91,12 +91,17 @@ export class TenantScopeManager {
     }
   }
 
-  /** Clears per-instance warning dedup state (propagateShutdown path). */
+  /**
+   * Clears the per-instance warning dedup state (propagateShutdown path).
+   *
+   * The pinned schemas stay: they describe the registered entities, and
+   * `propagateShutdown()` leaves the connection usable unless it is asked
+   * to close it — a query after it must still reach the pinned schema.
+   */
   reset(): void {
     this.rawQueryWarnedCallSites.clear();
     this.missingContextWarnedEntities.clear();
     this.upsertSuppressedWarnedEntities.clear();
-    this.pinnedSchemas.clear();
   }
 
   /**

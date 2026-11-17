@@ -3,6 +3,7 @@ import { ClazzType } from "../../utils";
 import { Sql } from "../../utils/sqlTag";
 import { TransactionSessionManager } from "../../dialects/TransactionSessionManager";
 import { MetadataContext } from "../../metadata/MetadataContext";
+import { MetadataLayerRegistry } from "../../scanner/MetadataScanner";
 import type { EntityManagerInternals } from "../EntityManagerInternals";
 import { relationTreeKey, type RelationTree } from "../RelationTree";
 import type { RelationCountSpec } from "../RelationCount";
@@ -234,9 +235,16 @@ export class QueryResultCache {
   private hitCount = 0;
   private missCount = 0;
   private storeErrorWarned = false;
-  /** Per-entity memo of read/write tag closures, keyed by tenant + relations. */
-  private readonly readTagsMemo = new WeakMap<object, Map<string, string[]>>();
-  private readonly writeTagsMemo = new WeakMap<object, Map<string, string[]>>();
+  /**
+   * Memo of the tables a read (per relation tree) or a write reaches, per
+   * entity and per merged metadata view. The tables follow the entity
+   * metadata, not the tenant: every tenant without a metadata layer of its
+   * own shares the public view, so the memo grows with the metadata layers
+   * rather than with each tenant id that passes through, and a changed
+   * layer (a new view) is never served the tables of the old one.
+   */
+  private readTagsMemo = new WeakMap<object, WeakMap<object, Map<string, string[]>>>();
+  private writeTagsMemo = new WeakMap<object, WeakMap<object, string[]>>();
   /** Misses between their database read and their store. */
   private readonly inFlight = new Set<InFlightRead>();
   /** Invalidations waiting for the transaction they ran in to end. */
@@ -430,6 +438,22 @@ export class QueryResultCache {
     if (session?.isTransactionActive) this.holdUntilTransactionEnd(session, "all");
   }
 
+  /**
+   * Lets go of what this cache holds in memory: the table memos and, when
+   * the store is the built-in in-memory one, its row sets.
+   * `propagateShutdown()` calls it. A custom store is left as it is — it may
+   * be shared with other processes, and the application owns it. The cache
+   * keeps working afterwards; it starts empty.
+   */
+  releaseMemory(): void {
+    this.readTagsMemo = new WeakMap();
+    this.writeTagsMemo = new WeakMap();
+    if (this.store instanceof InMemoryQueryCacheStore) {
+      this.markInFlightStale(undefined);
+      this.store.clear();
+    }
+  }
+
   // ── Internals ────────────────────────────────────────────────
 
   private async dropTags(tags: readonly string[]): Promise<void> {
@@ -551,16 +575,20 @@ export class QueryResultCache {
     entity: ClazzType<any>,
     relations: RelationTree | undefined,
   ): string[] {
-    const memoKey = `${this.namespace()}|${relationTreeKey(relations)}`;
-    let perEntity = this.readTagsMemo.get(entity);
-    if (perEntity?.has(memoKey)) return [...perEntity.get(memoKey)!];
+    const memoKey = relationTreeKey(relations);
+    const view = MetadataLayerRegistry.getInstance().resolveAll() as object;
+    let perView = this.readTagsMemo.get(view);
+    let perEntity = perView?.get(entity);
+    const memoized = perEntity?.get(memoKey);
+    if (memoized) return [...memoized];
 
     const tables = new Set<string>();
     const visited = new Set<ClazzType<any>>();
     this.visitReadClosure(entity, relations, tables, visited);
     const tags = [...tables].map((t) => TABLE_TAG_PREFIX + t);
 
-    if (!perEntity) this.readTagsMemo.set(entity, (perEntity = new Map()));
+    if (!perView) this.readTagsMemo.set(view, (perView = new WeakMap()));
+    if (!perEntity) perView.set(entity, (perEntity = new Map()));
     perEntity.set(memoKey, tags);
     return [...tags];
   }
@@ -720,17 +748,18 @@ export class QueryResultCache {
   }
 
   private collectWriteTags(entity: ClazzType<any>): string[] {
-    const memoKey = this.namespace();
-    let perEntity = this.writeTagsMemo.get(entity);
-    if (perEntity?.has(memoKey)) return [...perEntity.get(memoKey)!];
+    const view = MetadataLayerRegistry.getInstance().resolveAll() as object;
+    let perView = this.writeTagsMemo.get(view);
+    const memoized = perView?.get(entity);
+    if (memoized) return [...memoized];
 
     const tables = new Set<string>();
     const visited = new Set<ClazzType<any>>();
     this.visitWriteClosure(entity, tables, visited);
     const tags = [...tables].map((t) => TABLE_TAG_PREFIX + t);
 
-    if (!perEntity) this.writeTagsMemo.set(entity, (perEntity = new Map()));
-    perEntity.set(memoKey, tags);
+    if (!perView) this.writeTagsMemo.set(view, (perView = new WeakMap()));
+    perView.set(entity, tags);
     return [...tags];
   }
 

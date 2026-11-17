@@ -207,7 +207,7 @@ The `unknownWriteKeys` connection option decides what happens:
 
 | Policy | Behavior |
 |---|---|
-| `"warn"` (default) | The write runs. The key is logged **once per entity and key** for the lifetime of the EntityManager, naming the method and the closest accepted key. |
+| `"warn"` (default) | The write runs. The key is logged **once per entity and key** for the lifetime of the EntityManager, naming the method and the closest accepted key. Each entity reports at most 50 distinct keys (the 50th line says so), and a key longer than 100 characters is cut, since the keys come from the caller's data. |
 | `"throw"` | The write is rejected before any SQL with `InvalidQueryError` -- the same error a typo in a read `where` raises. Recommended once the warnings are clean. |
 | `"ignore"` | The previous behavior: unknown keys are dropped silently. |
 
