@@ -35,7 +35,7 @@ const stats = await em
 
 ### Grouping by an Expression
 
-A string entry in `groupBy()` is either a column reference or an expression, decided by its shape. A bare `prop` or `alias.prop` is a column reference: it is mapped through the NamingStrategy / `@Column({ name })` and quoted with its alias. Anything carrying SQL syntax — a function call, an operator, whitespace — is emitted verbatim:
+A string entry in `groupBy()` is either a column reference or an expression. A bare `prop` or `alias.prop` is a column reference: it is mapped through the NamingStrategy / `@Column({ name })` and quoted with its alias. So is a string that is exactly one of the alias's column names or property keys, whatever characters it holds: `groupBy(["first-name"])` renders `"p"."first-name"`, not `first - name`. Anything else — a function call, an operator, whitespace — is emitted verbatim:
 
 ```typescript
 const byCategory = await em
@@ -63,7 +63,7 @@ The same rule applies to every string slot of the builder — `selectRaw()`, `ad
     .getRawMany();
   ```
 
-- **Expression strings are raw SQL.** Write them as program literals, never assemble them from request input. Values belong in bound parameters: `groupBy([sql\`ROUND(price / ${100})\`])`.
+- **Expression strings are raw SQL.** Write them as program literals, never assemble them from request input. Values belong in bound parameters: `groupBy([sql\`ROUND(price / ${100})\`])`. A string that names no column is SQL, so a sort or group key taken from a request must not reach `addOrderBy()` / `groupBy()` as it is. Check it against the columns you allow, or pass it to `orderBy({ [key]: dir })`, which always quotes the key as a column.
 
 A bare name is always a column reference, so `groupBy(["month"])` after `selectRaw(["... AS month"])` renders `"p"."month"`, which the database rejects. To group by a SELECT-list alias pass a `sql` fragment — `groupBy([sql\`month\`])` — the same reasoning as the `addOrderBy("postCount", ...)` note below. An empty string entry throws `INVALID_QUERY` before any SQL is built.
 

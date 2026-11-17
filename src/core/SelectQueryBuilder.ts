@@ -73,7 +73,7 @@ import {
   type ColumnResolver,
 } from "./expressions/ConditionLike";
 import { OrderExpression, isOrderExpression } from "./expressions/OrderExpression";
-import { resolveColumnOrExpression } from "./expressions/bareColumnRef";
+import { resolveColumnOrExpression, withColumnNames } from "./expressions/bareColumnRef";
 import {
   AggregateExpression,
   AggregateCondition,
@@ -360,6 +360,17 @@ export class SelectQueryBuilder<T, TResult = T> {
    * Enables cross-entity column resolution: `"u.firstName"` → `"u"."first_name"`.
    */
   protected aliasRegistry: Map<string, AliasEntry> = new Map();
+
+  /**
+   * The resolver every string and expression of this builder renders
+   * through. It also knows the aliases' column names, so a string slot
+   * quotes a column whose name is not a plain identifier (`first-name`)
+   * instead of emitting it as SQL — see {@link namesColumn}.
+   */
+  private readonly columnResolver: ColumnResolver = withColumnNames(
+    (ref) => this.resolveColumn(ref),
+    (ref) => this.namesColumn(ref),
+  );
 
   /**
    * Parameterized SQL expressions for the SELECT clause.
@@ -738,6 +749,27 @@ export class SelectQueryBuilder<T, TResult = T> {
   }
 
   /**
+   * Whether `ref` is exactly a property key or DB column name of the queried
+   * alias, or `alias.name` for a registered alias. Only the string slots ask:
+   * a name that is not a plain identifier is a column when it is one of
+   * these, and SQL otherwise.
+   */
+  private namesColumn(ref: string): boolean {
+    const dotIndex = ref.indexOf(".");
+    if (dotIndex > 0) {
+      const entry = this.aliasRegistry.get(ref.substring(0, dotIndex));
+      return (
+        entry !== undefined &&
+        mapNamesColumn(entry.propertyToColumnMap, ref.substring(dotIndex + 1))
+      );
+    }
+    return (
+      mapNamesColumn(this.propertyToColumnMap, ref) ||
+      (this.tptParentInfo?.parentOnlyColumns.has(ref) ?? false)
+    );
+  }
+
+  /**
    * @internal Build the {@link WhereResolverOptions} used to translate a
    * Prisma-style {@link WhereClause} object into qualified SQL conditions —
    * the same resolver `EntityManager.find()` uses. Columns are qualified
@@ -1034,7 +1066,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     for (const agg of aggregates) {
       const resolvedAlias = agg.alias ?? agg.getAlias();
       const fn = agg.renderFunction(
-        (ref) => this.resolveColumn(ref),
+        this.columnResolver,
         this.dialectExpression,
       );
       fragments.push(`${fn.sql} AS ${this.em.wrap(resolvedAlias)}`);
@@ -1077,7 +1109,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   private renderAliasedProjections(): Sql[] {
     const fragments: Sql[] = [];
-    const resolver: ColumnResolver = (ref) => this.resolveColumn(ref);
+    const resolver = this.columnResolver;
     for (const p of this.aliasedProjections ?? []) {
       if (isAliasedExpression(p)) {
         const inner = p.renderer(resolver, this.dialectExpression);
@@ -1127,16 +1159,13 @@ export class SelectQueryBuilder<T, TResult = T> {
   /**
    * @internal The single string rule shared by `selectRaw()`,
    * `addSelect()`, `groupBy()` and `addOrderBy()` — a bare column
-   * reference is alias-resolved, an expression passes through verbatim.
+   * reference, or exactly one of an alias's column names, is
+   * alias-resolved; an expression passes through verbatim.
    * See {@link resolveColumnOrExpression} for the exact contract and the
    * raw-SQL caveat.
    */
   private resolveStringEntry(token: string, clause: string): string {
-    return resolveColumnOrExpression(
-      token,
-      (ref) => this.resolveColumn(ref),
-      clause,
-    );
+    return resolveColumnOrExpression(token, this.columnResolver, clause);
   }
 
   addSelect(expr: AggregateExpression): this;
@@ -1182,7 +1211,7 @@ export class SelectQueryBuilder<T, TResult = T> {
           );
         }
         const inner = result.renderer(
-          (ref) => this.resolveColumn(ref),
+          this.columnResolver,
           this.dialectExpression,
         );
         this.selectExpressions.push(
@@ -1205,7 +1234,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       // these fragments are appended to the existing SELECT list at
       // build time.
       const inner = expr.renderer(
-        (ref) => this.resolveColumn(ref),
+        this.columnResolver,
         this.dialectExpression,
       );
       this.selectExpressions.push(
@@ -1222,7 +1251,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       // stringified path.
       if (this.aggregateNeedsParamPath(expr as AggregateExpression)) {
         const inner = expr.renderFunction(
-          (ref) => this.resolveColumn(ref),
+          this.columnResolver,
           this.dialectExpression,
         );
         this.selectExpressions.push(
@@ -1230,13 +1259,8 @@ export class SelectQueryBuilder<T, TResult = T> {
         );
         return this;
       }
-      const fn = expr.renderFunction((ref) => this.resolveColumn(ref));
-      const fragment = `${fn.sql} AS ${this.em.wrap(resolvedAlias)}`;
-      if (this.selectColumns === "*") {
-        this.selectColumns = [`${this.em.wrap(this.alias)}.*`, fragment];
-      } else {
-        (this.selectColumns as string[]).push(fragment);
-      }
+      const fn = expr.renderFunction(this.columnResolver);
+      this.appendSelectFragment(`${fn.sql} AS ${this.em.wrap(resolvedAlias)}`);
       return this;
     }
     // A string follows the shared rule: bare `prop` / `alias.prop` is
@@ -1246,13 +1270,27 @@ export class SelectQueryBuilder<T, TResult = T> {
         ? this.resolveStringEntry(expr, "addSelect")
         : expr.sql;
     if (typeof expr === "string" && !alias) this.noteExplicitColumn(expr);
-    const fragment = alias ? `${exprStr} AS ${this.em.wrap(alias)}` : exprStr;
+    this.appendSelectFragment(alias ? `${exprStr} AS ${this.em.wrap(alias)}` : exprStr);
+    return this;
+  }
+
+  /**
+   * Appends one SELECT-list fragment that `addSelect()` built as a string.
+   *
+   * An expression `select([...])` renders its own list and never reads
+   * `selectColumns`, so a fragment added after it joins the parameterized
+   * list instead — it used to be dropped from the SQL without a word.
+   */
+  private appendSelectFragment(fragment: string): void {
+    if (this.aliasedProjections !== null) {
+      this.selectExpressions.push(raw(fragment));
+      return;
+    }
     if (this.selectColumns === "*") {
       this.selectColumns = [`${this.em.wrap(this.alias)}.*`, fragment];
     } else {
       (this.selectColumns as string[]).push(fragment);
     }
-    return this;
   }
 
   /**
@@ -1670,7 +1708,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       propertyToColumnMap: propToCol,
     });
 
-    const builder = new JoinOnBuilder((ref) => this.resolveColumn(ref));
+    const builder = new JoinOnBuilder(this.columnResolver);
     onBuilder(builder);
     const condition = builder.build();
 
@@ -2388,7 +2426,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       (columnOrExpr as { __isScalarExpression?: unknown }).__isScalarExpression === true
     ) {
       const rendered = (columnOrExpr as ScalarExpression).renderer(
-        (ref) => this.resolveColumn(ref),
+        this.columnResolver,
         this.dialectExpression,
       );
       this.orderByClauses.push({
@@ -2426,7 +2464,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     let column: string | Sql;
     if (expr.renderer) {
       column = expr.renderer(
-        (ref) => this.resolveColumn(ref),
+        this.columnResolver,
         this.dialectExpression,
       );
     } else if (expr.isRaw) {
@@ -2481,7 +2519,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       if ((entry as { __isScalarExpression?: unknown }).__isScalarExpression === true) {
         return (entry as {
           renderer: (r: ColumnResolver, d?: any) => Sql;
-        }).renderer((ref) => this.resolveColumn(ref), this.dialectExpression);
+        }).renderer(this.columnResolver, this.dialectExpression);
       }
       if ((entry as { __isColumnExpression?: unknown }).__isColumnExpression === true) {
         return sql`${raw(this.resolveColumn((entry as { toString(): string }).toString()))}`;
@@ -2510,7 +2548,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     if (isConditionLike(condition)) {
       this.havingClauses.push(
         condition.resolve(
-          (ref) => this.resolveColumn(ref),
+          this.columnResolver,
           this.dialectExpression,
         ),
       );
@@ -2862,7 +2900,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   andWhereGroup(fn: (group: WhereGroupBuilder<T>) => void): this {
     const group = new WhereGroupBuilder<T>(
-      (ref) => this.resolveColumn(ref),
+      this.columnResolver,
       (id) => this.em.wrap(id),
       this.dialectExpression,
     );
@@ -2889,7 +2927,7 @@ export class SelectQueryBuilder<T, TResult = T> {
    */
   orWhereGroup(fn: (group: WhereGroupBuilder<T>) => void): this {
     const group = new WhereGroupBuilder<T>(
-      (ref) => this.resolveColumn(ref),
+      this.columnResolver,
       (id) => this.em.wrap(id),
       this.dialectExpression,
     );
@@ -5290,7 +5328,7 @@ export class SelectQueryBuilder<T, TResult = T> {
     // and thread the dialect through for JSON / case-insensitive ops.
     if (isConditionLike(columnOrCondition)) {
       return columnOrCondition.resolve(
-        (ref) => this.resolveColumn(ref),
+        this.columnResolver,
         this.dialectExpression,
       );
     }
@@ -5457,4 +5495,14 @@ export class SelectQueryBuilder<T, TResult = T> {
       this.tptChildPrefixMap!,
     );
   }
+}
+
+/** Whether `name` is a property key or a DB column name in `map`. */
+function mapNamesColumn(map: Map<string, string> | undefined, name: string): boolean {
+  if (!map) return false;
+  if (map.has(name)) return true;
+  for (const column of map.values()) {
+    if (column === name) return true;
+  }
+  return false;
 }

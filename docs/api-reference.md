@@ -387,7 +387,8 @@ class SelectQueryBuilder<T, TResult = T> {
   addOrderBy(column: string | ScalarExpression, direction: "ASC" | "DESC"): this;
   addOrderBy(expr: OrderExpression): this;
   groupBy(columns: Array<string | Sql | ScalarExpression>): this;
-  //   string entries: bare "prop" / "alias.prop" → resolved column,
+  //   string entries: bare "prop" / "alias.prop", or a column name such as
+  //   "first-name" → resolved column,
   //   "UPPER(col)" / "col + 1" → verbatim expression (same rule as selectRaw)
   having(condition: Sql): this;
   limit(count: number): this;

@@ -23,9 +23,15 @@ export function isBareColumnRef(token: string): boolean {
  * also accepts expressions applies — `selectRaw()`, `addSelect()`,
  * `groupBy()`, `addOrderBy()` and the window `partitionBy()`:
  *
- * - a **bare column reference** is resolved through `resolve` (property →
+ * - a **column reference** is resolved through `resolve` (property →
  *   DB column via NamingStrategy / `@Column({ name })`, alias registry
- *   lookup, identifier quoting, TPT parent routing);
+ *   lookup, identifier quoting, TPT parent routing). That is a bare
+ *   `prop` / `alias.prop`, or — when `resolve` carries a
+ *   {@link ColumnNameAwareResolver.namesColumn} lookup — a string that is
+ *   exactly one of the alias's column names or property keys, whatever its
+ *   shape (`first-name`, `2fa_enabled`, `alias.tag label`). Without that
+ *   lookup such a name went out unquoted and the database read
+ *   `first-name` as `first - name`;
  * - **anything else** is an expression the caller wrote and is emitted
  *   verbatim, trimmed. Routing it through the resolver used to mangle it
  *   into a single quoted identifier (`"r"."UPPER(grp)"`) that only failed
@@ -55,5 +61,25 @@ export function resolveColumnOrExpression(
       `${clause}: empty string entry. Pass a column reference ("prop" / "alias.prop") or a SQL expression.`,
     );
   }
-  return BARE_COLUMN_REF.test(trimmed) ? resolve(trimmed) : trimmed;
+  const namesColumn = (resolve as Partial<ColumnNameAwareResolver>).namesColumn;
+  return BARE_COLUMN_REF.test(trimmed) || namesColumn?.(trimmed) === true
+    ? resolve(trimmed)
+    : trimmed;
+}
+
+/**
+ * @internal A {@link ColumnResolver} that can also say whether a string is
+ * exactly the name of a column it resolves — see
+ * {@link resolveColumnOrExpression}.
+ */
+export type ColumnNameAwareResolver = ColumnResolver & {
+  readonly namesColumn: (ref: string) => boolean;
+};
+
+/** @internal `resolve`, carrying the `namesColumn` lookup with it. */
+export function withColumnNames(
+  resolve: ColumnResolver,
+  namesColumn: (ref: string) => boolean,
+): ColumnNameAwareResolver {
+  return Object.assign((ref: string) => resolve(ref), { namesColumn });
 }
