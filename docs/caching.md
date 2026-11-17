@@ -138,6 +138,8 @@ Notes for store authors:
 
 When a store is configured at `register` time, it is created eagerly, so a process that only writes still pushes its invalidations into the shared backend.
 
+`propagateShutdown()` empties the default in-memory store. A custom store is left as it is: other processes may share it, and the application owns it. Used after the shutdown, the cache starts empty and works as before.
+
 ## Multi-Tenancy
 
 Cache keys are namespaced by connection name, schema, and the current tenant (`MetadataContext`). Two tenants issuing byte-identical SQL — as happens under `search_path`-based schema tenancy — can never read each other's rows from the cache.

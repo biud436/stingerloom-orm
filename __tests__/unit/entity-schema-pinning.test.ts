@@ -259,6 +259,17 @@ describe("TenantScopeManager pinned tables", () => {
     expect(scope.wrapTable("plan")).toBe(`"public"."plan"`);
   });
 
+  it("keeps a pinned schema through reset(), which shutdown calls while queries can still run", async () => {
+    const scope = makeScope();
+    scope.strategy = new SchemaQualifiedStrategy();
+    scope.pinTableSchema("plan", "public");
+    scope.reset();
+    await MetadataContext.run("acme", async () => {
+      expect(scope.wrapTable("plan")).toBe(`"public"."plan"`);
+    });
+    expect(scope.getPinnedSchema("plan")).toBe("public");
+  });
+
   it("wrapTable() emits the pinned schema inside a tenant context (schema_qualified)", async () => {
     const scope = makeScope();
     scope.strategy = new SchemaQualifiedStrategy();
@@ -308,14 +319,6 @@ describe("TenantScopeManager pinned tables", () => {
     expect(scope.resolveEntitySchema(Country)).toBeUndefined();
   });
 
-  it("reset() forgets the pins", () => {
-    const scope = makeScope();
-    scope.pinTableSchema("plan", "public");
-    expect(scope.getPinnedSchema("plan")).toBe("public");
-    scope.reset();
-    expect(scope.getPinnedSchema("plan")).toBeUndefined();
-    expect(scope.wrapTable("plan")).toBe(`"plan"`);
-  });
 });
 
 // ─────────────────────────────────────────────────

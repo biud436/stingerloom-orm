@@ -174,6 +174,11 @@ export type {
   TransactionOptions,
 } from "./entity-manager/types";
 
+/** Distinct unknown write keys the `"warn"` policy logs per entity before it stops. */
+const UNKNOWN_WRITE_KEY_WARN_LIMIT = 50;
+/** The longest unknown write key a warning quotes in full; a longer one is cut. */
+const UNKNOWN_WRITE_KEY_SHOWN_LENGTH = 100;
+
 export class EntityManager implements BaseEntityManager {
   private _entities: ClazzType<any>[] = [];
   private readonly logger = new Logger(EntityManager.name);
@@ -191,6 +196,12 @@ export class EntityManager implements BaseEntityManager {
   private unknownWriteKeyPolicy: UnknownWriteKeyPolicy = "warn";
   /** `${entity}.${key}` pairs already reported under the `"warn"` policy. */
   private readonly writeKeyWarned = new Set<string>();
+  /**
+   * How many distinct unknown keys the `"warn"` policy reported per entity.
+   * The keys come from the caller's data, so the count stops at
+   * {@link UNKNOWN_WRITE_KEY_WARN_LIMIT} — see {@link validateWriteInputKeys}.
+   */
+  private readonly unknownWriteKeysReported = new Map<string, number>();
 
   /**
    * Live view of the registered subscribers (state moved into
@@ -520,7 +531,9 @@ export class EntityManager implements BaseEntityManager {
       this.dirtyEntities.clear();
       this.cursorPkWarned.clear();
       this.writeKeyWarned.clear();
-      this.rawQueryTenantWarned.clear();
+      this.unknownWriteKeysReported.clear();
+      this.tenantScope.reset();
+      this._queryCache?.releaseMemory();
       this.schemaRegistrar.releaseInjectedTenantColumns();
     },
     shutdownReplication: () => this.replication.shutdown(),
@@ -2361,16 +2374,30 @@ export class EntityManager implements BaseEntityManager {
           assertKnownColumn(key, "data", scope);
         }
 
-        const dedupKey = `${entity.name}.${key}`;
+        // The key comes from the caller's data (often a request body), so
+        // both what is kept and what is logged are bounded: a long key is
+        // cut, and each entity reports a limited number of distinct keys.
+        const shown =
+          key.length > UNKNOWN_WRITE_KEY_SHOWN_LENGTH
+            ? `${key.slice(0, UNKNOWN_WRITE_KEY_SHOWN_LENGTH)}…`
+            : key;
+        const dedupKey = `${entity.name}.${shown}`;
         if (this.writeKeyWarned.has(dedupKey)) continue;
+        const reported = this.unknownWriteKeysReported.get(entity.name) ?? 0;
+        if (reported >= UNKNOWN_WRITE_KEY_WARN_LIMIT) continue;
         this.writeKeyWarned.add(dedupKey);
+        this.unknownWriteKeysReported.set(entity.name, reported + 1);
 
-        const suggestion = closestIdentifier(key, scope.valid);
+        const suggestion = shown === key ? closestIdentifier(key, scope.valid) : null;
+        const last = reported + 1 === UNKNOWN_WRITE_KEY_WARN_LIMIT;
         this.logger.warn(
-          `[WriteInput] Unknown key "${key}" in the data passed to ${method}() for entity "${entity.name}" ` +
+          `[WriteInput] Unknown key "${shown}" in the data passed to ${method}() for entity "${entity.name}" ` +
             `— it matches no column, relation or FK property and was not written.` +
             (suggestion ? ` Did you mean "${suggestion}"?` : "") +
-            ` Set unknownWriteKeys: "throw" to reject such writes, or "ignore" to silence this warning.`,
+            ` Set unknownWriteKeys: "throw" to reject such writes, or "ignore" to silence this warning.` +
+            (last
+              ? ` This is the ${UNKNOWN_WRITE_KEY_WARN_LIMIT}th distinct unknown key reported for "${entity.name}"; further ones are not logged.`
+              : ""),
         );
       }
     }
