@@ -171,6 +171,125 @@ class RgvGarage {
   @ManyToOne(() => RgvCar, (c: RgvCar) => c.id, { joinColumn: "car_id" }) car?: any;
 }
 
+// --- join table names --------------------------------------------------------
+
+@Entity({ name: "rgv_jt_labels" })
+class RgvJtLabel {
+  @PrimaryGeneratedColumn() id!: number;
+}
+
+@Entity({ name: "rgv_jt_notes" })
+class RgvJtNote {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToMany(() => RgvJtLabel, {
+    joinTable: { name: "rgv_jt_shared", joinColumn: "note_id", inverseJoinColumn: "label_id" },
+  })
+  labels?: RgvJtLabel[];
+}
+
+// The join table option copied from RgvJtNote whole: same columns, another owner.
+@Entity({ name: "rgv_jt_tasks" })
+class RgvJtTask {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToMany(() => RgvJtLabel, {
+    joinTable: { name: "rgv_jt_shared", joinColumn: "note_id", inverseJoinColumn: "label_id" },
+  })
+  labels?: RgvJtLabel[];
+}
+
+// The two sides of one relation, each declaring the table with its own column names.
+@Entity({ name: "rgv_jt_boards" })
+class RgvJtBoard {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToMany(() => RgvJtCard, {
+    joinTable: { name: "rgv_jt_board_cards", joinColumn: "board_id", inverseJoinColumn: "card_id" },
+  })
+  cards?: RgvJtCard[];
+}
+
+@Entity({ name: "rgv_jt_cards" })
+class RgvJtCard {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToMany(() => RgvJtBoard, {
+    joinTable: { name: "rgv_jt_board_cards", joinColumn: "crd_id", inverseJoinColumn: "board_id" },
+  })
+  boards?: RgvJtBoard[];
+}
+
+@Entity({ name: "rgv_jt_people" })
+class RgvJtPerson {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToMany(() => RgvJtPerson, {
+    joinTable: { name: "rgv_jt_follows", joinColumn: "follower_id", inverseJoinColumn: "followee_id" },
+  })
+  following?: RgvJtPerson[];
+  @ManyToMany(() => RgvJtPerson, {
+    joinTable: { name: "rgv_jt_follows", joinColumn: "followee_id", inverseJoinColumn: "follower_id" },
+  })
+  followers?: RgvJtPerson[];
+}
+
+@Entity({ name: "rgv_jt_vehicles" })
+@Inheritance({ strategy: "SINGLE_TABLE" })
+class RgvJtVehicle {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToMany(() => RgvJtLabel, {
+    joinTable: { name: "rgv_jt_vehicle_labels", joinColumn: "vehicle_id", inverseJoinColumn: "label_id" },
+  })
+  labels?: RgvJtLabel[];
+}
+
+@Entity()
+@DiscriminatorValue("van")
+class RgvJtVan extends RgvJtVehicle {
+  @Column({ type: "int", nullable: true }) seats?: number;
+}
+
+function joinTableProblemsOf(scope: any[], createsForeignKeys = true): string | null {
+  try {
+    validateRelationGraph(scope, resolver, undefined, { createsForeignKeys });
+    return null;
+  } catch (e: any) {
+    expect(e.code).toBe(OrmErrorCode.SCHEMA_ERROR);
+    return (e.message as string).split("\nSuggestion:")[0];
+  }
+}
+
+describe("validateRelationGraph: join table names", () => {
+  it("rejects a join table option copied to another owner", () => {
+    expect(joinTableProblemsOf([RgvJtLabel, RgvJtNote, RgvJtTask])).toBe(
+      `Invalid relation mapping:\n` +
+        `  - RgvJtTask.labels: @ManyToMany declares joinTable "rgv_jt_shared" with columns note_id (rgv_jt_tasks) and label_id (rgv_jt_labels), ` +
+        `but RgvJtNote.labels already declares it with note_id (rgv_jt_notes) and label_id (rgv_jt_labels). ` +
+        `Only one table of that name is created, so this relation would read and write the table built for the other. ` +
+        `Give each relation its own join table name.`,
+    );
+  });
+
+  it("suggests mappedBy when the two declarations join the same tables", () => {
+    const message = joinTableProblemsOf([RgvJtBoard, RgvJtCard])!;
+    expect(message).toContain(
+      `RgvJtCard.boards: @ManyToMany declares joinTable "rgv_jt_board_cards" with columns crd_id (rgv_jt_cards) and board_id (rgv_jt_boards), ` +
+        `but RgvJtBoard.cards already declares it with board_id (rgv_jt_boards) and card_id (rgv_jt_cards).`,
+    );
+    expect(message).toContain(
+      `If the two are one relation seen from both sides, declare joinTable on one side and mappedBy on the other.`,
+    );
+  });
+
+  it("accepts the two sides of a self relation declaring the table mirrored", () => {
+    expect(joinTableProblemsOf([RgvJtPerson])).toBeNull();
+  });
+
+  it("accepts a relation an inheritance child reaches through its parent", () => {
+    expect(joinTableProblemsOf([RgvJtVehicle, RgvJtVan, RgvJtLabel])).toBeNull();
+  });
+
+  it("does not check join tables when the ORM does not build the schema", () => {
+    expect(joinTableProblemsOf([RgvJtLabel, RgvJtNote, RgvJtTask], false)).toBeNull();
+  });
+});
+
 describe("validateRelationGraph", () => {
   it("accepts a graph whose every relation resolves", () => {
     expect(problemsOf(VALID)).toBeNull();

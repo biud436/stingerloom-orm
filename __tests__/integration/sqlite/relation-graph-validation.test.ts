@@ -392,3 +392,105 @@ describe("[SQLite] a relation to a composite primary key is validated at registe
     );
   });
 });
+
+@Entity({ name: "rgi_jt_labels" })
+class RgiJtLabel {
+  @PrimaryGeneratedColumn() id!: number;
+  @Column({ type: "varchar", length: 40 }) name!: string;
+}
+
+@Entity({ name: "rgi_jt_notes" })
+class RgiJtNote {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToMany(() => RgiJtLabel, {
+    joinTable: { name: "rgi_jt_shared", joinColumn: "note_id", inverseJoinColumn: "label_id" },
+  })
+  labels?: RgiJtLabel[];
+}
+
+// Declares the join table name RgiJtNote already uses, with its own columns.
+@Entity({ name: "rgi_jt_tasks" })
+class RgiJtTask {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToMany(() => RgiJtLabel, {
+    joinTable: { name: "rgi_jt_shared", joinColumn: "task_id", inverseJoinColumn: "label_id" },
+  })
+  labels?: RgiJtLabel[];
+}
+
+// Both sides of one relation declare the same join table, mirrored.
+@Entity({ name: "rgi_jt_books" })
+class RgiJtBook {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToMany(() => RgiJtWriter, {
+    joinTable: { name: "rgi_jt_book_writers", joinColumn: "book_id", inverseJoinColumn: "writer_id" },
+  })
+  writers?: RgiJtWriter[];
+}
+
+@Entity({ name: "rgi_jt_writers" })
+class RgiJtWriter {
+  @PrimaryGeneratedColumn() id!: number;
+  @ManyToMany(() => RgiJtBook, {
+    joinTable: { name: "rgi_jt_book_writers", joinColumn: "writer_id", inverseJoinColumn: "book_id" },
+  })
+  books?: RgiJtBook[];
+}
+
+describe("[SQLite] two ManyToMany relations naming one join table are validated at register()", () => {
+  let dir: string;
+  let database: string;
+  const open: EntityManager[] = [];
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "rgi-jt-"));
+    database = path.join(dir, "app.db");
+  });
+
+  afterEach(async () => {
+    for (const em of open.splice(0)) {
+      await em.propagateShutdown({ closeConnections: true }).catch(() => undefined);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function register(entities: any[], synchronize: boolean = true) {
+    const em = new EntityManager();
+    open.push(em);
+    await em.register({ type: "sqlite", database, entities, synchronize, logging: false } as any);
+    return em;
+  }
+
+  it("rejects the second relation before any table is created, naming both", async () => {
+    const error = await rejectionOf(() => register([RgiJtLabel, RgiJtNote, RgiJtTask]));
+
+    expect(error?.code).toBe(OrmErrorCode.SCHEMA_ERROR);
+    expect(error?.message).toContain(
+      `RgiJtTask.labels: @ManyToMany declares joinTable "rgi_jt_shared" with columns task_id (rgi_jt_tasks) and label_id (rgi_jt_labels), ` +
+        `but RgiJtNote.labels already declares it with note_id (rgi_jt_notes) and label_id (rgi_jt_labels).`,
+    );
+    expect(error?.message).toContain("Give each relation its own join table name.");
+    expect(error?.message).not.toContain("mappedBy");
+    const em = await register([RgiJtLabel], false);
+    const rows: any[] = await em.query(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'rgi_jt_%' ORDER BY name`,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("accepts both sides of one relation declaring the same join table", async () => {
+    const em = await register([RgiJtBook, RgiJtWriter]);
+    const book = await em.save(RgiJtBook, {});
+    const writer = await em.save(RgiJtWriter, {});
+
+    await em.attachRelation(RgiJtBook, book.id, "writers", writer.id);
+    expect(await em.attachRelation(RgiJtWriter, writer.id, "books", book.id)).toEqual({ affected: 0 });
+
+    const loaded = await em.findOne(RgiJtWriter, { where: { id: writer.id }, relations: ["books"] });
+    expect(loaded?.books?.map((b) => b.id)).toEqual([book.id]);
+  });
+
+  it("leaves a schema that synchronize does not build alone", async () => {
+    await expect(register([RgiJtLabel, RgiJtNote, RgiJtTask], false)).resolves.toBeDefined();
+  });
+});
