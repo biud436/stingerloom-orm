@@ -868,6 +868,8 @@ ALTER TABLE `post_tags`
 
 조인 테이블에 **복합 기본 키**(`post_id`, `tag_id`)가 있어서 동일한 post-tag 쌍이 중복될 수 없어요.
 
+스키마에는 이름마다 테이블이 하나만 만들어지므로 조인 테이블 이름은 관계 하나의 것입니다. `synchronize`가 스키마를 만드는 경우, 같은 `joinTable.name`을 다른 컬럼이나 다른 테이블로 선언한 두 번째 `@ManyToMany`는 `register()`가 거부하고, `migrate:generate`도 migration을 쓰기 전에 거부합니다. 관계 하나의 양쪽이 컬럼을 서로 뒤집어 각자 선언하는 것은 허용되지만, 보통은 한쪽에 `joinTable`, 반대쪽에 `mappedBy`를 둡니다.
+
 ### 생성되는 SELECT
 
 ```typescript

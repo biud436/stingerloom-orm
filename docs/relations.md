@@ -868,6 +868,8 @@ ALTER TABLE `post_tags`
 
 Notice the join table has a **composite primary key** (`post_id`, `tag_id`), which ensures the same post-tag pair cannot exist twice.
 
+A join table name belongs to one relation, because the schema gets one table per name. When `synchronize` builds the schema, `register()` rejects a second `@ManyToMany` that declares the same `joinTable.name` with other columns or for other tables, and `migrate:generate` rejects it before writing a migration. The two sides of one relation may each declare the table with the columns mirrored, but the usual form is `joinTable` on one side and `mappedBy` on the other.
+
 ### The Generated SELECT
 
 ```typescript

@@ -8,6 +8,8 @@ import { getScannerInstance } from "../scanner/ScannerContainer";
 import { EntityScanner } from "../scanner";
 import type { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { isInEntityScope } from "./entity-manager/entity-scope";
+import { ENTITY_TOKEN } from "../decorators/Entity";
+import type { ManyToManyMetadata } from "../decorators/ManyToMany";
 
 type RelationKind = "ManyToOne" | "OneToMany" | "ManyToMany" | "OneToOne";
 
@@ -28,7 +30,12 @@ type RelationKind = "ManyToOne" | "OneToMany" | "ManyToMany" | "OneToOne";
  * - with `createsForeignKeys` (synchronize builds the schema), a relation's
  *   foreign key constraint points at a single column — a composite primary
  *   key needs `referencedColumn`, or the constraint references part of the
- *   key.
+ *   key;
+ * - with `createsForeignKeys`, two `@ManyToMany` relations that declare the
+ *   same `joinTable` name declare the same columns for the same tables —
+ *   the schema creates one table per name, so the second relation would
+ *   read and write a table built for the first. Both sides of one relation
+ *   may each declare it, mirrored.
  *
  * Every problem is listed in one SCHEMA_ERROR, before any DDL runs.
  * `attach()` does not run it: an attached EntityManager may be scoped to a
@@ -50,9 +57,10 @@ export function validateRelationGraph(
   // An inherited relation is reached through the parent and every child:
   // the same declaration yields the same line, reported once.
   const problems = new Set<string>();
+  const joinTables = new Map<string, JoinTableClaim>();
   for (const entity of entities) {
     if (typeof entity !== "function") continue;
-    checkEntity(entity, scope, resolver, problems, options.createsForeignKeys === true);
+    checkEntity(entity, scope, resolver, problems, options.createsForeignKeys === true, joinTables);
   }
 
   if (problems.size > 0) {
@@ -71,6 +79,7 @@ function checkEntity(
   resolver: RelationMetadataResolver,
   problems: Set<string>,
   createsForeignKeys: boolean,
+  joinTables: Map<string, JoinTableClaim>,
 ): void {
   // A relation declares a foreign key constraint when synchronize builds the
   // schema and the relation does not opt out of the constraint.
@@ -119,8 +128,74 @@ function checkEntity(
     if (createsForeignKeys) {
       checkSingleColumnKey(at, entity, resolver, problems, false);
       if (target) checkSingleColumnKey(at, target, resolver, problems, false);
+      if (target && rel.joinTable) {
+        checkJoinTableClaim(at, `${nameOf(rel.target, entity)}.${rel.propertyKey}`, rel, target, joinTables, problems);
+      }
     }
   }
+}
+
+/** A `@ManyToMany` declaration that names a join table, by the columns it gives it. */
+type JoinTableClaim = {
+  /** `Entity.property` of the declaration. */
+  label: string;
+  declaring: unknown;
+  propertyKey: string;
+  /** Each column with the table its values come from, in declaration order. */
+  columns: [string, string][];
+};
+
+/**
+ * The schema builders create one join table per name, the first declaration
+ * they meet wins, and the rest are skipped. A later declaration is fine only
+ * when it gives the table the same columns for the same tables, which is
+ * what both sides of one relation do when each declares it.
+ */
+function checkJoinTableClaim(
+  at: string,
+  label: string,
+  rel: ManyToManyMetadata<any>,
+  target: ClazzType<any>,
+  joinTables: Map<string, JoinTableClaim>,
+  problems: Set<string>,
+): void {
+  const { name, joinColumn, inverseJoinColumn } = rel.joinTable!;
+  if (typeof name !== "string") return;
+  const claim: JoinTableClaim = {
+    label,
+    declaring: rel.target,
+    propertyKey: rel.propertyKey,
+    columns: [
+      [joinColumn, tableOf(rel.target)],
+      [inverseJoinColumn, tableOf(target)],
+    ],
+  };
+  const first = joinTables.get(name);
+  if (!first) {
+    joinTables.set(name, claim);
+    return;
+  }
+  // An inherited relation is the same declaration reached again.
+  if (first.declaring === claim.declaring && first.propertyKey === claim.propertyKey) return;
+  const shape = (c: JoinTableClaim) => c.columns.map(([col, table]) => `${col}\u0000${table}`).sort().join("\u0001");
+  if (shape(first) === shape(claim)) return;
+
+  const describe = (c: JoinTableClaim) => c.columns.map(([col, table]) => `${col} (${table})`).join(" and ");
+  const tables = (c: JoinTableClaim) => c.columns.map(([, table]) => table).sort().join("\u0001");
+  problems.add(
+    `${at} declares joinTable "${name}" with columns ${describe(claim)}, but ${first.label} already declares it with ${describe(first)}. ` +
+      `Only one table of that name is created, so this relation would read and write the table built for the other. ` +
+      `Give each relation its own join table name.` +
+      (tables(first) === tables(claim)
+        ? ` If the two are one relation seen from both sides, declare joinTable on one side and mappedBy on the other.`
+        : ""),
+  );
+}
+
+/** The table name the join table DDL gives a side's foreign key. */
+function tableOf(cls: unknown): string {
+  const meta = typeof cls === "function" ? (Reflect.getMetadata(ENTITY_TOKEN, cls) as { name?: string } | undefined) : undefined;
+  return meta?.name ?? (typeof cls === "function" ? cls.name : String(cls));
 }
 
 /** The relation's target class, or undefined after recording why it cannot be used. */

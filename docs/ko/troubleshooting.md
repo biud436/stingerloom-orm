@@ -470,6 +470,7 @@ OrmError: Invalid relation mapping (connection "default"):
 | `... which holds no join column either` | `@OneToOne` 양쪽이 모두 역방향입니다. | 한쪽에 `@RelationColumn`으로 조인 컬럼을 주고, 다른 쪽은 `inverseSide`로 그쪽을 가리킵니다. |
 | `declares neither joinTable nor mappedBy` | `@ManyToMany`의 조인 테이블을 알 수 없습니다. | 소유 측에 `joinTable`, 반대쪽에 `mappedBy`를 선언합니다. 대상 쪽에 이미 조인 테이블이 있으면 메시지가 그 속성을 알려 줍니다. |
 | `mappedBy "x" names Target.x, which declares no joinTable either` | `@ManyToMany` 양쪽이 서로를 `mappedBy`로 가리킵니다. | 한쪽의 `mappedBy`를 `joinTable`로 바꿉니다. |
+| `declares joinTable "x" with columns ..., but Other.prop already declares it with ...` | 두 `@ManyToMany`가 조인 테이블 하나를 서로 다른 컬럼이나 다른 테이블로 선언했습니다. 스키마에는 이름마다 테이블이 하나만 만들어지므로 두 번째 관계는 첫 번째 관계용 테이블을 쓰게 됩니다. `synchronize`가 스키마를 만들 때와 `migrate:generate`에서 검사합니다. | 관계마다 조인 테이블 이름을 따로 줍니다. 두 선언이 관계 하나의 양쪽이라면 한쪽에만 `joinTable`을 두고 반대쪽은 `mappedBy`로 가리킵니다. |
 | `targets X, which is not in this connection's entities` | 관계 대상이 `entities`에 없어서 테이블이 만들어지지 않습니다. | 대상을 `entities`에 추가합니다. 목록에 있는 클래스의 자식이나 부모는 목록에 있는 것으로 칩니다. |
 | `targets X, which is not an entity` | 대상 클래스에 `@Entity()`가 없습니다. | 데코레이터를 붙입니다. |
 | `targets undefined: the target class was not defined yet` | 클래스가 정의되기 전에 대상 썽크가 실행됐습니다. 대개 순환 import 때문입니다. | 대상을 `() => Target` 뒤에 두고, 단일 값 속성의 타입은 `Relation<Target>`으로 적습니다. |

@@ -156,6 +156,41 @@ describe("[Integration] SQLite: migrate:generate validates the relation graph", 
     expect(writtenFiles()).toEqual([]);
   });
 
+  it("refuses two ManyToMany relations that name one join table with different columns", async () => {
+    const error = await rejectionOf(() =>
+      generate(() => {
+        @Entity({ name: "mgrg_labels" })
+        class Label {
+          @PrimaryGeneratedColumn() id!: number;
+        }
+        @Entity({ name: "mgrg_notes" })
+        class Note {
+          @PrimaryGeneratedColumn() id!: number;
+          @ManyToMany(() => Label, {
+            joinTable: { name: "mgrg_shared", joinColumn: "note_id", inverseJoinColumn: "label_id" },
+          })
+          labels!: Label[];
+        }
+        @Entity({ name: "mgrg_tasks" })
+        class Task {
+          @PrimaryGeneratedColumn() id!: number;
+          @ManyToMany(() => Label, {
+            joinTable: { name: "mgrg_shared", joinColumn: "task_id", inverseJoinColumn: "label_id" },
+          })
+          labels!: Label[];
+        }
+        return [Label, Note, Task];
+      }),
+    );
+
+    expect(error?.code).toBe(OrmErrorCode.SCHEMA_ERROR);
+    expect(error?.message).toContain(
+      `Task.labels: @ManyToMany declares joinTable "mgrg_shared" with columns task_id (mgrg_tasks) and label_id (mgrg_labels), ` +
+        `but Note.labels already declares it with note_id (mgrg_notes) and label_id (mgrg_labels).`,
+    );
+    expect(writtenFiles()).toEqual([]);
+  });
+
   it("generates a working migration when the relation names the column it references", async () => {
     const { up } = await generate(() => {
       const Order = orders();
