@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { ReflectManager } from "../utils/ReflectManager";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 export interface IndexOption {
   name?: string;
@@ -110,7 +112,11 @@ export function Index(
   // Property-level single-column index
   return (target: any, propertyKey?: string | symbol) => {
     if (propertyKey === undefined) {
-      throw new Error("@Index() without columns must be used as a PropertyDecorator");
+      throw new OrmError(
+        OrmErrorCode.SCHEMA_ERROR,
+        "@Index() without columns must be used as a PropertyDecorator.",
+        'Put @Index() on a property, or name the columns on the class: @Index(["a", "b"]).',
+      );
     }
     const injectParam = ReflectManager.getType<any>(target, propertyKey);
 

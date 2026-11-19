@@ -2,6 +2,19 @@
 import { DeserializeOptions } from "./DeserializeOptions";
 import { Deserializer } from "./Deserializer";
 import { MyClassConstructor } from "../MyClassConstructor";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
+
+/** The error a deserializer throws when it cannot load class-transformer. */
+function missingClassTransformer(cause: unknown): OrmError {
+  return new OrmError(
+    OrmErrorCode.MISSING_DEPENDENCY,
+    'Package "class-transformer" is required for ClassTransformerDeserializer.',
+    "Install with: pnpm add class-transformer. " +
+      "In ESM runtimes (no require) call `await warmup()` once before use.",
+    { cause },
+  );
+}
 
 /**
  * Deserializer implementation backed by class-transformer.
@@ -53,12 +66,18 @@ export class ClassTransformerDeserializer implements Deserializer {
    * first deserialize call — `DeserializerRegistry.ensureDefaultDetected()`
    * (run during `EntityManager.register()`) does it automatically.
    *
-   * @throws when class-transformer is not installed.
+   * @throws an `OrmError` with `MISSING_DEPENDENCY` when class-transformer
+   * is not installed.
    */
   async warmup(): Promise<void> {
     if (this._plainToClass && this._ctStorage !== undefined) return;
 
-    const ctModule: any = await import("class-transformer");
+    let ctModule: any;
+    try {
+      ctModule = await import("class-transformer");
+    } catch (e) {
+      throw missingClassTransformer(e);
+    }
     const ct = ctModule.default?.plainToClass ? ctModule.default : ctModule;
     this._plainToClass = ct.plainToClass;
 
@@ -78,12 +97,8 @@ export class ClassTransformerDeserializer implements Deserializer {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const ct = require("class-transformer");
         this._plainToClass = ct.plainToClass;
-      } catch {
-        throw new Error(
-          "class-transformer is required for ClassTransformerDeserializer. " +
-            "Install it with: npm install class-transformer. " +
-            "In ESM runtimes (no require) call `await warmup()` once before use.",
-        );
+      } catch (e) {
+        throw missingClassTransformer(e);
       }
     }
     return this._plainToClass!;

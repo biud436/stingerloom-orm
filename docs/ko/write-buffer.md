@@ -80,11 +80,14 @@ console.log(a === b); // true — same JavaScript object
 
 `find()`와 `findOne()` 사이에서도 동작해요. `find()`가 10명의 사용자를 반환할 때, 그 중 하나(id=1)가 이미 `findOne()`으로 로드됐다면, 기존 추적 인스턴스를 그대로 재사용해요.
 
-내부적으로 Identity Map은 `"User:id=1"` 같은 키를 사용해요. 복합 primary key인 경우 `"Order:userId=1,productId=5"`가 돼요. 멀티테넌시에서 같은 primary key가 테넌트마다 다른 행을 가리키는 경우에는 키에 테넌트도 들어갑니다(`"acme|User:id=1"`). `tenant_column`, 그리고 PostgreSQL의 `search_path` / `schema_qualified`가 그렇습니다. 그래서 한 버퍼를 여러 테넌트에서 써도 행이 섞이지 않습니다. 공유 테이블(`@NonTenantEntity()`, `@Entity({ schema })`)은 모든 테넌트에서 같은 키를 씁니다. 같은 PK를 가진 다른 객체를 `track()`하려 하면, 상태 충돌을 방지하기 위해 에러가 발생해요:
+내부적으로 Identity Map은 `"User:id=1"` 같은 키를 사용해요. 복합 primary key인 경우 `"Order:userId=1,productId=5"`가 돼요. 멀티테넌시에서 같은 primary key가 테넌트마다 다른 행을 가리키는 경우에는 키에 테넌트도 들어갑니다(`"acme|User:id=1"`). `tenant_column`, 그리고 PostgreSQL의 `search_path` / `schema_qualified`가 그렇습니다. 그래서 한 버퍼를 여러 테넌트에서 써도 행이 섞이지 않습니다. 공유 테이블(`@NonTenantEntity()`, `@Entity({ schema })`)은 모든 테넌트에서 같은 키를 씁니다. 같은 PK를 가진 다른 객체를 `track()`하려 하면, 상태 충돌을 막기 위해 `ORM_BUFFER_IDENTITY_CONFLICT` 코드의 `OrmError`가 발생합니다:
 
 ```
-Identity conflict: another instance of "User" with PK (User:id=1) is already tracked
+Identity conflict: another instance of "User" with PK (User:id=1) is already tracked.
+Suggestion: Use the existing tracked instance, or untrack() the old one first.
 ```
+
+버퍼의 다른 메서드도 잘못된 호출을 같은 방식으로 알립니다. 버퍼가 추적하지 않는 인스턴스로 `markDirty()`, `markReadOnly()`, `wrapCollection()`, `refresh()`를 부르면 `ORM_BUFFER_NOT_TRACKED`, primary key가 없는 인스턴스로 `remove()`를 부르면 `ORM_PRIMARY_KEY_NOT_FOUND`가 발생해요.
 
 #### 메모리 관리
 
@@ -588,7 +591,7 @@ SELECT * FROM "user" WHERE "id" = $1
 -- parameters: [1]
 ```
 
-다른 프로세스가 해당 행을 수정했을 수 있고, 최신 데이터가 필요할 때 유용해요.
+다른 프로세스가 해당 행을 수정했을 수 있고, 최신 데이터가 필요할 때 유용해요. 행이 사라졌다면(다른 프로세스가 삭제했다면) `refresh()`는 `EntityNotFoundError`(`ORM_ENTITY_NOT_FOUND`)를 던집니다.
 
 ### clear
 

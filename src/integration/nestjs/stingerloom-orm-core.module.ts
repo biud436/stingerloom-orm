@@ -11,6 +11,8 @@ import type { DatabaseClientOptions } from "../../core/DatabaseClientOptions";
 import { getEntityManagerToken } from "./stingerloom-orm.module";
 import { getMultiTenantEntityManagerToken } from "./inject-multi-tenant-entity-manager.decorator";
 import { recordOrmConnectionName } from "./connection-name-registry";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 export interface StingerloomOrmOptionsFactory {
   createStingerloomOrmOptions():
@@ -145,7 +147,8 @@ export class StingerloomOrmCoreModule {
               // tenant query to the admin DB, which is exactly the kind of
               // wiring bug we want to surface immediately.
               if (!mtem || isMtemMisuseSentinel(mtem)) {
-                throw new Error(
+                throw new OrmError(
+                  OrmErrorCode.INVALID_CONFIG,
                   `[StingerloomOrmModule] MultiTenantEntityManager provider is required when tenantStrategy is "database" (connection "${connectionName}"). This usually indicates broken module wiring.`,
                 );
               }
@@ -203,8 +206,10 @@ export class StingerloomOrmCoreModule {
       ];
     }
 
-    throw new Error(
-      "StingerloomOrmModule.forRootAsync() requires one of useFactory, useClass, or useExisting",
+    throw new OrmError(
+      OrmErrorCode.INVALID_CONFIG,
+      "StingerloomOrmModule.forRootAsync() requires one of useFactory, useClass, or useExisting.",
+      "Pass forRootAsync({ useFactory: () => options }), or a class that implements StingerloomOrmOptionsFactory as useClass / useExisting.",
     );
   }
 }

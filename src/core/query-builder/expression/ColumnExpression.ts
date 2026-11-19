@@ -3,6 +3,7 @@ import sql, { Sql, raw } from "../../../utils/sqlTag";
 import { ColumnCondition } from "../condition/ColumnCondition";
 import { OrmError } from "../../../errors/OrmError";
 import { OrmErrorCode } from "../../../errors/OrmErrorCode";
+import { InvalidQueryError } from "../../../errors/InvalidQueryError";
 import type { ConditionLike } from "../../expressions/ConditionLike";
 import { OrderExpression } from "../../expressions/OrderExpression";
 import { AggregateExpression } from "../../expressions/AggregateExpression";
@@ -347,8 +348,9 @@ export class ColumnExpression {
    */
   coalesce(...fallbacks: unknown[]): ScalarExpression {
     if (fallbacks.length === 0) {
-      throw new Error(
+      throw new InvalidQueryError(
         "coalesce() requires at least one fallback argument.",
+        "Pass the value to use when the column is NULL: col.coalesce(fallback).",
       );
     }
     return coalesceFn(this, ...fallbacks);
@@ -373,7 +375,10 @@ export class ColumnExpression {
    */
   greatest(...others: unknown[]): ScalarExpression {
     if (others.length === 0) {
-      throw new Error("greatest() requires at least one other argument.");
+      throw new InvalidQueryError(
+        "greatest() requires at least one other argument.",
+        "Pass the value to compare with: col.greatest(other).",
+      );
     }
     return greatestFn(this, ...others);
   }
@@ -390,7 +395,10 @@ export class ColumnExpression {
    */
   least(...others: unknown[]): ScalarExpression {
     if (others.length === 0) {
-      throw new Error("least() requires at least one other argument.");
+      throw new InvalidQueryError(
+        "least() requires at least one other argument.",
+        "Pass the value to compare with: col.least(other).",
+      );
     }
     return leastFn(this, ...others);
   }

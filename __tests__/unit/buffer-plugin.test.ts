@@ -2566,7 +2566,10 @@ describe("Buffer Plugin", () => {
 
       jest.spyOn(em, "findOne").mockResolvedValue(null);
 
-      await expect(mut.refresh(user)).rejects.toThrow(/not found in database/);
+      const error = await mut.refresh(user).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(OrmError);
+      expect((error as OrmError).code).toBe(OrmErrorCode.ENTITY_NOT_FOUND);
+      expect((error as OrmError).message).toMatch(/refresh\(\) found no row for \{"id":1\}/);
     });
   });
 

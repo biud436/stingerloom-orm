@@ -23,6 +23,8 @@ import {
   TypeFidelity,
 } from "./DialectCatalog";
 import { parseSqlDefault } from "./sqlLiterals";
+import { OrmError } from "../../errors/OrmError";
+import { OrmErrorCode } from "../../errors/OrmErrorCode";
 
 /**
  * Escapes an identifier for `PRAGMA <name>(<ident>)`. PRAGMA arguments cannot
@@ -30,8 +32,9 @@ import { parseSqlDefault } from "./sqlLiterals";
  */
 export function escapeSqliteIdentifier(identifier: string): string {
   if (/[\x00\x1a]/.test(identifier)) {
-    throw new Error(
-      `SQLite identifier '${identifier}' contains a NUL or substitute character`,
+    throw new OrmError(
+      OrmErrorCode.INVALID_QUERY,
+      `SQLite identifier '${identifier}' contains a NUL or substitute character.`,
     );
   }
   return `"${identifier.replace(/"/g, '""')}"`;

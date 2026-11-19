@@ -3,6 +3,8 @@
 import { MetadataLayer } from "../metadata/MetadataLayer";
 import { MetadataContext } from "../metadata/MetadataContext";
 import { warnLegacyContextMutator } from "../metadata/legacyContextWarning";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * Global metadata layer registry.
@@ -119,7 +121,11 @@ export class MetadataLayerRegistry {
 
   addLayer(name: string, readOnly = false): MetadataLayer {
     if (this.layers.has(name)) {
-      throw new Error(`Layer "${name}" already exists.`);
+      throw new OrmError(
+        OrmErrorCode.INVALID_CONFIG,
+        `Layer "${name}" already exists.`,
+        `Use getLayer("${name}") to reach it, or removeLayer("${name}") before adding it again.`,
+      );
     }
     const layer = new MetadataLayer(name, readOnly);
     this.layers.set(name, layer);
@@ -131,7 +137,13 @@ export class MetadataLayerRegistry {
    */
   copyLayer(sourceName: string, targetName: string): MetadataLayer {
     const source = this.layers.get(sourceName);
-    if (!source) throw new Error(`Source layer "${sourceName}" not found.`);
+    if (!source) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_CONFIG,
+        `Source layer "${sourceName}" not found.`,
+        `Add the layer with addLayer("${sourceName}") before copying it.`,
+      );
+    }
     const cloned = source.clone(targetName, false);
     this.layers.set(targetName, cloned);
     this.dirtyContexts.add(targetName);
@@ -147,7 +159,13 @@ export class MetadataLayerRegistry {
    * next call from a different context triggers a rebuild — see issue #279.
    */
   removeLayer(name: string): boolean {
-    if (name === "public") throw new Error('Cannot remove "public" layer.');
+    if (name === "public") {
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        'Cannot remove "public" layer.',
+        "The public layer holds the base metadata every tenant falls back to; remove a tenant layer instead.",
+      );
+    }
     this.resolveAllCache.delete(name);
     this.dirtyContexts.delete(name);
     const removed = this.layers.delete(name);

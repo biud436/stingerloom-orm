@@ -9,6 +9,7 @@ import {
 } from "./AggregateExpression";
 import { isJsonPathExpression } from "./JsonPathExpression";
 import { renderExpressionArg } from "./expressionArg";
+import { InvalidQueryError } from "../../errors/InvalidQueryError";
 
 /**
  * Inputs accepted by `coalesce()` / `nullif()`. Column and path
@@ -34,7 +35,7 @@ export function renderNullishArg(
   }
   if (isJsonPathExpression(arg)) {
     if (!dialect) {
-      throw new Error(
+      throw new InvalidQueryError(
         "JsonPathExpression inside coalesce()/nullif() requires a DialectExpression. " +
           "Ensure the query builder was created via EntityManager.createQueryBuilder().",
       );
@@ -70,7 +71,10 @@ export function renderNullishArg(
  */
 export function coalesce(...args: NullishArg[]): ScalarExpression {
   if (args.length < 2) {
-    throw new Error("coalesce() requires at least 2 arguments.");
+    throw new InvalidQueryError(
+      `coalesce() requires at least 2 arguments, got ${args.length}.`,
+      "Pass the value and at least one fallback: coalesce(a, b).",
+    );
   }
   const captured = args;
   return new ScalarExpression((resolveColumn, dialect) => {
