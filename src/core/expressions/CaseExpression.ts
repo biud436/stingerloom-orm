@@ -3,6 +3,7 @@ import sql, { join } from "../../utils/sqlTag";
 import type { ConditionLike } from "./ConditionLike";
 import { ScalarExpression } from "./ScalarExpression";
 import { renderExpressionArg } from "./expressionArg";
+import { InvalidQueryError } from "../../errors/InvalidQueryError";
 
 interface CaseBranch {
   condition: ConditionLike;
@@ -40,12 +41,12 @@ export class CaseBuilder {
   /** Start a new branch — takes a condition. Must be followed by `.then()`. */
   when(condition: ConditionLike): CaseWhenBuilder {
     if (this.elseValue) {
-      throw new Error(
+      throw new InvalidQueryError(
         "CaseBuilder: cannot add .when() after .otherwise() has been set.",
       );
     }
     if (!condition || (condition as { __isCondition?: unknown }).__isCondition !== true) {
-      throw new Error(
+      throw new InvalidQueryError(
         "CaseBuilder.when() expects a ConditionLike argument.",
       );
     }
@@ -55,7 +56,7 @@ export class CaseBuilder {
   /** @internal Append a completed branch. */
   _appendBranch(branch: CaseBranch): this {
     if (this.elseValue) {
-      throw new Error(
+      throw new InvalidQueryError(
         "CaseBuilder: cannot add .when() after .otherwise() has been set.",
       );
     }
@@ -66,7 +67,7 @@ export class CaseBuilder {
   /** Attach the `ELSE default` branch. After this, only `.end()` is valid. */
   otherwise(value: unknown): CaseBuilder {
     if (this.elseValue) {
-      throw new Error("CaseBuilder: .otherwise() already set.");
+      throw new InvalidQueryError("CaseBuilder: .otherwise() already set.");
     }
     this.elseValue = { present: true, value };
     return this;
@@ -75,7 +76,7 @@ export class CaseBuilder {
   /** Finalize — produce a {@link ScalarExpression} ready for SELECT/WHERE/etc. */
   end(): ScalarExpression {
     if (this.branches.length === 0) {
-      throw new Error(
+      throw new InvalidQueryError(
         "CaseBuilder.end(): CASE expression needs at least one WHEN/THEN pair.",
       );
     }
@@ -141,7 +142,7 @@ export class CaseValueBuilder {
 
   when(value: unknown, result: unknown): this {
     if (this.elseValue) {
-      throw new Error(
+      throw new InvalidQueryError(
         "CaseValueBuilder: cannot add .when() after .otherwise() has been set.",
       );
     }
@@ -151,7 +152,7 @@ export class CaseValueBuilder {
 
   otherwise(result: unknown): this {
     if (this.elseValue) {
-      throw new Error("CaseValueBuilder: .otherwise() already set.");
+      throw new InvalidQueryError("CaseValueBuilder: .otherwise() already set.");
     }
     this.elseValue = { present: true, value: result };
     return this;
@@ -159,7 +160,7 @@ export class CaseValueBuilder {
 
   end(): ScalarExpression {
     if (this.branches.length === 0) {
-      throw new Error(
+      throw new InvalidQueryError(
         "CaseValueBuilder.end(): simple CASE needs at least one WHEN/THEN pair.",
       );
     }
@@ -243,7 +244,7 @@ export function mapValues(
 ): ScalarExpression {
   const entries = Object.entries(mapping);
   if (entries.length === 0) {
-    throw new Error(
+    throw new InvalidQueryError(
       "Expressions.mapValues(): mapping must contain at least one entry.",
     );
   }
@@ -303,7 +304,7 @@ export function buckets(
   options?: { op?: BucketOperator },
 ): ScalarExpression {
   if (thresholds.length === 0) {
-    throw new Error(
+    throw new InvalidQueryError(
       "Expressions.buckets(): thresholds must contain at least one entry.",
     );
   }
@@ -313,7 +314,7 @@ export function buckets(
     typeof subject !== "object" ||
     typeof (subject as Partial<ComparableExpression>).gte !== "function"
   ) {
-    throw new Error(
+    throw new InvalidQueryError(
       "Expressions.buckets(): subject must expose .gt/.gte/.lt/.lte " +
         "(ColumnExpression or ScalarExpression).",
     );

@@ -1,4 +1,6 @@
 import { parseJsonPath } from "../core/expressions/JsonPathExpression";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 export const JSON_INDEX_TOKEN = Symbol.for("STG_ORM_JSON_INDEX");
 
@@ -99,7 +101,11 @@ export function JsonIndex(options: JsonIndexOptions = {}): PropertyDecorator {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (target: any, propertyKey: string | symbol) => {
     if (typeof propertyKey === "symbol") {
-      throw new Error("@JsonIndex must be used on a named property.");
+      throw new OrmError(
+        OrmErrorCode.SCHEMA_ERROR,
+        "@JsonIndex must be used on a named property.",
+        "Declare the JSON column with a string property name instead of a symbol.",
+      );
     }
     const cls = target.constructor;
     const existing: JsonIndexMetadata[] =

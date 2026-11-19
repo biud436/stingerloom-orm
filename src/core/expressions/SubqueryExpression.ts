@@ -2,6 +2,8 @@
 import sql, { Sql } from "../../utils/sqlTag";
 import type { ConditionLike, ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
+import { logicalConditionNotRegistered } from "./expressionErrors";
+import { InvalidQueryError } from "../../errors/InvalidQueryError";
 
 /**
  * Duck-type guard — true if `value` looks like a `SelectQueryBuilder`
@@ -82,22 +84,14 @@ type LogicalComposerFns = {
   not(a: ConditionLike): ConditionLike;
 };
 
+const logicalComposerMissing = (): never => {
+  throw logicalConditionNotRegistered();
+};
+
 let LogicalComposer: LogicalComposerFns = {
-  and: () => {
-    throw new Error(
-      "LogicalCondition not registered. Ensure '@stingerloom/orm' is imported via its public entrypoint.",
-    );
-  },
-  or: () => {
-    throw new Error(
-      "LogicalCondition not registered. Ensure '@stingerloom/orm' is imported via its public entrypoint.",
-    );
-  },
-  not: () => {
-    throw new Error(
-      "LogicalCondition not registered. Ensure '@stingerloom/orm' is imported via its public entrypoint.",
-    );
-  },
+  and: logicalComposerMissing,
+  or: logicalComposerMissing,
+  not: logicalComposerMissing,
 };
 
 /** @internal Wire up composition. Called once from LogicalCondition.ts. */
@@ -123,7 +117,10 @@ export function registerExistsLogicalComposer(
  */
 export function exists(subquery: { toSql(): Sql }): ExistsCondition {
   if (!isSubqueryLike(subquery)) {
-    throw new Error("exists() requires a SelectQueryBuilder-like argument.");
+    throw new InvalidQueryError(
+      "exists() requires a SelectQueryBuilder-like argument.",
+      "Pass a query builder from em.createQueryBuilder(): exists(qb).",
+    );
   }
   return new ExistsCondition(subquery, false);
 }
@@ -131,8 +128,9 @@ export function exists(subquery: { toSql(): Sql }): ExistsCondition {
 /** Factory — `NOT EXISTS (subquery)`. Symmetric to {@link exists}. */
 export function notExists(subquery: { toSql(): Sql }): ExistsCondition {
   if (!isSubqueryLike(subquery)) {
-    throw new Error(
+    throw new InvalidQueryError(
       "notExists() requires a SelectQueryBuilder-like argument.",
+      "Pass a query builder from em.createQueryBuilder(): notExists(qb).",
     );
   }
   return new ExistsCondition(subquery, true);

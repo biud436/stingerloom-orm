@@ -50,6 +50,13 @@ export enum OrmErrorCode {
   PLUGIN_DEPENDENCY_MISSING = "ORM_PLUGIN_DEPENDENCY_MISSING",
   PLUGIN_CONFLICT = "ORM_PLUGIN_CONFLICT",
   BUFFER_NOT_INSTALLED = "ORM_BUFFER_NOT_INSTALLED",
+  /** A write-buffer method was given an instance the buffer does not track. */
+  BUFFER_NOT_TRACKED = "ORM_BUFFER_NOT_TRACKED",
+  /**
+   * The write buffer already tracks another instance for the same row, so
+   * tracking this one would leave two objects that disagree about it.
+   */
+  BUFFER_IDENTITY_CONFLICT = "ORM_BUFFER_IDENTITY_CONFLICT",
 
   // Query Builder
   MISSING_REQUIRED_COLUMNS = "ORM_MISSING_REQUIRED_COLUMNS",

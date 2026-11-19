@@ -5,6 +5,7 @@ import type { DialectExpression } from "../../dialects/DialectExpression";
 import { OrderExpression } from "./OrderExpression";
 import { ScalarExpression } from "./ScalarExpression";
 import { renderExpressionArg } from "./expressionArg";
+import { logicalConditionNotRegistered } from "./expressionErrors";
 
 /**
  * Renderer for an aggregate's *argument* expression. Used when the
@@ -432,22 +433,14 @@ type LogicalComposerFns = {
   not(a: ConditionLike): ConditionLike;
 };
 
+const logicalComposerMissing = (): never => {
+  throw logicalConditionNotRegistered();
+};
+
 let LogicalComposer: LogicalComposerFns = {
-  and: () => {
-    throw new Error(
-      "LogicalCondition not registered. Ensure '@stingerloom/orm' is imported via its public entrypoint.",
-    );
-  },
-  or: () => {
-    throw new Error(
-      "LogicalCondition not registered. Ensure '@stingerloom/orm' is imported via its public entrypoint.",
-    );
-  },
-  not: () => {
-    throw new Error(
-      "LogicalCondition not registered. Ensure '@stingerloom/orm' is imported via its public entrypoint.",
-    );
-  },
+  and: logicalComposerMissing,
+  or: logicalComposerMissing,
+  not: logicalComposerMissing,
 };
 
 /**

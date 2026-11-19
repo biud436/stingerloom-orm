@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { BaseRepository } from "../core/BaseRepository";
 import { ClazzType } from "../utils/types";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 type MockMethods<T> = Partial<{
   [K in keyof BaseRepository<T>]: BaseRepository<T>[K] extends (...args: any[]) => any
@@ -37,9 +39,10 @@ export function createMockRepository<T>(
       }
       if (typeof prop === "string") {
         return (..._args: any[]) => {
-          throw new Error(
-            `MockRepository: method "${prop}" was called but not mocked. ` +
-              `Add it to the overrides parameter.`,
+          throw new OrmError(
+            OrmErrorCode.UNSUPPORTED_OPERATION,
+            `MockRepository: method "${prop}" was called but not mocked.`,
+            `Add it to the overrides parameter.`,
           );
         };
       }

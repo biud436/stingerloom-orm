@@ -39,6 +39,7 @@ import {
   random as randomFactory,
 } from "./DateArithmeticExpression";
 import { rawExpr as rawFactory } from "./RawExpression";
+import { InvalidQueryError } from "../../errors/InvalidQueryError";
 import {
   tuple as tupleFactory,
   TupleExpression,
@@ -93,12 +94,12 @@ export class LogicalCondition implements ConditionLike {
     readonly children: ReadonlyArray<ConditionLike>,
   ) {
     if (op === "NOT" && children.length !== 1) {
-      throw new Error(
+      throw new InvalidQueryError(
         `LogicalCondition 'NOT' expects exactly 1 child, got ${children.length}`,
       );
     }
     if (op !== "NOT" && children.length < 1) {
-      throw new Error(
+      throw new InvalidQueryError(
         `LogicalCondition '${op}' expects at least 1 child, got 0`,
       );
     }

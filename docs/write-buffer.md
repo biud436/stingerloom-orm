@@ -81,11 +81,14 @@ console.log(a === b); // true — same JavaScript object
 
 This also works across `find()` and `findOne()`. If `find()` returns 10 users and one of them (id=1) was already loaded via `findOne()`, the existing tracked instance is reused — not replaced.
 
-Internally, the Identity Map uses a key like `"User:id=1"`. For composite primary keys, it becomes `"Order:userId=1,productId=5"`. Under multi-tenancy, where one primary key names a different row per tenant, the key also names the tenant (`"acme|User:id=1"`). That is the case with `tenant_column`, and with `search_path` / `schema_qualified` on PostgreSQL, so one buffer used under several tenants keeps their rows apart. A shared table (`@NonTenantEntity()` or `@Entity({ schema })`) keeps one key for every tenant. If you attempt to `track()` a different object with the same PK, the buffer throws an error to prevent conflicting state:
+Internally, the Identity Map uses a key like `"User:id=1"`. For composite primary keys, it becomes `"Order:userId=1,productId=5"`. Under multi-tenancy, where one primary key names a different row per tenant, the key also names the tenant (`"acme|User:id=1"`). That is the case with `tenant_column`, and with `search_path` / `schema_qualified` on PostgreSQL, so one buffer used under several tenants keeps their rows apart. A shared table (`@NonTenantEntity()` or `@Entity({ schema })`) keeps one key for every tenant. If you attempt to `track()` a different object with the same PK, the buffer throws an `OrmError` with the code `ORM_BUFFER_IDENTITY_CONFLICT` to prevent conflicting state:
 
 ```
-Identity conflict: another instance of "User" with PK (User:id=1) is already tracked
+Identity conflict: another instance of "User" with PK (User:id=1) is already tracked.
+Suggestion: Use the existing tracked instance, or untrack() the old one first.
 ```
+
+The buffer's other methods report misuse the same way: `markDirty()`, `markReadOnly()`, `wrapCollection()` and `refresh()` on an instance the buffer does not track throw `ORM_BUFFER_NOT_TRACKED`, and `remove()` on an instance without a primary key throws `ORM_PRIMARY_KEY_NOT_FOUND`.
 
 #### Memory management
 
@@ -589,7 +592,7 @@ SELECT * FROM "user" WHERE "id" = $1
 -- parameters: [1]
 ```
 
-This is useful when you suspect another process has modified the row and you want the latest data.
+This is useful when you suspect another process has modified the row and you want the latest data. If the row is gone (another process deleted it), `refresh()` throws `EntityNotFoundError` (`ORM_ENTITY_NOT_FOUND`).
 
 ### clear
 

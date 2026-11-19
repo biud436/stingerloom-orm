@@ -12,6 +12,8 @@ import {
   relationColumnOptions,
 } from "./emitSyntax";
 import { fileBase } from "./lowering/Naming";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * Emits decorator-free entity source (`defineEntity` + the `t` field builders)
@@ -140,7 +142,10 @@ function baseBuilder(field: ModelColumnField): string {
       return `t.${type}()`;
     default:
       // The lowering only picks built-in types; an unknown one would be a bug.
-      throw new Error(`No t.* builder for column type "${String(type)}"`);
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `No t.* builder for column type "${String(type)}".`,
+      );
   }
 }
 

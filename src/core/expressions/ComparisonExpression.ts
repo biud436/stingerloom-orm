@@ -2,6 +2,7 @@ import type { ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import { ScalarExpression } from "./ScalarExpression";
 import { renderNullishArg, type NullishArg } from "./NullishExpression";
+import { InvalidQueryError } from "../../errors/InvalidQueryError";
 
 /**
  * Inputs accepted by `greatest()` / `least()` — the same union
@@ -20,13 +21,16 @@ function buildRowWiseComparison(
   args: ComparisonArg[],
 ): ScalarExpression {
   if (args.length < 2) {
-    throw new Error(`${fnName}() requires at least 2 arguments.`);
+    throw new InvalidQueryError(
+      `${fnName}() requires at least 2 arguments, got ${args.length}.`,
+      `Pass two or more values: ${fnName}(a, b).`,
+    );
   }
   const captured = args;
   return new ScalarExpression(
     (resolveColumn: ColumnResolver, dialect?: DialectExpression) => {
       if (!dialect) {
-        throw new Error(
+        throw new InvalidQueryError(
           `${fnName}() requires a DialectExpression — SQLite spells the ` +
             "row-wise maximum MAX(a, b) while PostgreSQL and MySQL spell it " +
             "GREATEST(a, b). Ensure the builder was created via " +

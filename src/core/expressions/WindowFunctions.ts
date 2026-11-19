@@ -4,6 +4,7 @@ import type { ColumnResolver } from "./ConditionLike";
 import type { DialectExpression } from "../../dialects/DialectExpression";
 import { WindowBuilder, type WindowHeadRenderer } from "./WindowExpression";
 import { renderExpressionArg } from "./expressionArg";
+import { InvalidQueryError } from "../../errors/InvalidQueryError";
 
 /**
  * @internal Resolve an arbitrary argument that may appear inside a
@@ -73,7 +74,7 @@ export function denseRank(): WindowBuilder {
  */
 export function ntile(n: number): WindowBuilder {
   if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`ntile(n): n must be a positive integer, got ${n}`);
+    throw new InvalidQueryError(`ntile(n): n must be a positive integer, got ${n}.`);
   }
   return WindowBuilder.from(() => sql`NTILE(${n})`);
 }
@@ -163,7 +164,7 @@ export function lastValue(expr: unknown): WindowBuilder {
  */
 export function nthValue(expr: unknown, n: number): WindowBuilder {
   if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`nthValue(expr, n): n must be a positive integer, got ${n}`);
+    throw new InvalidQueryError(`nthValue(expr, n): n must be a positive integer, got ${n}.`);
   }
   return WindowBuilder.from((resolveColumn, dialect) => {
     const argSql = renderWindowArg(expr, resolveColumn, dialect);

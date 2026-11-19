@@ -12,6 +12,7 @@ import { OrderExpression } from "./OrderExpression";
 import { renderExpressionArg } from "./expressionArg";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
+import { logicalConditionNotRegistered } from "./expressionErrors";
 
 /**
  * Renderer contract for a scalar SQL expression — produces one `Sql`
@@ -126,10 +127,7 @@ export class ScalarExpression {
     const innerRenderer = this.renderer;
     return new ScalarExpression((resolveColumn, dialect) => {
       if (!dialect) {
-        throw new Error(
-          "CAST expressions require a DialectExpression. Ensure the query " +
-            "builder was created via EntityManager.createQueryBuilder().",
-        );
+        throw dialectRequired("A CAST expression");
       }
       const value = innerRenderer(resolveColumn, dialect);
       const typeName = dialect.castTypeName(kind);
@@ -183,10 +181,7 @@ export class ScalarExpression {
     const innerRenderer = this.renderer;
     return new ScalarExpression((resolveColumn, dialect) => {
       if (!dialect) {
-        throw new Error(
-          "Date component expressions require a DialectExpression. " +
-            "Ensure the query builder was created via EntityManager.createQueryBuilder().",
-        );
+        throw dialectRequired("A date component expression");
       }
       const value = innerRenderer(resolveColumn, dialect);
       return dialect.dateComponent(value, component);
@@ -389,10 +384,7 @@ function buildIndexOfFromRenderer(
 ): ScalarExpression {
   return new ScalarExpression((resolveColumn, dialect) => {
     if (!dialect) {
-      throw new Error(
-        "indexOf() requires a DialectExpression. Ensure the query builder was " +
-          "created via EntityManager.createQueryBuilder().",
-      );
+      throw dialectRequired("indexOf()");
     }
     const haystack = inner(resolveColumn, dialect);
     const n = renderExpressionArg(needle, resolveColumn, dialect);
@@ -548,22 +540,14 @@ type LogicalComposerFns = {
   not(a: ConditionLike): ConditionLike;
 };
 
+const logicalComposerMissing = (): never => {
+  throw logicalConditionNotRegistered();
+};
+
 let LogicalComposer: LogicalComposerFns = {
-  and: () => {
-    throw new Error(
-      "LogicalCondition not registered. Ensure '@stingerloom/orm' is imported via its public entrypoint.",
-    );
-  },
-  or: () => {
-    throw new Error(
-      "LogicalCondition not registered. Ensure '@stingerloom/orm' is imported via its public entrypoint.",
-    );
-  },
-  not: () => {
-    throw new Error(
-      "LogicalCondition not registered. Ensure '@stingerloom/orm' is imported via its public entrypoint.",
-    );
-  },
+  and: logicalComposerMissing,
+  or: logicalComposerMissing,
+  not: logicalComposerMissing,
 };
 
 /**

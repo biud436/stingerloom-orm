@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 /**
  * Metadata layer.
@@ -37,8 +39,10 @@ export class MetadataLayer {
    */
   set<T>(key: string, value: T): void {
     if (this.isReadOnly) {
-      throw new Error(
-        `Cannot modify read-only layer: ${this.name}. Use a writable upper layer.`,
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `Cannot modify read-only layer: ${this.name}.`,
+        "Use a writable upper layer.",
       );
     }
     this.metadata.set(key, value);
@@ -63,8 +67,10 @@ export class MetadataLayer {
    */
   delete(key: string): boolean {
     if (this.isReadOnly) {
-      throw new Error(
-        `Cannot delete from read-only layer: ${this.name}. Use a whiteout marker.`,
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `Cannot delete from read-only layer: ${this.name}.`,
+        "Use a whiteout marker in a writable upper layer.",
       );
     }
     return this.metadata.delete(key);
@@ -148,7 +154,10 @@ export class MetadataLayer {
    */
   clear(): void {
     if (this.isReadOnly) {
-      throw new Error(`Cannot clear read-only layer: ${this.name}`);
+      throw new OrmError(
+        OrmErrorCode.UNSUPPORTED_OPERATION,
+        `Cannot clear read-only layer: ${this.name}.`,
+      );
     }
     this.metadata.clear();
   }

@@ -8,6 +8,7 @@ import type { AggregateExpression } from "./AggregateExpression";
 import { OrderExpression } from "./OrderExpression";
 import { ScalarExpression } from "./ScalarExpression";
 import { AliasedExpression } from "./AliasedExpression";
+import { InvalidQueryError } from "../../errors/InvalidQueryError";
 
 /**
  * Renderer for the *head* of a window expression — the function call
@@ -186,8 +187,9 @@ function renderPartitionArg(
     // `alias.prop` is resolved, an expression is emitted verbatim.
     return sql`${raw(resolveColumnOrExpression(arg, resolveColumn, "partitionBy"))}`;
   }
-  throw new Error(
-    `WindowBuilder.partitionBy: unsupported argument of type ${typeof arg}`,
+  throw new InvalidQueryError(
+    `WindowBuilder.partitionBy: unsupported argument of type ${typeof arg}.`,
+    "Pass a column name, a column expression (qAlias) or a scalar expression.",
   );
 }
 

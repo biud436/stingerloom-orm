@@ -33,6 +33,7 @@ import type { ReparentedChildren } from "./CascadeProcessor";
 import { FlushExecutor } from "./FlushExecutor";
 import { EntityValidator } from "../../EntityValidator";
 import { EntityNotFoundError } from "../../../errors/EntityNotFoundError";
+import { InvalidQueryError } from "../../../errors/InvalidQueryError";
 import { OrmError } from "../../../errors/OrmError";
 import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import { LazyRelationInjector } from "./LazyRelationInjector";
@@ -47,6 +48,15 @@ import type { EntityManager } from "../../EntityManager";
  * exactly the columns the detached instance carries.
  */
 const MERGE_DIRTY_SENTINEL = Symbol("stingerloom.buffer.mergeDirty");
+
+/** The error a buffer method throws for an instance it does not track. */
+function notTracked(method: string, instance: any): OrmError {
+  return new OrmError(
+    OrmErrorCode.BUFFER_NOT_TRACKED,
+    `Cannot ${method}: instance of "${instance?.constructor?.name}" is not tracked.`,
+    `Load the instance through this buffer (find/findOne/getReference) or track() it first.`,
+  );
+}
 
 /**
  * WriteBuffer — buffers entity writes and flushes them in a single transaction.
@@ -204,8 +214,9 @@ export class WriteBuffer {
     const key = this.idMap.buildIdentityKey(entityClass, instance, pkColumns);
     const existing = this.idMap.identityMap.get(key);
     if (existing && existing !== instance) {
-      throw new Error(
-        `Identity conflict: another instance of "${entityClass.name}" with PK (${key}) is already tracked. ` +
+      throw new OrmError(
+        OrmErrorCode.BUFFER_IDENTITY_CONFLICT,
+        `Identity conflict: another instance of "${entityClass.name}" with PK (${key}) is already tracked.`,
         `Use the existing tracked instance, or untrack() the old one first.`,
       );
     }
@@ -375,9 +386,11 @@ export class WriteBuffer {
         !(existing instanceof entityClass) &&
         !((entityClass as any).prototype instanceof (existing as any).constructor)
       ) {
-        throw new Error(
+        throw new OrmError(
+          OrmErrorCode.BUFFER_IDENTITY_CONFLICT,
           `Identity conflict: the row (${key}) is already tracked as ` +
           `"${(existing as any).constructor?.name}", not "${entityClass.name}".`,
+          `Ask for the reference as "${(existing as any).constructor?.name}" or one of its parent classes.`,
         );
       }
       this.idMap.touch(key);
@@ -422,11 +435,7 @@ export class WriteBuffer {
    */
   markDirty(instance: any): this {
     const entry = this.trackedEntries.get(instance);
-    if (!entry) {
-      throw new Error(
-        `Cannot markDirty: instance of "${instance.constructor.name}" is not tracked.`,
-      );
-    }
+    if (!entry) throw notTracked("markDirty", instance);
     entry.explicitDirty = true;
     return this;
   }
@@ -439,11 +448,7 @@ export class WriteBuffer {
    */
   markReadOnly(instance: any): this {
     const entry = this.trackedEntries.get(instance);
-    if (!entry) {
-      throw new Error(
-        `Cannot markReadOnly: instance of "${instance.constructor.name}" is not tracked.`,
-      );
-    }
+    if (!entry) throw notTracked("markReadOnly", instance);
     entry.readOnly = true;
     return this;
   }
@@ -511,15 +516,12 @@ export class WriteBuffer {
    */
   wrapCollection<T>(instance: any, propertyKey: string): T[] {
     const entry = this.trackedEntries.get(instance);
-    if (!entry) {
-      throw new Error(
-        `Cannot wrapCollection: instance of "${instance.constructor.name}" is not tracked.`,
-      );
-    }
+    if (!entry) throw notTracked("wrapCollection", instance);
     const arr = instance[propertyKey];
     if (!Array.isArray(arr)) {
-      throw new Error(
+      throw new InvalidQueryError(
         `Cannot wrapCollection: "${propertyKey}" is not an array.`,
+        `Pass the name of a property that holds an array (a to-many relation).`,
       );
     }
     const wrapped = createPersistentCollection(arr, () => {
@@ -612,8 +614,10 @@ export class WriteBuffer {
     for (const pk of pkColumns) {
       const v = instance[pk];
       if (v === undefined || v === null) {
-        throw new Error(
+        throw new OrmError(
+          OrmErrorCode.PRIMARY_KEY_NOT_FOUND,
           `Cannot remove "${entityClass.name}": PK "${pk}" is ${v}.`,
+          `Set the primary key on the instance, or remove an instance the buffer loaded.`,
         );
       }
       criteria[pk] = v;
@@ -881,17 +885,16 @@ export class WriteBuffer {
     seen.add(instance);
 
     const entry = this.trackedEntries.get(instance);
-    if (!entry) {
-      throw new Error(
-        `Cannot refresh: instance of "${instance.constructor.name}" is not tracked.`,
-      );
-    }
+    if (!entry) throw notTracked("refresh", instance);
 
     const where: Record<string, any> = {};
     for (const pk of entry.pkColumns) where[pk] = instance[pk];
     const fresh = await this.ctx.em.findOne(entry.entity, { where: where as any });
     if (!fresh) {
-      throw new Error(`Cannot refresh: not found in database.`);
+      throw new EntityNotFoundError(
+        entry.entity.name,
+        `refresh() found no row for ${JSON.stringify(where)}.`,
+      );
     }
 
     for (const col of entry.columnNames) {
