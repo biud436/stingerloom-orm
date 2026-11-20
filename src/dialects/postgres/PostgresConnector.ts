@@ -16,6 +16,7 @@ import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DbVersion, detectDbVersion } from "../DbVersion";
 import { isValidPgIdentifier } from "./pgIdentifier";
+import { toConstraintViolation } from "../constraintViolation";
 
 /**
  * Pool options that run `statement` on each new client before the pool
@@ -271,7 +272,12 @@ export class PostgresConnector extends IConnector {
         this.logger.info(`Query: ${rawSql}`);
       }
 
-      const result = await client.query(rawSql);
+      let result;
+      try {
+        result = await client.query(rawSql);
+      } catch (error) {
+        throw toConstraintViolation(error);
+      }
 
       if (connection) {
         return {
@@ -295,7 +301,12 @@ export class PostgresConnector extends IConnector {
       let paramIndex = 0;
       const pgSql = sql.replace(/\?/g, () => `$${++paramIndex}`);
 
-      const result = await client.query(pgSql, values);
+      let result;
+      try {
+        result = await client.query(pgSql, values);
+      } catch (error) {
+        throw toConstraintViolation(error);
+      }
 
       if (this.isDebug) {
         this.logger.info(`Results: ${stringifyForLog(result.rows)}`);
@@ -454,7 +465,8 @@ export class PostgresConnector extends IConnector {
         // Recovery ROLLBACK also failed — destructively release exactly once
         client.release(true);
       }
-      throw commitError;
+      // A deferred constraint is checked at COMMIT.
+      throw toConstraintViolation(commitError);
     }
   }
 }

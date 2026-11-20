@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Sql } from "../../utils/sqlTag";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
+import { toConstraintViolation } from "../constraintViolation";
 
 /** A `pg` pool, or one client checked out of it. */
 interface PgQueryable {
@@ -26,6 +27,11 @@ export async function pgQueryWithOptions(
   if (options.binary) queryConfig.binary = true;
   if (options.arrayMode) queryConfig.rowMode = "array";
 
-  const result: any = await client.query(queryConfig);
+  let result: any;
+  try {
+    result = await client.query(queryConfig);
+  } catch (error) {
+    throw toConstraintViolation(error);
+  }
   return result.rows;
 }

@@ -1162,7 +1162,7 @@ class IntrospectionTypeMapper {
 
 ## Errors
 
-Every error the ORM throws is an `OrmError`. It carries a `code` from `OrmErrorCode`, a `suggestion` (a fix hint, or `null`) that is also appended to `message` as a trailing `Suggestion:` line, and a `cause` when it wraps another error. Driver errors from the statements themselves (a duplicate key, a syntax error) are not wrapped: they reach you as the driver threw them.
+Every error the ORM throws is an `OrmError`. It carries a `code` from `OrmErrorCode`, a `suggestion` (a fix hint, or `null`) that is also appended to `message` as a trailing `Suggestion:` line, and a `cause` when it wraps another error. A statement that breaks a unique key or a foreign key fails with [`UniqueConstraintViolationError` or `ForeignKeyViolationError`](#constraint-violations); every other error a statement gets from the database (a NOT NULL or CHECK violation, a syntax error) reaches you as the driver threw it.
 
 ```typescript
 try {
@@ -1190,7 +1190,7 @@ try {
 }
 ```
 
-`cause` holds the driver error behind `ORM_CONNECTION_FAILED`, `ORM_SCHEMA_SYNC_FAILED` and `ORM_QUERY_TIMEOUT`, and the original error behind `ORM_TRANSACTION_ROLLBACK_FAILED`, so its own fields stay readable: `(e.cause as { code?: string }).code` is `"ECONNREFUSED"`, a PostgreSQL SQLSTATE such as `"28P01"`, or a MySQL code such as `"ER_BAD_DB_ERROR"` ([which failures fail `register()`](./configuration.md#what-counts-as-a-failed-attempt)).
+`cause` holds the driver error behind `ORM_CONNECTION_FAILED`, `ORM_SCHEMA_SYNC_FAILED`, `ORM_QUERY_TIMEOUT`, `ORM_UNIQUE_VIOLATION` and `ORM_FK_VIOLATION`, and the original error behind `ORM_TRANSACTION_ROLLBACK_FAILED`, so its own fields stay readable: `(e.cause as { code?: string }).code` is `"ECONNREFUSED"`, a PostgreSQL SQLSTATE such as `"28P01"`, or a MySQL code such as `"ER_BAD_DB_ERROR"` ([which failures fail `register()`](./configuration.md#what-counts-as-a-failed-attempt)).
 
 | Error | Code | Thrown when |
 |-------|------|-------------|
@@ -1204,6 +1204,8 @@ try {
 | `OptimisticLockError` | `ORM_OPTIMISTIC_LOCK_FAILED` | A `@Version` check finds the row changed |
 | `AdvisoryLockError` | `ORM_ADVISORY_LOCK_FAILED` | The migration or seeder lock is not acquired within its timeout |
 | `UnsupportedFeatureError` | `ORM_UNSUPPORTED_OPERATION` | The connected database version lacks a feature a DDL statement needs |
+| `UniqueConstraintViolationError` | `ORM_UNIQUE_VIOLATION` | A statement would store a duplicate primary key or unique value; the driver error is `cause`. Also has `constraint`, `table`, `columns` |
+| `ForeignKeyViolationError` | `ORM_FK_VIOLATION` | A row points at a missing parent, or a referenced parent is deleted or rekeyed; the driver error is `cause`. Also has `constraint`, `table` |
 | `QueryTimeoutError` | `ORM_QUERY_TIMEOUT` | PostgreSQL or MySQL/MariaDB cancels a read that ran past `timeout` / `queryTimeout`; the driver error is `cause` |
 | `DatabaseNotConnectedError` | `ORM_NOT_CONNECTED` | Nothing is registered under the connection name, e.g. a query before `register()` |
 | `DatabaseConnectionFailedError` | `ORM_CONNECTION_FAILED` | A query cannot get a connection (server down, pool exhausted); the driver error is `cause`. Also has `status: 500` |
@@ -1211,6 +1213,40 @@ try {
 | `TransactionError` | `ORM_TRANSACTION_FAILED` | Exported, but the ORM does not throw it. A rollback that fails is an `OrmError` with `ORM_TRANSACTION_ROLLBACK_FAILED` |
 
 `register()` reports a connection it cannot open as an `OrmError` with `ORM_CONNECTION_FAILED` too. `DatabaseConnectionFailedError` and `NotSupportedDatabaseTypeError` used to extend a separate `Exception` class and had no `code`; `Exception` is still exported, but no ORM error extends it.
+
+### Constraint violations
+
+A duplicate key and a broken foreign key fail with an `OrmError` on every database, from every write path: `save()`, the batch and upsert methods, the query builders, the write buffer's flush and raw `em.query()`. The message is the database's own, and the driver's error is `cause`, so code that matched its codes (`23505`, errno `1062`, `SQLITE_CONSTRAINT_UNIQUE`) finds them on `e.cause`. A deferred constraint that fails at COMMIT throws the same error from `em.transaction()`.
+
+```typescript
+try {
+  await em.save(User, { email: "taken@example.com" });
+} catch (e) {
+  if (e instanceof UniqueConstraintViolationError) {
+    e.code;       // "ORM_UNIQUE_VIOLATION"
+    e.constraint; // "uq_users_email" (PostgreSQL, MySQL/MariaDB)
+    e.columns;    // ["email"] (PostgreSQL, SQLite)
+    e.cause;      // the driver's error: code "23505", errno 1062 or code "SQLITE_CONSTRAINT_UNIQUE"
+  } else if (e instanceof ForeignKeyViolationError) {
+    e.code;       // "ORM_FK_VIOLATION"
+    e.table;      // the table that holds the foreign key (PostgreSQL, MySQL/MariaDB)
+  }
+}
+```
+
+The other fields hold what the database reports about the constraint, and are `undefined` where it reports nothing. `columns` and `table` are database names, not entity property names. For a foreign key, `table` is the table that holds the key, whichever side of the reference the statement wrote.
+
+| Field | PostgreSQL | MySQL / MariaDB | SQLite |
+|-------|------------|-----------------|--------|
+| `UniqueConstraintViolationError.constraint` | Constraint or index name | Key name (`PRIMARY` for the primary key) | Only for an index over expressions |
+| `UniqueConstraintViolationError.table` | Yes | MySQL 8.0.19+ only | Yes |
+| `UniqueConstraintViolationError.columns` | Yes (an expression key as its text) | No | Yes |
+| `ForeignKeyViolationError.constraint` | Yes | Yes | No |
+| `ForeignKeyViolationError.table` | Yes | Yes | No |
+
+A NOT NULL or CHECK violation is not mapped: it reaches you as the driver's error.
+
+Earlier versions let these violations through as the driver's errors and never produced `OrmErrorCode.UNIQUE_VIOLATION` / `FK_VIOLATION`. They also reported a COMMIT that failed on PostgreSQL or MySQL/MariaDB (a deferred constraint, a serialization failure) as `ORM_TRANSACTION_ROLLBACK_FAILED` from `em.transaction()`, and as a connection error from a `@Transactional` method; both now fail with the COMMIT's own error, and the rollback runs as for any other failure.
 
 ### OrmErrorCode
 
@@ -1243,8 +1279,7 @@ enum OrmErrorCode {
   // Validation
   VALIDATION_FAILED = "ORM_VALIDATION_FAILED",
   VALIDATION_ERROR = "ORM_VALIDATION_ERROR",
-  // Constraint violations: declared, but the ORM does not produce them —
-  // a constraint violation reaches you as the driver's error
+  // Constraint violations: UniqueConstraintViolationError / ForeignKeyViolationError
   UNIQUE_VIOLATION = "ORM_UNIQUE_VIOLATION",
   FK_VIOLATION = "ORM_FK_VIOLATION",
   // Unsupported operation
