@@ -17,6 +17,8 @@ import {
   TransactionError,
   QueryTimeoutError,
   AdvisoryLockError,
+  UniqueConstraintViolationError,
+  ForeignKeyViolationError,
   OrmError,
 } from "@stingerloom/orm";
 import { RequestContextStore } from "../context/request-context";
@@ -34,11 +36,8 @@ export type ErrorEnvelope = {
   details?: unknown;
 };
 
-const PG_FK_VIOLATION = "23503";
-const PG_UNIQUE_VIOLATION = "23505";
+/** The ORM reports unique and FK violations itself; NOT NULL arrives raw. */
 const PG_NOT_NULL = "23502";
-const MYSQL_FK_VIOLATION = ["ER_NO_REFERENCED_ROW_2", "ER_ROW_IS_REFERENCED_2"];
-const MYSQL_DUP = ["ER_DUP_ENTRY"];
 
 /**
  * Single error filter for the whole app. Maps:
@@ -49,7 +48,9 @@ const MYSQL_DUP = ["ER_DUP_ENTRY"];
  *   - `OrmValidationError`         → 422
  *   - `QueryTimeoutError`          → 504
  *   - `AdvisoryLockError`          → 423 (Locked)
- *   - FK / unique violations       → 422 (`CONSTRAINT_VIOLATION`)
+ *   - `UniqueConstraintViolationError` → 409 (`UNIQUE_VIOLATION`)
+ *   - `ForeignKeyViolationError`   → 422 (`FK_VIOLATION`)
+ *   - a raw NOT NULL violation     → 422 (`NOT_NULL_VIOLATION`)
  *   - everything else              → 500 with `INTERNAL` and a logged stack
  *
  * The wire response is always an `ErrorEnvelope`; raw stacks never leave the
@@ -176,7 +177,25 @@ export class AllExceptionsFilter implements ExceptionFilter {
       };
     }
 
-    const constraint = this.mapDbConstraintError(exception);
+    if (exception instanceof UniqueConstraintViolationError) {
+      return {
+        ...base,
+        status: HttpStatus.CONFLICT,
+        code: "UNIQUE_VIOLATION",
+        message: constraintMessage(exception),
+      };
+    }
+
+    if (exception instanceof ForeignKeyViolationError) {
+      return {
+        ...base,
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        code: "FK_VIOLATION",
+        message: constraintMessage(exception),
+      };
+    }
+
+    const constraint = this.mapNotNullError(exception);
     if (constraint) {
       return { ...base, ...constraint };
     }
@@ -198,27 +217,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
     };
   }
 
-  /** Map raw mysql2/pg driver errors to a 422 with a stable code. */
-  private mapDbConstraintError(
+  /** Map a raw PostgreSQL NOT NULL violation to a 422 with a stable code. */
+  private mapNotNullError(
     exception: unknown,
   ): Pick<ErrorEnvelope, "status" | "code" | "message"> | null {
-    const e = exception as { code?: string; sqlState?: string; detail?: string; message?: string } | null;
+    const e = exception as { code?: string; detail?: string; message?: string } | null;
     if (!e || typeof e.code !== "string") return null;
 
-    if (e.code === PG_FK_VIOLATION || MYSQL_FK_VIOLATION.includes(e.code)) {
-      return {
-        status: HttpStatus.UNPROCESSABLE_ENTITY,
-        code: "FK_VIOLATION",
-        message: e.detail ?? e.message ?? "Foreign key constraint failed",
-      };
-    }
-    if (e.code === PG_UNIQUE_VIOLATION || MYSQL_DUP.includes(e.code)) {
-      return {
-        status: HttpStatus.CONFLICT,
-        code: "UNIQUE_VIOLATION",
-        message: e.detail ?? e.message ?? "Unique constraint failed",
-      };
-    }
     if (e.code === PG_NOT_NULL) {
       return {
         status: HttpStatus.UNPROCESSABLE_ENTITY,
@@ -249,4 +254,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
         return "HTTP_ERROR";
     }
   }
+}
+
+/**
+ * PostgreSQL's detail line (`Key (email)=(…) already exists.`) when the
+ * driver sent one, the database's message otherwise.
+ */
+function constraintMessage(error: OrmError): string {
+  const detail = (error.cause as { detail?: unknown } | undefined)?.detail;
+  return typeof detail === "string" ? detail : error.message;
 }

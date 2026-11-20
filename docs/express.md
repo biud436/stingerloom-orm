@@ -251,19 +251,10 @@ import {
   EntityNotFoundError,
   OptimisticLockError,
   ValidationError,
+  UniqueConstraintViolationError,
+  ForeignKeyViolationError,
 } from "@stingerloom/orm";
 import type { NextFunction, Request, Response } from "express";
-
-// Constraint violations arrive as RAW DRIVER ERRORS — see the note below.
-const isUniqueViolation = (e: any) =>
-  e?.code === "23505" ||                    // PostgreSQL
-  e?.errno === 1062 ||                      // MySQL / MariaDB
-  e?.code === "SQLITE_CONSTRAINT_UNIQUE";   // better-sqlite3
-
-const isForeignKeyViolation = (e: any) =>
-  e?.code === "23503" ||
-  e?.errno === 1452 ||
-  e?.code === "SQLITE_CONSTRAINT_FOREIGNKEY";
 
 export function errorHandler(
   err: unknown,
@@ -281,10 +272,11 @@ export function errorHandler(
   if (err instanceof OptimisticLockError) {
     return res.status(409).json({ error: "the record changed, please retry" });
   }
-  if (isUniqueViolation(err)) {
+  if (err instanceof UniqueConstraintViolationError) {
+    // err.constraint / err.table / err.columns say which key, where the database reports it
     return res.status(409).json({ error: "already exists" });
   }
-  if (isForeignKeyViolation(err)) {
+  if (err instanceof ForeignKeyViolationError) {
     return res.status(409).json({ error: "referenced record is missing or still in use" });
   }
   if (
@@ -307,11 +299,11 @@ export function errorHandler(
 
 Register it last, after all routers: `app.use(errorHandler)`.
 
-::: warning Constraint violations are not normalized
-The ORM does **not** translate driver constraint errors into its own error classes. A duplicate key reaches your handler as a raw `mysql2` / `pg` / `better-sqlite3` error, which is why the middleware above sniffs driver codes. Two related traps: `OrmErrorCode.UNIQUE_VIOLATION` and `FK_VIOLATION` exist in the enum but nothing ever produces them, and the exported `TransactionError` class is never thrown either. `QueryTimeoutError` is thrown: when a `timeout` or `queryTimeout` makes PostgreSQL or MySQL/MariaDB cancel a read (`find()` and the other read methods), with the driver's error as `cause`. SQLite has no statement timeout, so it never throws one there.
-:::
+A duplicate key and a broken foreign key are `OrmError`s too, on every database: `UniqueConstraintViolationError` (code `ORM_UNIQUE_VIOLATION`) and `ForeignKeyViolationError` (`ORM_FK_VIOLATION`), with the driver's error as `cause` ([what each database reports about the constraint](./api-reference.md#constraint-violations)). Earlier versions let them through as raw `mysql2` / `pg` / `better-sqlite3` errors, so a handler had to sniff `23505`, errno `1062` and `SQLITE_CONSTRAINT_UNIQUE`; that code now finds them on `err.cause`.
 
-Every error the ORM itself throws is an `OrmError`. A query that cannot get a connection throws `DatabaseConnectionFailedError` (code `ORM_CONNECTION_FAILED`) with the driver's error as `cause`, which the 503 branch above handles. Earlier versions threw it as a plain `Error` with no `code`, and a query before `register()` came back wrapped in it instead of as `DatabaseNotConnectedError`. The final `console.error(err)` fallback is for everything else: raw driver errors and your own.
+Every other error a statement gets from the database (a NOT NULL or CHECK violation, a syntax error) still arrives as the driver threw it. `QueryTimeoutError` is thrown when a `timeout` or `queryTimeout` makes PostgreSQL or MySQL/MariaDB cancel a read (`find()` and the other read methods), with the driver's error as `cause`; SQLite has no statement timeout, so it never throws one there. The exported `TransactionError` class is never thrown.
+
+A query that cannot get a connection throws `DatabaseConnectionFailedError` (code `ORM_CONNECTION_FAILED`) with the driver's error as `cause`, which the 503 branch above handles. Earlier versions threw it as a plain `Error` with no `code`, and a query before `register()` came back wrapped in it instead of as `DatabaseNotConnectedError`. The final `console.error(err)` fallback is for everything else: the remaining driver errors and your own.
 
 Without an error middleware, Express's default handler returns an HTML page that includes the stack trace — fine in development, not something to ship.
 
@@ -1161,7 +1153,7 @@ Remember that SQLite differs from your production database in ways tests can hid
 | Slow queries | `logging: { slowQueryMs: 200 }` wired to your logger via `getQueryTracker()` |
 | Shutdown | `SIGTERM` handler: `server.close()` then `propagateShutdown({ closeConnections: true })` |
 | Probes | `/healthz` with no I/O; `/readyz` calling `runTestSql()` behind a `hasConnection()` guard |
-| Errors | Error middleware mapping `OrmError` subclasses and raw driver constraint codes to status codes |
+| Errors | Error middleware mapping `OrmError` subclasses, constraint violations included, to status codes |
 | Secrets | `suggestion` and stack traces logged, never serialized to clients |
 
 ## Next Steps

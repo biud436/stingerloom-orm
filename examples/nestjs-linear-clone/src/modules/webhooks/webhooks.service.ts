@@ -9,6 +9,7 @@ import {
   BaseRepository,
   EntityManager,
   Transactional,
+  UniqueConstraintViolationError,
   qAlias,
 } from "@stingerloom/orm";
 import { InjectRepository } from "@stingerloom/orm/nestjs";
@@ -219,7 +220,5 @@ function stableScalar(value: unknown): string {
 }
 
 function isUniqueViolation(err: unknown): boolean {
-  const e = err as { code?: string } | null;
-  if (!e || typeof e.code !== "string") return false;
-  return e.code === "23505" || e.code === "ER_DUP_ENTRY";
+  return err instanceof UniqueConstraintViolationError;
 }

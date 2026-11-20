@@ -15,6 +15,7 @@ import { validateIsolationLevel } from "../../utils/validateIsolationLevel";
 import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DbVersion, detectDbVersion } from "../DbVersion";
+import { toConstraintViolation } from "../constraintViolation";
 export type AnyEntity = any;
 export type IDatabaseType = "mysql" | "mariadb" | "postgres" | "sqlite";
 
@@ -212,6 +213,14 @@ export class MySqlConnector extends IConnector {
   async query(sql: string, connection?: Connection): Promise<any>;
   async query({ sql, values }: Sql, connection?: Connection): Promise<any>;
   async query(rawSql: Sql | string, connection?: Connection): Promise<any> {
+    try {
+      return await this.run(rawSql, connection);
+    } catch (error) {
+      throw toConstraintViolation(error);
+    }
+  }
+
+  private run(rawSql: Sql | string, connection?: Connection): Promise<any> {
     return new Promise((resolve, reject) => {
       if (!this.pool) {
         // Settle the promise: a bare return left the caller waiting forever.

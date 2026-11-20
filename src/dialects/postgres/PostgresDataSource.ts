@@ -22,11 +22,18 @@ export class PostgresDataSource implements IDataSource {
   private savepointPaths: Array<{ name: string; searchPath: string | null }> = [];
   /** Settles once the statements queued behind a search_path switch have run. */
   private queue?: Promise<void>;
+  /**
+   * Whether COMMIT ran on this session's connection. A failed COMMIT ends
+   * the transaction too: the connector rolls it back and releases the
+   * client, so a ROLLBACK after it has nothing left to do.
+   */
+  private commitAttempted = false;
 
   constructor(private readonly connector: IConnector) {}
 
   async createConnection() {
     this.connection = await this.connector.getConnection();
+    this.commitAttempted = false;
 
     if (!this.connection) {
       throw new PostgresConnectionError();
@@ -63,6 +70,7 @@ export class PostgresDataSource implements IDataSource {
 
   async rollback() {
     if (!this.connection) {
+      if (this.commitAttempted) return;
       throw new PostgresConnectionError();
     }
 
@@ -84,6 +92,7 @@ export class PostgresDataSource implements IDataSource {
     }
 
     if (this.queue) await this.queue;
+    this.commitAttempted = true;
     try {
       await this.connector.commit(this.connection);
     } finally {

@@ -16,6 +16,7 @@ import { parseInlineFlags } from "../../core/expressions/RegexPattern";
 import { planSafeIntegers, normalizeSafeIntegerRows } from "./SqliteSafeIntegers";
 import { sanitizeSqliteBindValues } from "./SqliteBindValues";
 import { DEFAULT_SQLITE_WAIT_MS, SqliteTransactionGate } from "./SqliteTransactionGate";
+import { toConstraintViolation } from "../constraintViolation";
 
 /**
  * SQLite connector implementation.
@@ -166,7 +167,12 @@ export class SqliteConnector extends IConnector {
         this.logger.info(`Query: ${rawSql}`);
       }
 
-      const raw = await this.execute(db, rawSql);
+      let raw: any;
+      try {
+        raw = await this.execute(db, rawSql);
+      } catch (error) {
+        throw toConstraintViolation(error);
+      }
       if (connection) {
         // Mirror PostgresConnector's top-level `rowCount` so EntityManager's
         // affected-rows extraction (`... : queryResult.rowCount ?? 0`) works on
@@ -187,7 +193,12 @@ export class SqliteConnector extends IConnector {
         this.logger.info(`Query: ${sql}, # ${stringifyForLog(values)}`);
       }
 
-      const raw = await this.execute(db, sql, values);
+      let raw: any;
+      try {
+        raw = await this.execute(db, sql, values);
+      } catch (error) {
+        throw toConstraintViolation(error);
+      }
       if (connection) {
         // Mirror PostgresConnector's top-level `rowCount` so EntityManager's
         // affected-rows extraction (`... : queryResult.rowCount ?? 0`) works on
@@ -325,7 +336,8 @@ export class SqliteConnector extends IConnector {
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");
-      throw error;
+      // A deferred foreign key is checked at COMMIT.
+      throw toConstraintViolation(error);
     }
   }
 }

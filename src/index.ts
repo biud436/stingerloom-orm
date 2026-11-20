@@ -701,6 +701,10 @@ export {
 } from "./errors/EntityMetadataNotFoundError";
 export { EntityNotFoundError } from "./errors/EntityNotFoundError";
 export { Exception } from "./errors/Exception";
+export {
+  ForeignKeyViolationDetail,
+  ForeignKeyViolationError,
+} from "./errors/ForeignKeyViolationError";
 export { InvalidQueryError } from "./errors/InvalidQueryError";
 export {
   NotSupportedDatabaseTypeError,
@@ -711,6 +715,10 @@ export { OrmErrorCode } from "./errors/OrmErrorCode";
 export { PrimaryKeyNotFoundError } from "./errors/PrimaryKeyNotFoundError";
 export { QueryTimeoutError } from "./errors/QueryTimeoutError";
 export { TransactionError } from "./errors/TransactionError";
+export {
+  UniqueConstraintViolationDetail,
+  UniqueConstraintViolationError,
+} from "./errors/UniqueConstraintViolationError";
 export {
   unsupportedExpression,
   UnsupportedExpressionOptions,

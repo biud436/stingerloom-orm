@@ -1160,7 +1160,7 @@ class IntrospectionTypeMapper {
 
 ## Errors
 
-ORM이 던지는 에러는 모두 `OrmError`입니다. `OrmErrorCode`의 `code`, 해결 힌트인 `suggestion`(없으면 `null`), 다른 에러를 감쌀 때의 `cause`를 담습니다. `suggestion`은 `message` 끝에도 `Suggestion:` 줄로 붙습니다. 문장 자체에서 난 드라이버 에러(중복 키, 문법 오류 등)는 감싸지 않고 드라이버가 던진 그대로 올라옵니다.
+ORM이 던지는 에러는 모두 `OrmError`입니다. `OrmErrorCode`의 `code`, 해결 힌트인 `suggestion`(없으면 `null`), 다른 에러를 감쌀 때의 `cause`를 담습니다. `suggestion`은 `message` 끝에도 `Suggestion:` 줄로 붙습니다. 고유 키나 외래 키를 어긴 문장은 [`UniqueConstraintViolationError` 또는 `ForeignKeyViolationError`](#제약-조건-위반)로 실패합니다. 그 밖에 문장이 데이터베이스에서 받는 에러(NOT NULL이나 CHECK 위반, 문법 오류 등)는 드라이버가 던진 그대로 올라옵니다.
 
 ```typescript
 try {
@@ -1188,7 +1188,7 @@ try {
 }
 ```
 
-`cause`에는 `ORM_CONNECTION_FAILED`, `ORM_SCHEMA_SYNC_FAILED`, `ORM_QUERY_TIMEOUT` 뒤의 드라이버 에러와 `ORM_TRANSACTION_ROLLBACK_FAILED` 뒤의 원래 에러가 담깁니다. 그래서 그 에러의 필드를 그대로 읽을 수 있습니다. `(e.cause as { code?: string }).code`는 `"ECONNREFUSED"`, `"28P01"` 같은 PostgreSQL SQLSTATE, `"ER_BAD_DB_ERROR"` 같은 MySQL 코드입니다([어떤 실패가 `register()`를 실패시키는지](./configuration.md#실패한-시도로-치는-경우)).
+`cause`에는 `ORM_CONNECTION_FAILED`, `ORM_SCHEMA_SYNC_FAILED`, `ORM_QUERY_TIMEOUT`, `ORM_UNIQUE_VIOLATION`, `ORM_FK_VIOLATION` 뒤의 드라이버 에러와 `ORM_TRANSACTION_ROLLBACK_FAILED` 뒤의 원래 에러가 담깁니다. 그래서 그 에러의 필드를 그대로 읽을 수 있습니다. `(e.cause as { code?: string }).code`는 `"ECONNREFUSED"`, `"28P01"` 같은 PostgreSQL SQLSTATE, `"ER_BAD_DB_ERROR"` 같은 MySQL 코드입니다([어떤 실패가 `register()`를 실패시키는지](./configuration.md#실패한-시도로-치는-경우)).
 
 | Error | 코드 | 던지는 경우 |
 |-------|------|-------------|
@@ -1202,6 +1202,8 @@ try {
 | `OptimisticLockError` | `ORM_OPTIMISTIC_LOCK_FAILED` | `@Version` 검사에서 행이 바뀐 것을 발견했을 때 |
 | `AdvisoryLockError` | `ORM_ADVISORY_LOCK_FAILED` | 마이그레이션·시더 잠금을 제한 시간 안에 얻지 못했을 때 |
 | `UnsupportedFeatureError` | `ORM_UNSUPPORTED_OPERATION` | 연결한 데이터베이스 버전에 DDL 문장이 필요로 하는 기능이 없을 때 |
+| `UniqueConstraintViolationError` | `ORM_UNIQUE_VIOLATION` | 문장이 중복된 기본 키나 고유 값을 저장하려 할 때. 드라이버 에러가 `cause`이고 `constraint`, `table`, `columns`도 있음 |
+| `ForeignKeyViolationError` | `ORM_FK_VIOLATION` | 행이 없는 부모를 가리키거나, 참조 중인 부모를 삭제하거나 키를 바꿀 때. 드라이버 에러가 `cause`이고 `constraint`, `table`도 있음 |
 | `QueryTimeoutError` | `ORM_QUERY_TIMEOUT` | PostgreSQL이나 MySQL/MariaDB가 `timeout` / `queryTimeout`을 넘긴 읽기를 취소했을 때. 드라이버 에러가 `cause` |
 | `DatabaseNotConnectedError` | `ORM_NOT_CONNECTED` | 그 커넥션 이름으로 등록된 것이 없을 때 (예: `register()` 전의 쿼리) |
 | `DatabaseConnectionFailedError` | `ORM_CONNECTION_FAILED` | 쿼리가 연결을 얻지 못했을 때 (서버 다운, 풀 고갈). 드라이버 에러가 `cause`이고 `status: 500`도 있음 |
@@ -1209,6 +1211,40 @@ try {
 | `TransactionError` | `ORM_TRANSACTION_FAILED` | export만 되어 있고 ORM은 던지지 않습니다. 롤백 실패는 `ORM_TRANSACTION_ROLLBACK_FAILED` 코드의 `OrmError`입니다 |
 
 `register()`도 열지 못한 연결을 `ORM_CONNECTION_FAILED` 코드의 `OrmError`로 알립니다. `DatabaseConnectionFailedError`와 `NotSupportedDatabaseTypeError`는 예전에는 별도의 `Exception` 클래스를 상속했고 `code`가 없었어요. `Exception`은 지금도 export되지만, 이를 상속하는 ORM 에러는 없습니다.
+
+### 제약 조건 위반
+
+중복 키와 외래 키 위반은 데이터베이스와 쓰기 경로에 상관없이 `OrmError`로 실패합니다. `save()`, 배치·upsert 메서드, 쿼리 빌더, 쓰기 버퍼의 flush, 원시 `em.query()` 모두 같습니다. 메시지는 데이터베이스가 보낸 그대로이고 드라이버 에러는 `cause`에 담기므로, 드라이버 코드(`23505`, errno `1062`, `SQLITE_CONSTRAINT_UNIQUE`)로 확인하던 코드는 `e.cause`에서 같은 값을 찾으면 됩니다. COMMIT 시점에 검사되는 지연(deferred) 제약 조건이 실패해도 `em.transaction()`이 같은 에러를 던집니다.
+
+```typescript
+try {
+  await em.save(User, { email: "taken@example.com" });
+} catch (e) {
+  if (e instanceof UniqueConstraintViolationError) {
+    e.code;       // "ORM_UNIQUE_VIOLATION"
+    e.constraint; // "uq_users_email" (PostgreSQL, MySQL/MariaDB)
+    e.columns;    // ["email"] (PostgreSQL, SQLite)
+    e.cause;      // 드라이버 에러: code "23505", errno 1062, code "SQLITE_CONSTRAINT_UNIQUE" 중 하나
+  } else if (e instanceof ForeignKeyViolationError) {
+    e.code;       // "ORM_FK_VIOLATION"
+    e.table;      // 외래 키를 가진 테이블 (PostgreSQL, MySQL/MariaDB)
+  }
+}
+```
+
+나머지 필드에는 데이터베이스가 제약 조건에 대해 알려 주는 정보가 담기고, 알려 주지 않는 항목은 `undefined`입니다. `columns`와 `table`은 엔티티 속성 이름이 아니라 데이터베이스 이름이에요. 외래 키의 `table`은 문장이 참조의 어느 쪽을 썼든 외래 키를 가진 테이블입니다.
+
+| 필드 | PostgreSQL | MySQL / MariaDB | SQLite |
+|------|------------|-----------------|--------|
+| `UniqueConstraintViolationError.constraint` | 제약 조건 또는 인덱스 이름 | 키 이름 (기본 키는 `PRIMARY`) | 표현식 인덱스일 때만 |
+| `UniqueConstraintViolationError.table` | 있음 | MySQL 8.0.19 이상만 | 있음 |
+| `UniqueConstraintViolationError.columns` | 있음 (표현식 키는 그 텍스트) | 없음 | 있음 |
+| `ForeignKeyViolationError.constraint` | 있음 | 있음 | 없음 |
+| `ForeignKeyViolationError.table` | 있음 | 있음 | 없음 |
+
+NOT NULL이나 CHECK 위반은 변환하지 않고 드라이버 에러 그대로 올라옵니다.
+
+이전 버전에서는 이런 위반이 드라이버 에러 그대로 올라왔고, `OrmErrorCode.UNIQUE_VIOLATION` / `FK_VIOLATION`을 만드는 곳도 없었습니다. 또 PostgreSQL과 MySQL/MariaDB에서 COMMIT이 실패하면(지연 제약 조건, 직렬화 실패) `em.transaction()`은 `ORM_TRANSACTION_ROLLBACK_FAILED`로, `@Transactional` 메서드는 연결 에러로 잘못 알렸어요. 이제 둘 다 COMMIT이 받은 에러 그대로 실패하고, 롤백 처리도 다른 실패와 똑같이 진행됩니다.
 
 ### OrmErrorCode
 
@@ -1241,8 +1277,7 @@ enum OrmErrorCode {
   // Validation
   VALIDATION_FAILED = "ORM_VALIDATION_FAILED",
   VALIDATION_ERROR = "ORM_VALIDATION_ERROR",
-  // 제약 조건 위반: 선언만 되어 있고 ORM이 만들지 않습니다 —
-  // 제약 조건 위반은 드라이버 에러 그대로 올라옵니다
+  // 제약 조건 위반: UniqueConstraintViolationError / ForeignKeyViolationError
   UNIQUE_VIOLATION = "ORM_UNIQUE_VIOLATION",
   FK_VIOLATION = "ORM_FK_VIOLATION",
   // Unsupported operation

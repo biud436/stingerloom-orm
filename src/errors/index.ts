@@ -12,6 +12,10 @@ export { DeleteWithoutConditionsError } from "./DeleteWithoutConditionsError";
 export { EntityMetadataNotFoundError } from "./EntityMetadataNotFoundError";
 export { EntityNotFoundError } from "./EntityNotFoundError";
 export { Exception } from "./Exception";
+export {
+  ForeignKeyViolationDetail,
+  ForeignKeyViolationError,
+} from "./ForeignKeyViolationError";
 export { InvalidQueryError } from "./InvalidQueryError";
 export { NotSupportedDatabaseTypeError } from "./NotSupportedDatabaseTypeError";
 export { OptimisticLockError } from "./OptimisticLockError";
@@ -20,6 +24,10 @@ export { OrmErrorCode } from "./OrmErrorCode";
 export { PrimaryKeyNotFoundError } from "./PrimaryKeyNotFoundError";
 export { QueryTimeoutError } from "./QueryTimeoutError";
 export { TransactionError } from "./TransactionError";
+export {
+  UniqueConstraintViolationDetail,
+  UniqueConstraintViolationError,
+} from "./UniqueConstraintViolationError";
 export {
   unsupportedExpression,
   UnsupportedExpressionOptions,

@@ -11,11 +11,18 @@ import { mysqlQueryWithOptions } from "./mysqlQueryWithOptions";
 
 export class MySqlDataSource implements IDataSource {
   private connection?: Connection;
+  /**
+   * Whether COMMIT ran on this session's connection. A failed COMMIT ends
+   * the transaction too: the connector rolls it back and releases the
+   * connection, so a ROLLBACK after it has nothing left to do.
+   */
+  private commitAttempted = false;
 
   constructor(private readonly connector: IConnector) {}
 
   async createConnection() {
     this.connection = await this.connector.getConnection();
+    this.commitAttempted = false;
 
     if (!this.connection) {
       throw new MySqlConnectionError();
@@ -46,6 +53,7 @@ export class MySqlDataSource implements IDataSource {
 
   async rollback() {
     if (!this.connection) {
+      if (this.commitAttempted) return;
       throw new MySqlConnectionError();
     }
 
@@ -67,6 +75,7 @@ export class MySqlDataSource implements IDataSource {
 
     // See rollback(): the connector may release the connection while recovering
     // from a commit error, so always drop our ref to avoid a double-release.
+    this.commitAttempted = true;
     try {
       await this.connector.commit(this.connection);
     } finally {

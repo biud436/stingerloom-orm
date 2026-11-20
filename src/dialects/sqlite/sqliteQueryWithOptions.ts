@@ -3,6 +3,7 @@ import type { Sql } from "../../utils/sqlTag";
 import type { DriverQueryOptions } from "../../types/DriverQueryOptions";
 import { planSafeIntegers, normalizeSafeIntegerRows } from "./SqliteSafeIntegers";
 import { sanitizeSqliteBindValues } from "./SqliteBindValues";
+import { toConstraintViolation } from "../constraintViolation";
 
 /**
  * Runs `query` on the better-sqlite3 database `db` with the result format
@@ -14,6 +15,14 @@ export function sqliteQueryWithOptions(
   query: Sql,
   options: DriverQueryOptions,
 ): any[] {
+  try {
+    return runWithOptions(db, query, options);
+  } catch (error) {
+    throw toConstraintViolation(error);
+  }
+}
+
+function runWithOptions(db: any, query: Sql, options: DriverQueryOptions): any[] {
   const sanitized = sanitizeSqliteBindValues(query.values);
   const stmt = db.prepare(query.sql);
 
