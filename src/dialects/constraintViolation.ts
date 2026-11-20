@@ -38,8 +38,8 @@ const MYSQL_FK_ERRNOS = new Set([1451, 1452, 1216, 1217]);
  * of them.
  */
 export function toConstraintViolation(error: unknown): unknown {
-  if (!(error instanceof Error) || error instanceof OrmError) return error;
-  const e = error as Error & DriverErrorFields;
+  if (!isThrownError(error) || error instanceof OrmError) return error;
+  const e = error;
 
   if (
     e.code === "23505" ||
@@ -61,6 +61,21 @@ export function toConstraintViolation(error: unknown): unknown {
     });
   }
   return error;
+}
+
+/**
+ * Whether `error` is an error object, judged by its shape rather than
+ * `instanceof Error`: better-sqlite3 hands its native binding the
+ * `SqliteError` class of the first copy of the module that loads it, so
+ * where each test file gets its own globals (Jest), its errors fail
+ * `instanceof Error` in every file after the first.
+ */
+function isThrownError(error: unknown): error is DriverErrorFields {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    typeof (error as { message?: unknown }).message === "string"
+  );
 }
 
 function uniqueDetail(e: DriverErrorFields): UniqueConstraintViolationDetail {

@@ -5,6 +5,7 @@
  * (checked against PostgreSQL 16, MariaDB 11.8 and SQLite); the MySQL 8 key
  * format is from its documentation.
  */
+import * as vm from "vm";
 import { toConstraintViolation } from "../../src/dialects/constraintViolation";
 import { OrmError } from "../../src/errors/OrmError";
 import { OrmErrorCode } from "../../src/errors/OrmErrorCode";
@@ -238,11 +239,29 @@ describe("toConstraintViolation", () => {
     });
   });
 
-  it("passes an OrmError and anything that is not an Error through", () => {
+  it("maps an error created in another realm, which fails instanceof Error", () => {
+    // better-sqlite3 keeps the SqliteError class of the first copy of the
+    // module that loaded it, so under Jest a later test file receives errors
+    // whose prototype chain ends in another context's Error.
+    const foreign = vm.runInNewContext(
+      "Object.assign(new Error('UNIQUE constraint failed: users.email'), { code: 'SQLITE_CONSTRAINT_UNIQUE' })",
+    );
+    expect(foreign instanceof Error).toBe(false);
+
+    const error = toConstraintViolation(foreign) as UniqueConstraintViolationError;
+
+    expect(error).toBeInstanceOf(UniqueConstraintViolationError);
+    expect(error.cause).toBe(foreign);
+    expect(error.columns).toEqual(["email"]);
+  });
+
+  it("passes an OrmError and anything that is not an error object through", () => {
     const ormError = new OrmError(OrmErrorCode.INVALID_QUERY, "bad");
     expect(toConstraintViolation(ormError)).toBe(ormError);
-    const notAnError = { code: "23505", message: "duplicate key" };
-    expect(toConstraintViolation(notAnError)).toBe(notAnError);
+    const noMessage = { code: "23505" };
+    expect(toConstraintViolation(noMessage)).toBe(noMessage);
+    expect(toConstraintViolation("23505")).toBe("23505");
+    expect(toConstraintViolation(null)).toBeNull();
     expect(toConstraintViolation(undefined)).toBeUndefined();
   });
 });
