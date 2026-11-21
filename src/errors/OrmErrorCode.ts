@@ -19,6 +19,12 @@ export enum OrmErrorCode {
   QUERY_TIMEOUT = "ORM_QUERY_TIMEOUT",
 
   // Transaction
+  /**
+   * @deprecated The ORM never reports this code: it belongs to the deprecated
+   * {@link TransactionError}, which nothing throws. A rollback that fails is
+   * {@link OrmErrorCode.TRANSACTION_ROLLBACK_FAILED}; a COMMIT that fails
+   * rejects with its own error.
+   */
   TRANSACTION_FAILED = "ORM_TRANSACTION_FAILED",
   TRANSACTION_ROLLBACK_FAILED = "ORM_TRANSACTION_ROLLBACK_FAILED",
 
@@ -27,6 +33,7 @@ export enum OrmErrorCode {
   OPTIMISTIC_LOCK_FAILED = "ORM_OPTIMISTIC_LOCK_FAILED",
 
   // Validation
+  /** A validation decorator rejected a value: always a `ValidationError`. */
   VALIDATION_FAILED = "ORM_VALIDATION_FAILED",
 
   // Savepoint
@@ -67,11 +74,22 @@ export enum OrmErrorCode {
   SCHEMA_SYNC_FAILED = "ORM_SCHEMA_SYNC_FAILED",
   SCHEMA_SYNC_DESTRUCTIVE_CHANGE = "ORM_SCHEMA_SYNC_DESTRUCTIVE_CHANGE",
 
-  // Validation
-  VALIDATION_ERROR = "ORM_VALIDATION_ERROR",
+  /**
+   * @deprecated An alias of {@link OrmErrorCode.VALIDATION_FAILED} with the
+   * same value, so a check written against either name sees every
+   * `ValidationError`. The schema checks that used to report
+   * `"ORM_VALIDATION_ERROR"` report {@link OrmErrorCode.SCHEMA_ERROR}.
+   */
+  VALIDATION_ERROR = VALIDATION_FAILED,
+
+  /**
+   * @deprecated An alias of {@link OrmErrorCode.INVALID_QUERY} with the same
+   * value, so a check written against either name sees every rejected query.
+   * The errors that used to report `"ORM_QUERY_ERROR"` report `INVALID_QUERY`.
+   */
+  QUERY_ERROR = INVALID_QUERY,
 
   // Query
-  QUERY_ERROR = "ORM_QUERY_ERROR",
   /**
    * A `bigint` column (or an aggregate over one) holds a value outside the
    * JS safe-integer range (±2^53) while the read contract is `number`.

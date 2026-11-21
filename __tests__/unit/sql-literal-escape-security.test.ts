@@ -37,7 +37,7 @@ describe("escapeSqlLiteral (#285, #286)", () => {
     expect(escapeSqlLiteral("a\\'b")).toBe("a\\\\''b");
   });
 
-  it("rejects null bytes with VALIDATION_ERROR", () => {
+  it("rejects null bytes with SCHEMA_ERROR", () => {
     let captured: unknown;
     try {
       escapeSqlLiteral("foo\0bar");
@@ -45,7 +45,7 @@ describe("escapeSqlLiteral (#285, #286)", () => {
       captured = e;
     }
     expect(captured).toBeInstanceOf(OrmError);
-    expect((captured as OrmError).code).toBe(OrmErrorCode.VALIDATION_ERROR);
+    expect((captured as OrmError).code).toBe(OrmErrorCode.SCHEMA_ERROR);
   });
 
   it("leaves benign values untouched", () => {
@@ -133,7 +133,7 @@ describe("@FullTextIndex language sanitization (#285)", () => {
       captured = e;
     }
     expect(captured).toBeInstanceOf(OrmError);
-    expect((captured as OrmError).code).toBe(OrmErrorCode.VALIDATION_ERROR);
+    expect((captured as OrmError).code).toBe(OrmErrorCode.SCHEMA_ERROR);
   });
 
   it("rejects a language containing a backslash", () => {
@@ -146,7 +146,7 @@ describe("@FullTextIndex language sanitization (#285)", () => {
       captured = e;
     }
     expect(captured).toBeInstanceOf(OrmError);
-    expect((captured as OrmError).code).toBe(OrmErrorCode.VALIDATION_ERROR);
+    expect((captured as OrmError).code).toBe(OrmErrorCode.SCHEMA_ERROR);
   });
 
   it("rejects a language containing whitespace", () => {
@@ -159,7 +159,7 @@ describe("@FullTextIndex language sanitization (#285)", () => {
       captured = e;
     }
     expect(captured).toBeInstanceOf(OrmError);
-    expect((captured as OrmError).code).toBe(OrmErrorCode.VALIDATION_ERROR);
+    expect((captured as OrmError).code).toBe(OrmErrorCode.SCHEMA_ERROR);
   });
 
   it("does not affect MySQL FULLTEXT DDL — language has no place there", () => {
@@ -208,7 +208,7 @@ describe("ENUM literal escaping (#286)", () => {
         captured = e;
       }
       expect(captured).toBeInstanceOf(OrmError);
-      expect((captured as OrmError).code).toBe(OrmErrorCode.VALIDATION_ERROR);
+      expect((captured as OrmError).code).toBe(OrmErrorCode.SCHEMA_ERROR);
     });
   });
 
@@ -264,7 +264,7 @@ describe("ENUM literal escaping (#286)", () => {
         captured = e;
       }
       expect(captured).toBeInstanceOf(OrmError);
-      expect((captured as OrmError).code).toBe(OrmErrorCode.VALIDATION_ERROR);
+      expect((captured as OrmError).code).toBe(OrmErrorCode.SCHEMA_ERROR);
     });
 
     it("emits unchanged DDL for vanilla enum values (regression)", async () => {

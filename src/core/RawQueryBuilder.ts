@@ -276,7 +276,7 @@ export class RawQueryBuilder implements BaseRawQueryBuilder {
       ({ column, direction }) => {
         const safeDirection = direction.toUpperCase();
         if (safeDirection !== "ASC" && safeDirection !== "DESC") {
-          throw new OrmError(OrmErrorCode.QUERY_ERROR, `Invalid ORDER BY direction: ${direction}`);
+          throw new OrmError(OrmErrorCode.INVALID_QUERY, `Invalid ORDER BY direction: ${direction}`);
         }
         return `${column} ${safeDirection}`;
       },

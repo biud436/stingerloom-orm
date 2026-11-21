@@ -293,12 +293,12 @@ describe("EntityManager.query(shape) — typed raw rows", () => {
     });
   });
 
-  test("a declared column missing from the result rejects with QUERY_ERROR", async () => {
+  test("a declared column missing from the result rejects with INVALID_QUERY", async () => {
     mockQuery.mockResolvedValue({ results: [{ id: 16 }], fields: [] });
     await expect(
       em.query(CachedLocation)`SELECT id FROM cached_location`,
     ).rejects.toMatchObject({
-      code: OrmErrorCode.QUERY_ERROR,
+      code: OrmErrorCode.INVALID_QUERY,
       message: expect.stringContaining('no column "x"'),
     });
   });

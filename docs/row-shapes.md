@@ -169,7 +169,7 @@ PostgreSQL folds unquoted identifiers to lower case, so `AVG(price) AS avgPrice`
 
 Columns the query returns but the shape doesn't declare are copied through unchanged. They are not part of the inferred type. This means `SELECT *` on a wide table works with a shape that names only the columns you use.
 
-If a declared column is missing from the result, `em.query` throws `OrmError` with code `QUERY_ERROR`. The error names the missing columns and lists the ones that did come back:
+If a declared column is missing from the result, `em.query` throws `OrmError` with code `INVALID_QUERY`. The error names the missing columns and lists the ones that did come back:
 
 ```
 em.query(CachedLocation): the result has no column "cached_at" (field "cachedAt"). Result columns: id, x, y.

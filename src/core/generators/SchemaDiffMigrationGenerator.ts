@@ -35,7 +35,7 @@ const DEPENDENCY_NAMING = new DefaultNamingStrategy();
 function escapeEnumValue(val: string): string {
   if (val.includes("\0")) {
     throw new OrmError(
-      OrmErrorCode.VALIDATION_ERROR,
+      OrmErrorCode.SCHEMA_ERROR,
       `Enum value contains null byte`,
     );
   }

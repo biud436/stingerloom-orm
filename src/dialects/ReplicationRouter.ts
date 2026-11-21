@@ -87,14 +87,14 @@ export class ReplicationRouter {
   constructor(config: ReplicationConfig) {
     if (!config.master) {
       throw new OrmError(
-        OrmErrorCode.VALIDATION_FAILED,
+        OrmErrorCode.INVALID_CONFIG,
         "Replication master configuration is required.",
         "Provide a 'master' node in the replication config",
       );
     }
     if (!config.slaves || config.slaves.length === 0) {
       throw new OrmError(
-        OrmErrorCode.VALIDATION_FAILED,
+        OrmErrorCode.INVALID_CONFIG,
         "At least one slave is required for replication configuration.",
         "Provide at least one 'slave' node in the replication config",
       );

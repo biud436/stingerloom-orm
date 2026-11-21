@@ -169,7 +169,7 @@ PostgreSQL은 따옴표 없는 식별자를 소문자로 바꿉니다. 그래서
 
 쿼리가 돌려줬지만 shape에 선언하지 않은 컬럼은 그대로 복사됩니다. 추론된 타입에는 포함되지 않고요. 그래서 컬럼이 많은 테이블에 `SELECT *`를 하면서 shape에는 실제로 쓰는 컬럼만 적어도 됩니다.
 
-반대로 선언한 컬럼이 결과에 없으면 `em.query`가 코드 `QUERY_ERROR`인 `OrmError`를 던집니다. 메시지에는 빠진 컬럼과 실제로 돌아온 컬럼이 모두 적힙니다.
+반대로 선언한 컬럼이 결과에 없으면 `em.query`가 코드 `INVALID_QUERY`인 `OrmError`를 던집니다. 메시지에는 빠진 컬럼과 실제로 돌아온 컬럼이 모두 적힙니다.
 
 ```
 em.query(CachedLocation): the result has no column "cached_at" (field "cachedAt"). Result columns: id, x, y.

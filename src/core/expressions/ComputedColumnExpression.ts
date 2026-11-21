@@ -114,7 +114,7 @@ export function renderComputedColumnExpression(
     rendered = result.resolve(resolveColumn, dialectExpr);
   } else {
     throw new OrmError(
-      OrmErrorCode.VALIDATION_ERROR,
+      OrmErrorCode.SCHEMA_ERROR,
       "@ComputedColumn expression builder must return a value built from " +
         "the provided context — e.col(...), e.iff(...), e.dateDiff(...), " +
         "e.caseBuilder()…end(), or a comparison such as e.col(...).gt(0).",
@@ -140,7 +140,7 @@ function toSqlLiteral(value: unknown, dialect: DialectName): string {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
       throw new OrmError(
-        OrmErrorCode.VALIDATION_ERROR,
+        OrmErrorCode.SCHEMA_ERROR,
         `@ComputedColumn expression produced a non-finite number (${value}); ` +
           "it cannot be inlined into DDL.",
       );
@@ -153,7 +153,7 @@ function toSqlLiteral(value: unknown, dialect: DialectName): string {
   }
   if (typeof value === "string") return `'${escapeSqlLiteral(value)}'`;
   throw new OrmError(
-    OrmErrorCode.VALIDATION_ERROR,
+    OrmErrorCode.SCHEMA_ERROR,
     `@ComputedColumn expression produced a ${typeof value} value that cannot ` +
       "be inlined into a GENERATED ALWAYS AS (...) clause. Use column " +
       "references (e.col), numbers, strings, booleans, or null.",

@@ -22,7 +22,7 @@ import { OrmErrorCode } from "../errors/OrmErrorCode";
 export function escapeSqlLiteral(value: string): string {
   if (value.includes("\0")) {
     throw new OrmError(
-      OrmErrorCode.VALIDATION_ERROR,
+      OrmErrorCode.SCHEMA_ERROR,
       `Value contains a null byte and cannot be safely interpolated into SQL`,
     );
   }

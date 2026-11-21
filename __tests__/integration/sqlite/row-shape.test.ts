@@ -137,7 +137,7 @@ describe("[SQLite] em.query(shape) on an unmapped table", () => {
     await expect(
       em.query(CachedLocation)`SELECT id FROM rs_cached_location`,
     ).rejects.toMatchObject({
-      code: OrmErrorCode.QUERY_ERROR,
+      code: OrmErrorCode.INVALID_QUERY,
       message: expect.stringContaining('the result has no column "x"'),
     });
   });

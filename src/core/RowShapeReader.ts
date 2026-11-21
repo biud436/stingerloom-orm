@@ -116,7 +116,7 @@ function missingColumnError(
       `.name("${actual}").`;
   }
   return new OrmError(
-    OrmErrorCode.QUERY_ERROR,
+    OrmErrorCode.INVALID_QUERY,
     `em.query(${shape.name}): the result has no column ${list}. ` +
       `Result columns: ${resultColumns.join(", ") || "(none)"}.`,
     hint,

@@ -14,7 +14,6 @@ import {
   DeleteWithoutConditionsError,
   InvalidQueryError,
   ValidationError as OrmValidationError,
-  TransactionError,
   QueryTimeoutError,
   AdvisoryLockError,
   UniqueConstraintViolationError,
@@ -164,15 +163,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ...base,
         status: HttpStatus.BAD_REQUEST,
         code: "INVALID_QUERY",
-        message: exception.message,
-      };
-    }
-
-    if (exception instanceof TransactionError) {
-      return {
-        ...base,
-        status: HttpStatus.CONFLICT,
-        code: "TRANSACTION",
         message: exception.message,
       };
     }

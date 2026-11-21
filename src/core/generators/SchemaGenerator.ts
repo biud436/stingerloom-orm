@@ -894,7 +894,7 @@ const FULLTEXT_LANGUAGE_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 function sanitizeFullTextLanguage(value: string): string {
   if (!FULLTEXT_LANGUAGE_PATTERN.test(value)) {
     throw new OrmError(
-      OrmErrorCode.VALIDATION_ERROR,
+      OrmErrorCode.SCHEMA_ERROR,
       `Invalid @FullTextIndex language: "${value}". Expected a PostgreSQL ` +
         `text-search configuration identifier (letters, digits, underscore).`,
       "Use a valid regconfig name such as 'english', 'simple', 'korean'.",

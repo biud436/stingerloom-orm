@@ -1210,7 +1210,7 @@ try {
 | `DatabaseNotConnectedError` | `ORM_NOT_CONNECTED` | Nothing is registered under the connection name, e.g. a query before `register()` |
 | `DatabaseConnectionFailedError` | `ORM_CONNECTION_FAILED` | A query cannot get a connection (server down, pool exhausted); the driver error is `cause`. Also has `status: 500` |
 | `NotSupportedDatabaseTypeError` | `ORM_UNSUPPORTED_DATABASE` | `type` names a database the ORM has no driver for. Also has `status: 500` |
-| `TransactionError` | `ORM_TRANSACTION_FAILED` | Exported, but the ORM does not throw it. A rollback that fails is an `OrmError` with `ORM_TRANSACTION_ROLLBACK_FAILED` |
+| `TransactionError` | `ORM_TRANSACTION_FAILED` | Deprecated: nothing in the ORM throws it, so `instanceof TransactionError` never matches. A rollback that fails is an `OrmError` with `ORM_TRANSACTION_ROLLBACK_FAILED` |
 
 `register()` reports a connection it cannot open as an `OrmError` with `ORM_CONNECTION_FAILED` too. `DatabaseConnectionFailedError` and `NotSupportedDatabaseTypeError` used to extend a separate `Exception` class and had no `code`; `Exception` is still exported, but no ORM error extends it.
 
@@ -1264,13 +1264,13 @@ enum OrmErrorCode {
   INVALID_QUERY = "ORM_INVALID_QUERY",
   DELETE_WITHOUT_CONDITIONS = "ORM_DELETE_WITHOUT_CONDITIONS",
   QUERY_TIMEOUT = "ORM_QUERY_TIMEOUT",
-  QUERY_ERROR = "ORM_QUERY_ERROR",
+  QUERY_ERROR = "ORM_INVALID_QUERY", // deprecated: the value of INVALID_QUERY
   BIGINT_PRECISION_LOSS = "ORM_BIGINT_PRECISION_LOSS",
   DECIMAL_PRECISION_LOSS = "ORM_DECIMAL_PRECISION_LOSS",
   MISSING_REQUIRED_COLUMNS = "ORM_MISSING_REQUIRED_COLUMNS",
   MISSING_PLACEHOLDER = "ORM_MISSING_PLACEHOLDER",
   // Transaction
-  TRANSACTION_FAILED = "ORM_TRANSACTION_FAILED",
+  TRANSACTION_FAILED = "ORM_TRANSACTION_FAILED", // deprecated: never reported
   TRANSACTION_ROLLBACK_FAILED = "ORM_TRANSACTION_ROLLBACK_FAILED",
   INVALID_SAVEPOINT_NAME = "ORM_INVALID_SAVEPOINT_NAME",
   // Locking
@@ -1278,7 +1278,7 @@ enum OrmErrorCode {
   OPTIMISTIC_LOCK_FAILED = "ORM_OPTIMISTIC_LOCK_FAILED",
   // Validation
   VALIDATION_FAILED = "ORM_VALIDATION_FAILED",
-  VALIDATION_ERROR = "ORM_VALIDATION_ERROR",
+  VALIDATION_ERROR = "ORM_VALIDATION_FAILED", // deprecated: the value of VALIDATION_FAILED
   // Constraint violations: UniqueConstraintViolationError / ForeignKeyViolationError
   UNIQUE_VIOLATION = "ORM_UNIQUE_VIOLATION",
   FK_VIOLATION = "ORM_FK_VIOLATION",
@@ -1306,6 +1306,16 @@ enum OrmErrorCode {
   TENANT_RESOLVER_MISSING = "ORM_TENANT_RESOLVER_MISSING",
 }
 ```
+
+`QUERY_ERROR` and `VALIDATION_ERROR` are deprecated aliases. Each has the value of the code it duplicated, `INVALID_QUERY` and `VALIDATION_FAILED`, so a check against either name matches the same errors, and `VALIDATION_FAILED` comes only from `ValidationError`.
+
+Earlier versions gave these concepts two codes each:
+
+- `"ORM_QUERY_ERROR"` came from an `em.query(shape)` result that lacks a declared column, a `getRawMany()` coercion that fails, an invalid ORDER BY direction, and a write whose rows cannot be read back. They report `"ORM_INVALID_QUERY"` now, and a check against `OrmErrorCode.QUERY_ERROR` still matches them.
+- `"ORM_VALIDATION_ERROR"` came from schema checks: a `@ComputedColumn` builder that returns something it cannot render, an invalid `@FullTextIndex` language, and a null byte in an enum value or another DDL literal. They report `"ORM_SCHEMA_ERROR"` now, so a check against `OrmErrorCode.VALIDATION_ERROR` matches `ValidationError` instead.
+- A `replication` option without `master` or `slaves` reports `"ORM_INVALID_CONFIG"`, not `"ORM_VALIDATION_FAILED"`.
+
+Code that compares `e.code` with one of the old strings needs the new one.
 
 ## EntitySchema (Decorator-Free Entity Definition)
 
