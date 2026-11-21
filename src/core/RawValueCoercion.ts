@@ -129,7 +129,7 @@ export function coerceRow<T>(
     } catch (err) {
       if (err instanceof OrmError) throw err;
       throw new OrmError(
-        OrmErrorCode.QUERY_ERROR,
+        OrmErrorCode.INVALID_QUERY,
         `getRawMany: failed to coerce column "${key}" to "${type}" ` +
           `(value: ${String(out[key])}): ` +
           (err instanceof Error ? err.message : String(err)),

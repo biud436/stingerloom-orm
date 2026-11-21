@@ -2163,7 +2163,7 @@ export class WriteExecutor {
     const missing = saved.filter((row) => row === undefined).length;
     if (missing > 0) {
       throw new OrmError(
-        OrmErrorCode.QUERY_ERROR,
+        OrmErrorCode.INVALID_QUERY,
         `saveMany(${entity.name}) inserted ${items.length} rows but could not read back ` +
           `${missing} of them by their derived primary keys.`,
         "The keys are derived from the driver's insert result; on MySQL this assumes " +
@@ -2964,7 +2964,7 @@ export class WriteExecutor {
       );
       if (rows.length > 1) {
         throw new OrmError(
-          OrmErrorCode.QUERY_ERROR,
+          OrmErrorCode.INVALID_QUERY,
           `executeAndReturn() on ${entity.name} read back ${rows.length} rows by (${readBack.keyProperties.join(", ")}). ` +
             `On MySQL the written row is read back by the onConflict() columns, so they must form a unique key.`,
         );

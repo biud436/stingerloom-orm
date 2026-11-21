@@ -311,7 +311,7 @@ describe("defineRow — reading raw rows", () => {
       { name: "CachedLocation" },
     );
     const err = catchError(() => read(Shape, [{ id: 1 }]));
-    expect(err.code).toBe(OrmErrorCode.QUERY_ERROR);
+    expect(err.code).toBe(OrmErrorCode.INVALID_QUERY);
     expect(err.message).toContain(
       'em.query(CachedLocation): the result has no column "cached_at" (field "cachedAt"), "zone".',
     );

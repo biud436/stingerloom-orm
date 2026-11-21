@@ -5276,7 +5276,7 @@ export class SelectQueryBuilder<T, TResult = T> {
       const dir = entry.direction;
       if (dir !== "ASC" && dir !== "DESC") {
         throw new OrmError(
-          OrmErrorCode.QUERY_ERROR,
+          OrmErrorCode.INVALID_QUERY,
           `Invalid ORDER BY direction: ${dir}`,
         );
       }

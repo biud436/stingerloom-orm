@@ -26,10 +26,17 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 - **BREAKING: `DatabaseConnectionFailedError` and `NotSupportedDatabaseTypeError` are `OrmError`s.** Both extended `Exception`, so the error a query met when the database was down failed `e instanceof OrmError`, had no `code` and was named `"Error"`. They now carry `ORM_CONNECTION_FAILED` / `ORM_UNSUPPORTED_DATABASE` and their class name, and keep `status: 500`; `e instanceof Exception` is false for both. A query run before `register()` throws `DatabaseNotConnectedError` (`ORM_NOT_CONNECTED`) as it is instead of wrapped in `DatabaseConnectionFailedError`, and `NotSupportedDatabaseTypeError` names the type it was given.
 
+- **BREAKING: each error concept has one code.** "A query was rejected" was split across `INVALID_QUERY` and `QUERY_ERROR`, and "validation failed" across `VALIDATION_FAILED` and `VALIDATION_ERROR`, so a handler matching one name missed the errors the other sites threw. An `em.query(shape)` result that lacks a declared column, a `getRawMany()` coercion that fails, an invalid ORDER BY direction and a write whose rows cannot be read back now report `ORM_INVALID_QUERY` instead of `ORM_QUERY_ERROR`. The schema checks that reported `ORM_VALIDATION_ERROR` (a `@ComputedColumn` builder that returns something it cannot render, an invalid `@FullTextIndex` language, a null byte in an enum value or another DDL literal) report `ORM_SCHEMA_ERROR`, and a `replication` option without `master` or `slaves` reports `ORM_INVALID_CONFIG` instead of `ORM_VALIDATION_FAILED`, which now comes only from `ValidationError`. Code that compares `e.code` with one of the old strings needs the new one.
+
 ### Added
 
 - **`OrmError` keeps the error it wraps as `cause`.** A fourth constructor argument, `{ cause }`, sets it the way `new Error(message, { cause })` does (`OrmErrorOptions` is exported). A failed connection in `register()`, a failed `synchronize` statement or comparison, a failed rollback and a failed `getRawMany` coercion now keep the driver's error there, so `cause.code` (`"ECONNREFUSED"`, `"28P01"`, `"ER_BAD_DB_ERROR"`) is read rather than parsed out of the message.
 - **`type: "decimal"` for exact numbers, with `decimalMode`.** `decimal` creates `DECIMAL(p, s)` on MySQL/MariaDB and `NUMERIC(p, s)` on PostgreSQL and SQLite (`precision` / `scale`, default `(10, 2)`). PostgreSQL and mysql2 return the value as text and SQLite as a number; `decimalMode` decides what the property holds on every driver: `"number"` (default) reads a number and throws `DECIMAL_PRECISION_LOSS` instead of rounding a value a JS number cannot hold exactly, and `"string"` reads the exact digits (a SQLite number is padded with zeros to the scale, never rounded). The same mode is available as `t.decimal(precision, scale, { mode: "string" })`, which infers `string`, and applies to row shapes. `DecimalMode`, `DEFAULT_DECIMAL_MODE` and `normalizeDecimalValue` are exported.
+
+### Deprecated
+
+- **`OrmErrorCode.QUERY_ERROR` and `OrmErrorCode.VALIDATION_ERROR`** are aliases of `INVALID_QUERY` and `VALIDATION_FAILED` with the same values, so a check against either name keeps matching. Use the canonical names.
+- **`TransactionError` and `OrmErrorCode.TRANSACTION_FAILED`.** Nothing in the ORM throws the class or reports the code, so `instanceof TransactionError` never matches an ORM error. A rollback that fails is an `OrmError` with `ORM_TRANSACTION_ROLLBACK_FAILED`; a COMMIT that fails rejects with its own error.
 
 ### Fixed
 

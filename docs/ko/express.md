@@ -301,7 +301,7 @@ export function errorHandler(
 
 중복 키와 외래 키 위반도 데이터베이스와 상관없이 `OrmError`로 올라옵니다. 각각 `UniqueConstraintViolationError`(코드 `ORM_UNIQUE_VIOLATION`)와 `ForeignKeyViolationError`(`ORM_FK_VIOLATION`)이고, 드라이버 에러는 `cause`에 담깁니다([데이터베이스별로 제약 조건에 대해 알려 주는 정보](./api-reference.md#제약-조건-위반)). 이전 버전에서는 `mysql2` / `pg` / `better-sqlite3`의 원본 에러가 그대로 올라와서 핸들러가 `23505`, errno `1062`, `SQLITE_CONSTRAINT_UNIQUE` 같은 드라이버 코드를 직접 확인해야 했습니다. 그런 코드는 이제 `err.cause`에서 같은 값을 찾으면 됩니다.
 
-그 밖에 문장이 데이터베이스에서 받는 에러(NOT NULL이나 CHECK 위반, 문법 오류)는 지금도 드라이버가 던진 그대로 올라옵니다. `QueryTimeoutError`는 `timeout`이나 `queryTimeout` 때문에 PostgreSQL 또는 MySQL/MariaDB가 읽기(`find()`를 비롯한 읽기 메서드)를 취소했을 때 드라이버 에러를 `cause`에 담아 던집니다. SQLite에는 문장 타임아웃이 없어서 SQLite에서는 던지지 않아요. export되어 있는 `TransactionError` 클래스는 어디에서도 던져지지 않습니다.
+그 밖에 문장이 데이터베이스에서 받는 에러(NOT NULL이나 CHECK 위반, 문법 오류)는 지금도 드라이버가 던진 그대로 올라옵니다. `QueryTimeoutError`는 `timeout`이나 `queryTimeout` 때문에 PostgreSQL 또는 MySQL/MariaDB가 읽기(`find()`를 비롯한 읽기 메서드)를 취소했을 때 드라이버 에러를 `cause`에 담아 던집니다. SQLite에는 문장 타임아웃이 없어서 SQLite에서는 던지지 않아요. export되어 있는 `TransactionError` 클래스는 deprecated이며 어디에서도 던지지 않습니다.
 
 연결을 얻지 못한 쿼리는 드라이버 에러를 `cause`에 담은 `DatabaseConnectionFailedError`(코드 `ORM_CONNECTION_FAILED`)를 던지고, 위 미들웨어의 503 분기가 이를 처리합니다. 이전 버전에서는 이 에러가 `code` 없는 평범한 `Error`였고, `register()` 전에 들어온 쿼리도 `DatabaseNotConnectedError` 대신 이 에러에 감싸여 올라왔어요. 마지막 `console.error(err)` 분기는 그 밖의 에러, 즉 나머지 드라이버 에러와 애플리케이션 자체 에러를 받습니다.
 

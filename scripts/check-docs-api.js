@@ -18,7 +18,8 @@
  *     a string the key's type spells out (`type: "postgres"`) is one it lists;
  *   - `new` names a class that is not abstract and has a public constructor;
  *   - an `interface` restating an exported type declares only properties
- *     the type has;
+ *     the type has, and an `enum` restating an exported enum lists all of
+ *     its members with their values;
  *   - the method tables of api-reference.md name real members with the
  *     required parameters the source declares, its `Export` tables name real
  *     exports, and decorator rows (`@Name(a, b?)`) in any table match the
@@ -563,10 +564,43 @@ function checkBlock(report, block, scope) {
     }
   };
 
+  /**
+   * `enum OrmErrorCode { ... }` restating an enum the package exports: every
+   * member, each with the value the source gives it. A member may restate its
+   * value as a string or number, or name a member written above it.
+   */
+  const visitEnum = (node) => {
+    const symbol = ROOT_EXPORTS.get(node.name.text);
+    if (!symbol || !(symbol.flags & ts.SymbolFlags.Enum) || !declaredInSrc(symbol)) return;
+    const declared = new Map();
+    for (const decl of symbol.declarations) {
+      if (!ts.isEnumDeclaration(decl)) continue;
+      for (const member of decl.members) declared.set(member.name.getText(), checker.getConstantValue(member));
+    }
+    const documented = new Map();
+    for (const member of node.members) {
+      const name = member.name.getText(source);
+      const init = member.initializer;
+      const value = !init ? undefined
+        : ts.isStringLiteral(init) ? init.text
+        : ts.isNumericLiteral(init) ? Number(init.text)
+        : ts.isIdentifier(init) ? documented.get(init.text)
+        : undefined;
+      documented.set(name, value);
+      if (!declared.has(name)) report(lineOf(member), `${node.name.text}.${name} does not exist`);
+      else if (value !== undefined && value !== declared.get(name)) {
+        report(lineOf(member), `${node.name.text}.${name} is ${JSON.stringify(declared.get(name))}, not ${JSON.stringify(value)}`);
+      }
+    }
+    const missing = [...declared.keys()].filter((name) => !documented.has(name));
+    if (missing.length) report(lineOf(node), `${node.name.text} leaves out ${missing.join(", ")}`);
+  };
+
   const visit = (node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) visitImport(node);
     if (ts.isDecorator(node)) visitDecorator(node);
     if (ts.isInterfaceDeclaration(node)) visitInterface(node);
+    if (ts.isEnumDeclaration(node)) visitEnum(node);
 
     // Children first, so a call's receiver is typed before the call itself.
     ts.forEachChild(node, visit);

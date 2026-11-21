@@ -382,6 +382,7 @@ EntityManager에 public API를 추가하는 절차예요:
 
 **Step 1:** `src/errors/OrmErrorCode.ts`에 새 에러 코드 추가
 
+<!-- check-docs-api: skip -->
 ```typescript
 export enum OrmErrorCode {
   // ... existing codes

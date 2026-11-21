@@ -1208,7 +1208,7 @@ try {
 | `DatabaseNotConnectedError` | `ORM_NOT_CONNECTED` | 그 커넥션 이름으로 등록된 것이 없을 때 (예: `register()` 전의 쿼리) |
 | `DatabaseConnectionFailedError` | `ORM_CONNECTION_FAILED` | 쿼리가 연결을 얻지 못했을 때 (서버 다운, 풀 고갈). 드라이버 에러가 `cause`이고 `status: 500`도 있음 |
 | `NotSupportedDatabaseTypeError` | `ORM_UNSUPPORTED_DATABASE` | `type`이 ORM에 드라이버가 없는 데이터베이스일 때. `status: 500`도 있음 |
-| `TransactionError` | `ORM_TRANSACTION_FAILED` | export만 되어 있고 ORM은 던지지 않습니다. 롤백 실패는 `ORM_TRANSACTION_ROLLBACK_FAILED` 코드의 `OrmError`입니다 |
+| `TransactionError` | `ORM_TRANSACTION_FAILED` | deprecated. ORM 어디에서도 던지지 않으므로 `instanceof TransactionError`는 맞는 경우가 없습니다. 롤백 실패는 `ORM_TRANSACTION_ROLLBACK_FAILED` 코드의 `OrmError`입니다 |
 
 `register()`도 열지 못한 연결을 `ORM_CONNECTION_FAILED` 코드의 `OrmError`로 알립니다. `DatabaseConnectionFailedError`와 `NotSupportedDatabaseTypeError`는 예전에는 별도의 `Exception` 클래스를 상속했고 `code`가 없었어요. `Exception`은 지금도 export되지만, 이를 상속하는 ORM 에러는 없습니다.
 
@@ -1262,13 +1262,13 @@ enum OrmErrorCode {
   INVALID_QUERY = "ORM_INVALID_QUERY",
   DELETE_WITHOUT_CONDITIONS = "ORM_DELETE_WITHOUT_CONDITIONS",
   QUERY_TIMEOUT = "ORM_QUERY_TIMEOUT",
-  QUERY_ERROR = "ORM_QUERY_ERROR",
+  QUERY_ERROR = "ORM_INVALID_QUERY", // deprecated: INVALID_QUERY와 같은 값
   BIGINT_PRECISION_LOSS = "ORM_BIGINT_PRECISION_LOSS",
   DECIMAL_PRECISION_LOSS = "ORM_DECIMAL_PRECISION_LOSS",
   MISSING_REQUIRED_COLUMNS = "ORM_MISSING_REQUIRED_COLUMNS",
   MISSING_PLACEHOLDER = "ORM_MISSING_PLACEHOLDER",
   // Transaction
-  TRANSACTION_FAILED = "ORM_TRANSACTION_FAILED",
+  TRANSACTION_FAILED = "ORM_TRANSACTION_FAILED", // deprecated: 어디에서도 보고하지 않음
   TRANSACTION_ROLLBACK_FAILED = "ORM_TRANSACTION_ROLLBACK_FAILED",
   INVALID_SAVEPOINT_NAME = "ORM_INVALID_SAVEPOINT_NAME",
   // Locking
@@ -1276,7 +1276,7 @@ enum OrmErrorCode {
   OPTIMISTIC_LOCK_FAILED = "ORM_OPTIMISTIC_LOCK_FAILED",
   // Validation
   VALIDATION_FAILED = "ORM_VALIDATION_FAILED",
-  VALIDATION_ERROR = "ORM_VALIDATION_ERROR",
+  VALIDATION_ERROR = "ORM_VALIDATION_FAILED", // deprecated: VALIDATION_FAILED와 같은 값
   // 제약 조건 위반: UniqueConstraintViolationError / ForeignKeyViolationError
   UNIQUE_VIOLATION = "ORM_UNIQUE_VIOLATION",
   FK_VIOLATION = "ORM_FK_VIOLATION",
@@ -1304,6 +1304,16 @@ enum OrmErrorCode {
   TENANT_RESOLVER_MISSING = "ORM_TENANT_RESOLVER_MISSING",
 }
 ```
+
+`QUERY_ERROR`와 `VALIDATION_ERROR`는 deprecated된 별칭입니다. 각각 중복되던 코드인 `INVALID_QUERY`, `VALIDATION_FAILED`와 같은 값을 가지므로 어느 이름으로 확인해도 같은 에러가 걸리고, `VALIDATION_FAILED`는 `ValidationError`에서만 나옵니다.
+
+이전 버전에서는 같은 개념에 코드가 두 개씩 있었습니다.
+
+- `"ORM_QUERY_ERROR"`는 선언한 컬럼이 빠진 `em.query(shape)` 결과, 실패한 `getRawMany()` 변환, 잘못된 ORDER BY 방향, 쓴 행을 다시 읽지 못한 쓰기에서 나왔습니다. 이제는 `"ORM_INVALID_QUERY"`로 알리고, `OrmErrorCode.QUERY_ERROR`로 확인하는 코드도 그대로 걸립니다.
+- `"ORM_VALIDATION_ERROR"`는 스키마 검사에서 나왔습니다. 렌더링할 수 없는 값을 돌려주는 `@ComputedColumn` 빌더, 잘못된 `@FullTextIndex` 언어, enum 값이나 다른 DDL 리터럴에 든 null 바이트가 그 경우예요. 이제는 `"ORM_SCHEMA_ERROR"`로 알리므로, `OrmErrorCode.VALIDATION_ERROR`로 확인하는 코드에는 대신 `ValidationError`가 걸립니다.
+- `master`나 `slaves`가 없는 `replication` 옵션은 `"ORM_VALIDATION_FAILED"`가 아니라 `"ORM_INVALID_CONFIG"`로 알립니다.
+
+`e.code`를 예전 문자열과 비교하던 코드는 새 문자열로 바꿔야 합니다.
 
 ## EntitySchema (Decorator-Free Entity Definition)
 

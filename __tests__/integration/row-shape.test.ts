@@ -192,7 +192,7 @@ describeIf.each(getTestDrivers())(
       await expect(
         em.query(CachedLocation)`SELECT id FROM ${table()}`,
       ).rejects.toMatchObject({
-        code: OrmErrorCode.QUERY_ERROR,
+        code: OrmErrorCode.INVALID_QUERY,
         message: expect.stringContaining('the result has no column "x"'),
       });
     });
@@ -203,7 +203,7 @@ describeIf.each(getTestDrivers())(
         await expect(
           em.query(Avg)`SELECT AVG(price) AS avgPrice FROM ${table()}`,
         ).rejects.toMatchObject({
-          code: OrmErrorCode.QUERY_ERROR,
+          code: OrmErrorCode.INVALID_QUERY,
           suggestion: expect.stringContaining('.name("avgprice")'),
         });
 
