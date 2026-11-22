@@ -120,21 +120,28 @@ export class TransactionSessionManager extends IQueryEngine {
   }
 
   /**
-   * Opens a pool of its own to the given replication node, with the default
-   * connection's options, and checks a connection out of it. {@link close}
-   * ends that pool. EntityManager reads do not use this: they share one
-   * pool per node for the manager's lifetime.
+   * Opens a pool of its own to the given replication node and checks a
+   * connection out of it. The pool takes the database type and options of
+   * the registered connection the node replicates, with the node's host,
+   * port, credentials and database. {@link close} ends that pool.
+   * EntityManager reads do not use this: they share one pool per node for
+   * the manager's lifetime.
    *
    * @param nodeConfig Configuration of the node to connect to
+   * @param connectionName The registered connection the node is a replica of
+   * (default: `"default"`)
    * @throws {DatabaseConnectionFailedError} When the connection fails
    */
-  public async connectToNode(nodeConfig: ReplicationNodeConfig): Promise<void> {
+  public async connectToNode(
+    nodeConfig: ReplicationNodeConfig,
+    connectionName = "default",
+  ): Promise<void> {
     try {
       const client = DatabaseClient.getInstance();
-      const dbType = client.type;
+      const dbType = client.getType(connectionName);
       const connector = await connectReplicationNode(
         dbType,
-        client.getOptions(),
+        client.getOptions(connectionName),
         nodeConfig,
       );
       this.ownedConnector = connector;

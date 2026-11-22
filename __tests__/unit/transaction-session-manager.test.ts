@@ -21,19 +21,28 @@ const mockGetConnection = jest.fn().mockResolvedValue({
   close: jest.fn().mockResolvedValue(undefined),
 });
 
-const mockGetOptions = jest.fn().mockReturnValue({
+const defaultOptions = {
   host: "localhost",
   port: 3306,
   username: "root",
   password: "",
   database: "test",
-});
+};
+
+/** Connections registered under a name other than "default": name → type and options. */
+const namedConnections = new Map<string, { type: string; options: Record<string, unknown> }>();
+
+const mockGetOptions = jest.fn((name: string = "default") =>
+  name === "default" ? defaultOptions : namedConnections.get(name)?.options,
+);
 
 const dbInstance: Record<string, any> = {
   type: "mysql",
   getConnection: mockGetConnection,
   getOptions: mockGetOptions,
-  getType: jest.fn().mockReturnValue("mysql"),
+  getType: jest.fn((name: string = "default") =>
+    name === "default" ? dbInstance.type : namedConnections.get(name)?.type,
+  ),
 };
 
 jest.mock("../../src/DatabaseClient", () => ({
@@ -89,6 +98,7 @@ describe("TransactionSessionManager", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     dbInstance.type = "mysql";
+    namedConnections.clear();
     session = new TransactionSessionManager();
   });
 
@@ -212,6 +222,50 @@ describe("TransactionSessionManager", () => {
       await expect(session.connectToNode(nodeConfig)).rejects.toThrow(DatabaseConnectionFailedError);
 
       expect(lastMySqlConnector().close).toHaveBeenCalledTimes(1);
+    });
+
+    it("takes the type and options of the named connection the node replicates", async () => {
+      namedConnections.set("analytics", {
+        type: "postgres",
+        options: {
+          type: "postgres",
+          host: "analytics-primary",
+          port: 5433,
+          username: "writer",
+          password: "pw",
+          database: "analytics",
+          queryTimeout: 5000,
+          pool: { max: 7 },
+        },
+      });
+
+      await session.connectToNode(nodeConfig, "analytics");
+
+      const { PostgresConnector } = require("../../src/dialects/postgres/PostgresConnector");
+      const { MySqlConnector } = require("../../src/dialects/mysql/MySqlConnector");
+      expect(MySqlConnector).not.toHaveBeenCalled();
+      expect(PostgresConnector).toHaveBeenCalledTimes(1);
+      const connector = (PostgresConnector as jest.Mock).mock.results[0].value;
+      expect(connector.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          host: "replica.example.com",
+          port: 5432,
+          username: "reader",
+          database: "mydb",
+          queryTimeout: 5000,
+          pool: { max: 7 },
+        }),
+      );
+      expect(mockGetOptions).not.toHaveBeenCalledWith("default");
+    });
+
+    it("takes the default connection's options when no connection is named", async () => {
+      await session.connectToNode(nodeConfig);
+
+      expect(mockGetOptions).toHaveBeenCalledWith("default");
+      expect(lastMySqlConnector().connect).toHaveBeenCalledWith(
+        expect.objectContaining({ host: "replica.example.com", username: "reader" }),
+      );
     });
 
     it("connects with the node's own ssl setting", async () => {
