@@ -406,6 +406,19 @@ The buffer analyzes `@ManyToOne` and `@OneToOne` metadata to build a **dependenc
 
 Cycles in the dependency graph are detected and handled gracefully with a fallback to the original order.
 
+### Foreign keys come from the relation
+
+A row's `@ManyToOne` / owning `@OneToOne` key is written from whatever the instance states, with the precedence `save()` uses: the relation set to a related instance contributes that instance's key, a bare value is the key itself, `null` clears it, and the FK property (`authorId`, or the `@Column` on the join column) is used when the relation is not set. A relation that was never loaded (still a lazy proxy) leaves the stored key alone.
+
+```typescript
+const post = await buf.findOne(Post, { where: { id: 1 } });
+post.author = newAuthor;   // a row this buffer persists in the same flush
+buf.persist(newAuthor);
+await buf.flush();         // INSERT author, then UPDATE post SET author_id = <new id>
+```
+
+When the related instance has no key yet, the key is written once the flush has inserted it — also for a self-reference whose target is queued after the row. If the flush never writes that instance, `flush()` throws an `InvalidQueryError` and rolls back, instead of storing the row without its key; `persist()` the related instance or save it first.
+
 ### Atomicity — all or nothing
 
 If any operation fails, the entire transaction is rolled back:

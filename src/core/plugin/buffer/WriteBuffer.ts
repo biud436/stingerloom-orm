@@ -931,7 +931,7 @@ export class WriteBuffer {
     const result: any[] = [];
     for (const entry of this.trackedEntries.values()) {
       const diff = this.strategy.diff(
-        entry.instance,
+        this.idMap.foreignKeyView(entry.instance, entry.entity),
         entry.snapshot,
         entry.columnNames,
         entry.pkColumns,
@@ -1026,7 +1026,7 @@ export class WriteBuffer {
     );
     for (const entry of eligible) {
       const diff = this.strategy.diff(
-        entry.instance,
+        this.idMap.foreignKeyView(entry.instance, entry.entity),
         entry.snapshot,
         entry.columnNames,
         entry.pkColumns,
@@ -1046,8 +1046,9 @@ export class WriteBuffer {
     const sortedPersists = sortByIndex([...this.persistQueue], indexMap);
     for (const entry of sortedPersists) {
       const data: Record<string, any> = {};
+      const view = this.idMap.foreignKeyView(entry.instance, entry.entity);
       for (const col of entry.columnNames) {
-        if (entry.instance[col] !== undefined) data[col] = entry.instance[col];
+        if (view[col] !== undefined) data[col] = view[col];
       }
       entries.push({
         action: "insert",
@@ -1224,7 +1225,7 @@ export class WriteBuffer {
     // Updates
     for (const entry of this.trackedEntries.values()) {
       const diff = this.strategy.diff(
-        entry.instance,
+        this.idMap.foreignKeyView(entry.instance, entry.entity),
         entry.snapshot,
         entry.columnNames,
         entry.pkColumns,
@@ -1319,6 +1320,14 @@ export class WriteBuffer {
           ),
           indexMap,
         );
+
+        // The buffer writes columns: each tracked row's relations are written
+        // onto its FK properties first, so the diff sees a relation that now
+        // points elsewhere (or nowhere).
+        this.flushExec.resetPendingForeignKeys();
+        for (const entry of sortedTracked) {
+          this.flushExec.syncForeignKeys(entry.entity, entry.instance);
+        }
 
         // A dirty still-unhydrated getReference() stub is about to UPDATE a
         // row this buffer has never seen. Verify the row exists and hydrate
@@ -1415,6 +1424,7 @@ export class WriteBuffer {
             }
             if (this.options.logging) this.log("flush: INSERT", { entity: entry.entity.name });
             await this.flushExec.emitFlushEvent("preInsert", entry.entity, entry.instance);
+            this.flushExec.syncForeignKeys(entry.entity, entry.instance);
             const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
             const saved = await txEm.save(entry.entity, saveData);
             if (saved) {
@@ -1450,6 +1460,10 @@ export class WriteBuffer {
             await this.cascade.processManyToManyCollectionDiff(txEm, entry, diff, result);
           }
         }
+
+        // Foreign keys whose target is a row this flush inserted after the
+        // row holding them: every insert has run, so each target has its key.
+        await this.flushExec.writePendingForeignKeys(txEm);
 
         // 5. Cascade delete — before parent delete, cascade-delete children
         if (this.options.cascade.remove) {
@@ -1676,7 +1690,7 @@ export class WriteBuffer {
       if (entry.readOnly) continue;
       if (!this.shouldDirtyCheck(entry)) continue;
       const diff = this.strategy.diff(
-        entry.instance,
+        this.idMap.foreignKeyView(entry.instance, entry.entity),
         entry.snapshot,
         entry.columnNames,
         entry.pkColumns,
@@ -1944,7 +1958,7 @@ export class WriteBuffer {
       if (entry.readOnly) continue;
       if (this.shouldDirtyCheck(entry)) {
         const diff = this.strategy.diff(
-          entry.instance,
+          this.idMap.foreignKeyView(entry.instance, entry.entity),
           entry.snapshot,
           entry.columnNames,
           entry.pkColumns,

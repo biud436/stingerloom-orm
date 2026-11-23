@@ -14,7 +14,13 @@ import {
   ResolvedBufferOptions,
 } from "./BufferPreview";
 import { BufferStrategy } from "./BufferStrategy";
-import { IdentityMapManager, EntityInstance, ColumnValueMap } from "./IdentityMapManager";
+import {
+  IdentityMapManager,
+  EntityInstance,
+  ColumnValueMap,
+  PendingForeignKey,
+} from "./IdentityMapManager";
+import { InvalidQueryError } from "../../../errors/InvalidQueryError";
 import { CascadeProcessor } from "./CascadeProcessor";
 import { InheritanceResolver } from "../../InheritanceResolver";
 import { runInternalQuery } from "../../entity-manager/internal-query";
@@ -48,6 +54,74 @@ export class FlushExecutor {
     this.options = options;
     this.strategy = strategy;
     this.flushListeners = flushListeners;
+  }
+
+  /**
+   * Foreign keys of rows this flush has written whose target had no key yet
+   * — a row the flush inserts after them. Written by
+   * {@link writePendingForeignKeys} once every insert has run.
+   */
+  private pendingForeignKeys: Array<PendingForeignKey & { entity: ClazzType<any>; instance: EntityInstance }> = [];
+
+  /** Starts a flush with no pending foreign keys. */
+  resetPendingForeignKeys(): void {
+    this.pendingForeignKeys = [];
+  }
+
+  /**
+   * Writes the foreign keys `instance`'s relations state onto its FK
+   * properties before the row is diffed or saved — the buffer writes
+   * columns only, so a relation set to an instance, a bare key or `null`
+   * would otherwise never reach the row. A target without its key yet is
+   * remembered and written after the inserts.
+   *
+   * `exceptRelation` is a relation whose key the caller assigns itself
+   * (the back-reference of a cascaded collection).
+   */
+  syncForeignKeys(
+    entityClass: ClazzType<any>,
+    instance: EntityInstance,
+    exceptRelation?: string,
+  ): void {
+    for (const pending of this.idMap.syncForeignKeys(instance, entityClass, exceptRelation)) {
+      this.pendingForeignKeys.push({ ...pending, entity: entityClass, instance });
+    }
+  }
+
+  /**
+   * Writes the foreign keys {@link syncForeignKeys} could not resolve: every
+   * row the flush inserts has been written, so each target now has its key.
+   * One save per row. A target that still has none was never written by the
+   * flush, and the flush fails instead of leaving the key unwritten.
+   */
+  async writePendingForeignKeys(txEm: EntityManager): Promise<void> {
+    const pending = this.pendingForeignKeys;
+    this.pendingForeignKeys = [];
+    const rows = new Map<EntityInstance, ClazzType<any>>();
+    for (const { entity, instance, field, target } of pending) {
+      const key = this.idMap.referencedKeyOf(target, field);
+      if (key === undefined || key === null) {
+        const targetName = (field.getTarget() as ClazzType<any>).name;
+        throw new InvalidQueryError(
+          `${entity.name}.${field.relation} holds a ${targetName} that this flush does not write ` +
+            `(it has no key), so the foreign key cannot be set; the flush was rolled back.`,
+          `persist() the ${targetName} in the same buffer, or save it first.`,
+        );
+      }
+      if (instance[field.property] === key) continue;
+      instance[field.property] = key;
+      rows.set(instance, entity);
+    }
+    for (const [instance, entity] of rows) {
+      const { columnNames } = this.idMap.getColumnInfo(entity);
+      const saved = await txEm.save(entity, this.idMap.extractColumnData(instance, columnNames));
+      if (saved) {
+        for (const col of columnNames) {
+          const v = (saved as EntityInstance)[col];
+          if (v !== undefined) instance[col] = v;
+        }
+      }
+    }
   }
 
   /**
@@ -232,6 +306,7 @@ export class FlushExecutor {
       ) {
         for (const entry of entries) {
           await this.emitFlushEvent("preInsert", entry.entity, entry.instance);
+          this.syncForeignKeys(entry.entity, entry.instance);
           const saveData = this.idMap.extractColumnData(entry.instance, entry.columnNames);
           const saved = await txEm.save(entry.entity, saveData);
           if (saved) {
@@ -253,6 +328,7 @@ export class FlushExecutor {
       // persists such mutations because it fires the event before save().
       for (const entry of entries) {
         await this.emitFlushEvent("preInsert", entry.entity, entry.instance);
+        this.syncForeignKeys(entry.entity, entry.instance);
       }
 
       // saveMany() builds the multi-row INSERT, so the batch writes what
@@ -315,6 +391,7 @@ export class FlushExecutor {
     result: BufferFlushResult,
   ): Promise<void> {
     if (visited.has(entry.instance)) return;
+    this.syncForeignKeys(entry.entity, entry.instance);
     const changed = (): ColumnValueMap => {
       const data = this.idMap.extractColumnData(entry.instance, entry.columnNames);
       for (const pk of entry.pkColumns) delete data[pk];
