@@ -1238,9 +1238,9 @@ export class ReadExecutor {
       const relatedTableName = relatedMetadata.name || RelatedEntity.name;
       const joinColumn = rel.joinColumn ?? rel.columnName;
 
-      const relatedPk = relatedMetadata.columns.find(
-        (col: any) => col.options?.primary,
-      );
+      // The column the join column holds: the target's primary key, unless
+      // the relation references another one.
+      const relatedPk = this.resolver.resolveReferencedColumn(rel.references, RelatedEntity);
       if (!relatedPk) continue;
 
       // A TPT child reads the join column from the table that holds it:
@@ -1666,9 +1666,7 @@ export class ReadExecutor {
         const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
         if (!relatedMetadata) continue;
 
-        const relatedPk = relatedMetadata.columns.find(
-          (col: any) => col.options?.primary,
-        );
+        const relatedPk = this.resolver.resolveReferencedColumn(rel.references, RelatedEntity);
         if (!relatedPk) continue;
 
         const em = this;

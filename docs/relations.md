@@ -319,6 +319,8 @@ owner!: Owner;
 
 (`@ManyToOne`'s `references` option expresses the same thing and remains the form used by the code-first `defineEntity()` / `EntitySchema` APIs; when both are present, `referencedColumn` wins.)
 
+The join column then holds the value of that column everywhere, not only in the constraint: `save()` writes `owner.uuid` when given an `Owner` instance (a bare value is taken as the `uuid` itself), `relations: ["owner"]` and lazy loading find the owner by `uuid`, and the inverse `@OneToMany` (`owner.cats`, `withCount`, cascades) matches cats by it. The referenced column should be unique -- the databases require that for the constraint, and a to-one relation resolves to a single row. A cascading save of the `@OneToMany` side needs the parent's referenced value in the object being saved.
+
 > **Composite primary keys** A foreign key column references one column. When the target entity has a composite primary key (`@PrimaryColumn()` on more than one property) and `synchronize` builds the schema, a `@ManyToOne` or owning `@OneToOne` must either name the column it references with `referencedColumn` (a unique column of the target) or set `createForeignKeyConstraints: false`, and a `@ManyToMany` cannot use that entity on either side. `register()` rejects such a relation with a `SCHEMA_ERROR` that names the relation and the key columns, and `migrate:generate` rejects it the same way before it writes a migration.
 
 This generates:

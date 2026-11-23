@@ -1739,7 +1739,9 @@ export class WriteExecutor {
    * alone, the batch paths bind NULL.
    *
    * An explicit `null` means "no parent" and wins over a stale shadow
-   * property. A related instance contributes its primary key. **A bare value
+   * property. A related instance contributes the key the join column
+   * references — its primary key unless the relation names another column
+   * (`references`). **A bare value
    * is the key itself** — that case is why this lives in one place: every
    * write path carried a near-copy of this chain, and three of them treated
    * `{ author: 7 }` as nothing to write. Failing that, the `${property}Id`
@@ -1756,13 +1758,12 @@ export class WriteExecutor {
 
     if (relatedValue !== undefined) {
       if (typeof relatedValue === "object") {
-        const RelatedEntity = rel.getRelatedEntity();
-        const relatedMeta = this.resolver.resolveEntityMetadata(RelatedEntity);
-        const relatedPk = relatedMeta?.columns.find(
-          (col: ColumnMetadata) => col.options?.primary,
+        const relatedKey = this.resolver.resolveReferencedColumn(
+          rel.references,
+          rel.getRelatedEntity(),
         );
-        const key = relatedPk
-          ? fieldsOf(relatedValue)[this.ctx.propKey(relatedPk)]
+        const key = relatedKey
+          ? fieldsOf(relatedValue)[this.ctx.propKey(relatedKey)]
           : undefined;
         if (key !== undefined && key !== null) return key;
         // An object without its key yet — the parent a cascade is saving

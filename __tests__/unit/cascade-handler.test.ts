@@ -73,6 +73,9 @@ function createMockResolver(
     getVersionColumn: jest.fn().mockReturnValue(null),
     resolveJoinColumnsFromColumnMeta: jest.fn((_, rels) => rels),
     resolveJoinColumnsFromColumnMetaForOneToOne: jest.fn((_, rels) => rels),
+    // Derived lookups run the real implementation over the mocked reads.
+    resolveReferencedColumn: RelationMetadataResolver.prototype.resolveReferencedColumn,
+    resolveOneToManyParentKey: RelationMetadataResolver.prototype.resolveOneToManyParentKey,
     resolveManyToManyJoinTable: jest.fn().mockReturnValue(null),
     ...overrides,
   } as unknown as RelationMetadataResolver;

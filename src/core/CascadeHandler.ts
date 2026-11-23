@@ -3,6 +3,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { ClazzType } from "../utils";
 import { WhereClause } from "../dialects/FindOption";
 import { HOOK_TOKEN, HookEvent, HookMetadata } from "../decorators";
+import { ColumnMetadata } from "../scanner";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { hasCascade } from "../types/CascadeType";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
@@ -30,6 +33,8 @@ interface DependentRelation {
   RelatedEntity: ClazzType<any>;
   /** The join column on the related table that holds the parent's key. */
   fkColumn: string;
+  /** The parent column that key is: the primary key unless `references` names another. */
+  parentKey?: ColumnMetadata;
 }
 
 /** A relation property of a write payload holding a row the write does not persist. */
@@ -217,6 +222,32 @@ export class CascadeHandler {
     return !!value && typeof value === "object" && cascadeChain.getStore()?.has(value) === true;
   }
 
+  /**
+   * The value the children of a OneToMany write in their join column: the
+   * saved parent's primary key, or — when the owning ManyToOne names another
+   * column (`references`) — the parent's value of that column.
+   */
+  private referencedParentValue(
+    entity: ClazzType<any>,
+    item: unknown,
+    rel: { propertyKey: string },
+    references: string | undefined,
+    savedParentId: unknown,
+  ): unknown {
+    const key = this.resolver.resolveReferencedColumn(references, entity);
+    if (!key || key.options?.primary) return savedParentId;
+    const property = key.propertyKey ?? key.name;
+    const value = (item as Record<string, unknown>)[property];
+    if (value === undefined || value === null) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `Cannot cascade ${entity.name}.${rel.propertyKey}: its rows reference ${entity.name}.${property}, which the saved ${entity.name} does not state.`,
+        `Include "${property}" in the ${entity.name} being saved.`,
+      );
+    }
+    return value;
+  }
+
   private async cascadeSaveOneToManyInner<T>(
     entity: ClazzType<T>,
     item: Partial<T>,
@@ -253,14 +284,15 @@ export class CascadeHandler {
       // WriteBuffer cascade (CollectionTracker) so both paths stay in
       // lockstep; only the metadata lookup above stays resolver-based here.
       const fkKeys = fkWriteKeysFromManyToOne(matchingRelation, rel.mappedBy);
+      const parentKey = this.referencedParentValue(entity, item, rel, matchingRelation?.references, savedParentId);
 
       for (const child of children) {
         if (CascadeHandler.isAncestor(child)) continue;
         // The FK goes onto the caller's object before the child's own save
         // takes its snapshot, so it is restored on rollback from here.
         await restoreOnRollback(this.sessionOf(session), [child], async () => {
-          // Set the FK to the parent's PK.
-          assignFkValue(child, fkKeys, savedParentId);
+          // Set the FK to the parent's key.
+          assignFkValue(child, fkKeys, parentKey);
           if (session) {
             await this.ctx.saveWithSession(RelatedEntity, child, session);
           } else {
@@ -346,14 +378,13 @@ export class CascadeHandler {
       const RelatedEntity = rel.getMappingEntity() as ClazzType<any>;
       const saved = await this.ctx.save(RelatedEntity, relatedValue);
 
-      // Assign the saved parent's PK to the FK column.
+      // Assign the saved parent's key — the column the join column
+      // references — to the FK column.
       const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
       if (!relatedMetadata) {
         throw new EntityMetadataNotFoundError(RelatedEntity.name);
       }
-      const relatedPk = relatedMetadata.columns.find(
-        (col: any) => col.options?.primary,
-      );
+      const relatedPk = this.resolver.resolveReferencedColumn(rel.references, RelatedEntity);
       if (relatedPk && rel.joinColumn) {
         (item as any)[rel.joinColumn] = (saved as any)[relatedPk.propertyKey ?? relatedPk.name];
       }
@@ -471,10 +502,23 @@ export class CascadeHandler {
     );
     if (dependents.length === 0) return;
 
-    const parentIds = await this.removedParentIds(entity, criteria, mode);
-    if (parentIds.length === 0) return;
+    const keyColumns = dependents
+      .map((dep) => dep.parentKey)
+      .filter((col): col is ColumnMetadata => !!col && !col.options?.primary);
+    const removed = await this.removedParentIds(entity, criteria, mode, keyColumns);
+    if (removed.length === 0) return;
 
-    for (const { RelatedEntity, fkColumn } of dependents) {
+    for (const { RelatedEntity, fkColumn, parentKey } of dependents) {
+      const keyProperty =
+        parentKey && !parentKey.options?.primary ? (parentKey.propertyKey ?? parentKey.name) : undefined;
+      const parentIds = [
+        ...new Set(
+          removed
+            .map((row) => (keyProperty ? row.keys[keyProperty] : row.pk))
+            .filter((id) => id !== undefined && id !== null),
+        ),
+      ];
+      if (parentIds.length === 0) continue;
       // One statement for every dependent: `fk = ?` or `fk IN (...)`.
       const childCriteria = {
         [fkColumn]: parentIds.length === 1 ? parentIds[0] : parentIds,
@@ -504,6 +548,7 @@ export class CascadeHandler {
       dependents.push({
         RelatedEntity,
         fkColumn: matchingRelation?.joinColumn ?? rel.mappedBy,
+        parentKey: this.resolver.resolveReferencedColumn(matchingRelation?.references, entity),
       });
     }
     for (const rel of this.resolver.resolveOneToOneMetadata(entity)) {
@@ -528,7 +573,8 @@ export class CascadeHandler {
   }
 
   /**
-   * The PKs of the parents a removal acts on. `softDelete` acts on live
+   * The parents a removal acts on: their PKs, plus the value of each
+   * non-key column a dependent's join column references (`keyColumns`). `softDelete` acts on live
    * parents — the parent statement that follows only touches those; `delete`
    * reads `withDeleted` because the hard delete removes trashed rows as
    * well; `restore` reads `withDeleted` and keeps the soft-deleted parents,
@@ -538,7 +584,8 @@ export class CascadeHandler {
     entity: ClazzType<T>,
     criteria: WhereClause<T>,
     mode: "delete" | "softDelete" | "restore",
-  ): Promise<unknown[]> {
+    keyColumns: readonly ColumnMetadata[] = [],
+  ): Promise<Array<{ pk: unknown; keys: Record<string, unknown> }>> {
     const parentMetadata = this.resolver.resolveEntityMetadata(entity);
     const pk = parentMetadata?.columns.find((col: any) => col.options?.primary);
     if (!pk) return [];
@@ -553,6 +600,7 @@ export class CascadeHandler {
       where: criteria,
       select: {
         [pk.name]: true,
+        ...Object.fromEntries(keyColumns.map((col) => [col.name, true])),
         ...(parentDeletedAt ? { [parentDeletedAt]: true } : {}),
       },
       ...(CascadeHandler.readsTrashedParents(mode) ? { withDeleted: true } : {}),
@@ -566,8 +614,15 @@ export class CascadeHandler {
           !parentDeletedAt ||
           (p[parentDeletedAt] !== undefined && p[parentDeletedAt] !== null),
       )
-      .map((p: any) => p[pkProperty])
-      .filter((id: any) => id !== undefined && id !== null);
+      .filter((p: any) => p[pkProperty] !== undefined && p[pkProperty] !== null)
+      .map((p: any) => {
+        const keys: Record<string, unknown> = {};
+        for (const col of keyColumns) {
+          const property = col.propertyKey ?? col.name;
+          keys[property] = p[property];
+        }
+        return { pk: p[pkProperty], keys };
+      });
   }
 
   /**
