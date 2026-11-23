@@ -319,6 +319,8 @@ owner!: Owner;
 
 (`@ManyToOne`의 `references` 옵션도 같은 의미이며, 코드 우선 API인 `defineEntity()` / `EntitySchema`에서는 이 형태를 계속 사용합니다. 둘 다 지정되면 `referencedColumn`이 우선해요.)
 
+`referencedColumn` / `references`에는 컬럼 이름이나 그 프로퍼티 이름을 쓸 수 있어요. 네이밍 전략이 `isoCode` 프로퍼티를 `iso_code` 컬럼으로 저장한다면 두 이름 모두 됩니다. 둘 중 어느 것도 아닌 이름은 `register()`가 `SCHEMA_ERROR`로 거부합니다.
+
 이렇게 선언하면 조인 컬럼은 제약 조건뿐 아니라 모든 경로에서 그 컬럼의 값을 담습니다. `save()`에 `Owner` 인스턴스를 주면 `owner.uuid`를 기록하고(값을 직접 주면 그 값이 곧 `uuid`입니다), `relations: ["owner"]`와 지연 로딩은 `uuid`로 주인을 찾으며, 반대편 `@OneToMany`(`owner.cats`, `withCount`, cascade)도 같은 컬럼으로 고양이를 맞춥니다. 참조되는 컬럼은 유니크해야 해요. 데이터베이스가 제약 조건에 그것을 요구하고, to-one 관계는 한 행으로 정해져야 하기 때문입니다. `@OneToMany` 쪽을 cascade로 저장할 때는 저장하는 부모 객체에 참조 컬럼 값이 들어 있어야 합니다.
 
 > **복합 기본 키** FK 컬럼은 컬럼 하나를 참조합니다. 대상 엔티티가 복합 기본 키(`@PrimaryColumn()`이 둘 이상)를 가지고 `synchronize`가 스키마를 만드는 경우, `@ManyToOne`이나 소유측 `@OneToOne`은 `referencedColumn`으로 참조할 컬럼(대상의 유니크 컬럼)을 지정하거나 `createForeignKeyConstraints: false`를 설정해야 하고, `@ManyToMany`는 그 엔티티를 어느 쪽에도 쓸 수 없습니다. 이런 관계는 `register()`가 관계와 키 컬럼 이름을 담은 `SCHEMA_ERROR`로 거부하고, `migrate:generate`도 migration을 쓰기 전에 같은 방식으로 거부합니다.

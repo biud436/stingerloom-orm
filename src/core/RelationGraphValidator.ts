@@ -27,6 +27,9 @@ type RelationKind = "ManyToOne" | "OneToMany" | "ManyToMany" | "OneToOne";
  * - a `@ManyToMany` has a join table, its own `joinTable` or the one its
  *   `mappedBy` names — otherwise no join table is created and the relation
  *   never loads;
+ * - a `@ManyToOne` `references` / `referencedColumn` names a column of the
+ *   target — otherwise the constraint names a column that does not exist
+ *   and the writers and loaders fall back to the primary key;
  * - with `createsForeignKeys` (synchronize builds the schema), a relation's
  *   foreign key constraint points at a single column — a composite primary
  *   key needs `referencedColumn`, or the constraint references part of the
@@ -91,6 +94,9 @@ function checkEntity(
   for (const rel of resolver.resolveManyToOneMetadata(entity)) {
     const at = site(rel, rel.columnName, "ManyToOne");
     const target = checkTarget(at, () => rel.getMappingEntity(), scope, problems);
+    if (target && rel.references) {
+      checkReferencedColumn(at, rel.references, target, resolver, problems);
+    }
     if (target && !rel.references && declaresForeignKey(rel)) {
       checkSingleColumnKey(at, target, resolver, problems, true);
     }
@@ -325,6 +331,33 @@ function checkJoinTableSource(
       (owningBack
         ? ` ${target.name}.${owningBack.propertyKey} declares one: add mappedBy: "${owningBack.propertyKey}".`
         : ` Declare joinTable on one side and mappedBy on the other.`),
+  );
+}
+
+/**
+ * The column a `@ManyToOne` names with `references` / `referencedColumn`
+ * must be a column of its target, by DB column or property. Otherwise the
+ * constraint names a column that does not exist — SQLite then rejects every
+ * write to either table with "foreign key mismatch", PostgreSQL and MySQL
+ * reject the table — and the writers and loaders, finding no such column,
+ * would fall back to the primary key.
+ */
+function checkReferencedColumn(
+  at: string,
+  references: string,
+  target: ClazzType<any>,
+  resolver: RelationMetadataResolver,
+  problems: Set<string>,
+): void {
+  const columns = resolver.resolveEntityMetadata(target)?.columns ?? [];
+  if (columns.some((c) => c.name === references || c.propertyKey === references)) return;
+  const names = [
+    ...new Set(columns.flatMap((c) => [c.propertyKey, c.name]).filter((n): n is string => !!n)),
+  ];
+  const suggestion = closestIdentifier(references, names);
+  problems.add(
+    `${at} references "${references}", which is not a column of ${target.name}.` +
+      (suggestion ? ` Did you mean "${suggestion}"?` : ` Its columns: ${names.join(", ")}.`),
   );
 }
 

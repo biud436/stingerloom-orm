@@ -255,50 +255,81 @@ export class RelationMetadataResolver {
       Reflect.getMetadata(COLUMN_TOKEN, entity.prototype) ??
       [];
 
-    return relations.map((rel) => {
-      // 1. Check @RelationColumn metadata first (highest priority)
-      const relCol = relationColumns.find(
-        (rc) => rc.propertyKey === rel.columnName,
-      );
-      if (relCol) {
-        let resolvedName = relCol.name;
-        if (!resolvedName) {
-          resolvedName = `${rel.columnName}Id`;
-          this.logger.warn(
-            `@RelationColumn name not specified for '${rel.columnName}' on ${entity.name}, inferred '${resolvedName}'.`,
-          );
-        }
-        return {
-          ...rel,
-          joinColumn: resolvedName,
-          references: relCol.referencedColumn ?? rel.references,
-        };
-      }
+    return relations.map((rel) =>
+      this.withReferencedColumnName(this.resolveManyToOneJoinColumn(entity, rel, relationColumns, columnsMeta)),
+    );
+  }
 
-      // 2. If option.joinColumn is already specified → keep it as-is
-      if (rel.joinColumn) return rel;
-
-      // 3. Search for an @Column matching the `{propertyName}Id` pattern
-      const fkPropertyName = `${rel.columnName}Id`;
-      const matchingColumn = columnsMeta.find(
-        (col: ColumnMetadata) => col.propertyKey === fkPropertyName,
-      );
-
-      if (matchingColumn) {
-        // Use the @Column's actual DB name (name if provided, otherwise propertyKey)
-        return {
-          ...rel,
-          joinColumn: matchingColumn.name ?? fkPropertyName,
-        };
-      }
-
-      // 4. None of the above resolved an FK column. A @ManyToOne is always the
-      //    owning side, so an unresolved joinColumn means the FK is silently
-      //    dropped on insert/update and the relation cannot be loaded — warn so
-      //    the misconfiguration is visible instead of corrupting data quietly.
-      this.warnUnresolvedManyToOneFk(entity, rel.columnName, fkPropertyName);
+  /**
+   * `rel` with its `references` named by the target's DB column. A relation
+   * may name the referenced column by property (`isoCode`) or by column
+   * (`iso_code`); the constraint, joins and filters write it into SQL, so
+   * it is resolved to the column here, once. A name that matches no column
+   * is kept as written — the relation graph check reports it at register().
+   */
+  private withReferencedColumnName(rel: ManyToOneMetadata<any>): ManyToOneMetadata<any> {
+    if (!rel.references) return rel;
+    let target: ClazzType<any> | undefined;
+    try {
+      target = rel.getMappingEntity() as ClazzType<any>;
+    } catch {
       return rel;
-    });
+    }
+    if (typeof target !== "function") return rel;
+    const columns = this.resolveEntityMetadata(target)?.columns ?? [];
+    if (columns.some((col: ColumnMetadata) => col.name === rel.references)) return rel;
+    const byProperty = columns.find((col: ColumnMetadata) => col.propertyKey === rel.references);
+    return byProperty?.name ? { ...rel, references: byProperty.name } : rel;
+  }
+
+  private resolveManyToOneJoinColumn(
+    entity: ClazzType<any>,
+    rel: ManyToOneMetadata<any>,
+    relationColumns: RelationColumnMetadata[],
+    columnsMeta: ColumnMetadata[],
+  ): ManyToOneMetadata<any> {
+    // 1. Check @RelationColumn metadata first (highest priority)
+    const relCol = relationColumns.find(
+      (rc) => rc.propertyKey === rel.columnName,
+    );
+    if (relCol) {
+      let resolvedName = relCol.name;
+      if (!resolvedName) {
+        resolvedName = `${rel.columnName}Id`;
+        this.logger.warn(
+          `@RelationColumn name not specified for '${rel.columnName}' on ${entity.name}, inferred '${resolvedName}'.`,
+        );
+      }
+      return {
+        ...rel,
+        joinColumn: resolvedName,
+        references: relCol.referencedColumn ?? rel.references,
+      };
+    }
+
+    // 2. If option.joinColumn is already specified → keep it as-is
+    if (rel.joinColumn) return rel;
+
+    // 3. Search for an @Column matching the `{propertyName}Id` pattern
+    const fkPropertyName = `${rel.columnName}Id`;
+    const matchingColumn = columnsMeta.find(
+      (col: ColumnMetadata) => col.propertyKey === fkPropertyName,
+    );
+
+    if (matchingColumn) {
+      // Use the @Column's actual DB name (name if provided, otherwise propertyKey)
+      return {
+        ...rel,
+        joinColumn: matchingColumn.name ?? fkPropertyName,
+      };
+    }
+
+    // 4. None of the above resolved an FK column. A @ManyToOne is always the
+    //    owning side, so an unresolved joinColumn means the FK is silently
+    //    dropped on insert/update and the relation cannot be loaded — warn so
+    //    the misconfiguration is visible instead of corrupting data quietly.
+    this.warnUnresolvedManyToOneFk(entity, rel.columnName, fkPropertyName);
+    return rel;
   }
 
   /**
