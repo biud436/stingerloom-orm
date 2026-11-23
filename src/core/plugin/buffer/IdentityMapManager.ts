@@ -331,11 +331,20 @@ export class IdentityMapManager {
    * another). Undefined or null while the instance has none.
    */
   referencedKeyOf(target: EntityInstance, field: ForeignKeyField): unknown {
+    const property = this.referencedProperty(field);
+    return property ? target[property] : undefined;
+  }
+
+  /**
+   * The property of the related entity a foreign key holds: the column
+   * `references` names, otherwise the primary key.
+   */
+  referencedProperty(field: ForeignKeyField): string | undefined {
     const TargetClass = field.getTarget() as ClazzType<any>;
     const columns: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, TargetClass.prototype) ?? [];
     const column = referencedColumnIn(columns, field.references);
-    return column ? target[column.propertyKey ?? column.name] : undefined;
+    return column ? (column.propertyKey ?? column.name) : undefined;
   }
 
   /**
@@ -667,6 +676,67 @@ export class IdentityMapManager {
     const pk: ColumnValueMap = {};
     for (const col of pkColumns) pk[col] = instance[col];
     return pk;
+  }
+
+  /**
+   * The parent property the rows of a OneToMany hold in their join column,
+   * when it is not the primary key: the column the owning `@ManyToOne`
+   * (`mappedBy` on `ChildEntity`) references. Undefined for the primary key.
+   */
+  oneToManyReferencedProperty(
+    entityClass: ClazzType<any>,
+    ChildEntity: ClazzType<any>,
+    mappedBy: string,
+  ): string | undefined {
+    const owner = this.relations
+      .resolveManyToOneMetadata(ChildEntity)
+      .find((m) => m.columnName === mappedBy);
+    if (!owner?.references) return undefined;
+    const columns: ColumnMetadata[] =
+      Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
+    const column = referencedColumnIn(columns, owner.references);
+    if (!column || column.options?.primary) return undefined;
+    return column.propertyKey ?? column.name;
+  }
+
+  /**
+   * The value of `instance` that the rows of its OneToMany hold in their
+   * join column: the referenced column's value (see
+   * {@link oneToManyReferencedProperty}), otherwise the primary key.
+   */
+  oneToManyParentKey(
+    instance: EntityInstance,
+    entityClass: ClazzType<any>,
+    ChildEntity: ClazzType<any>,
+    mappedBy: string,
+  ): any {
+    const property = this.oneToManyReferencedProperty(entityClass, ChildEntity, mappedBy);
+    return property ? instance[property] : this.getParentPkValue(instance, entityClass);
+  }
+
+  /**
+   * {@link oneToManyParentKey} for a write that assigns it to child rows:
+   * a parent without the referenced value would give every child a NULL
+   * key, so that is refused.
+   */
+  requireOneToManyParentKey(
+    instance: EntityInstance,
+    entityClass: ClazzType<any>,
+    ChildEntity: ClazzType<any>,
+    mappedBy: string,
+    relation: string,
+  ): any {
+    const property = this.oneToManyReferencedProperty(entityClass, ChildEntity, mappedBy);
+    if (!property) return this.getParentPkValue(instance, entityClass);
+    const value = instance[property];
+    if (value === undefined || value === null) {
+      throw new OrmError(
+        OrmErrorCode.INVALID_QUERY,
+        `Cannot cascade ${entityClass.name}.${relation}: its rows reference ${entityClass.name}.${property}, which the ${entityClass.name} being flushed does not state.`,
+        `Set "${property}" on the ${entityClass.name}.`,
+      );
+    }
+    return value;
   }
 
   /**

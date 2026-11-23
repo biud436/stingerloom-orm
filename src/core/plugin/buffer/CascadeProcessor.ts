@@ -250,7 +250,9 @@ export class CascadeProcessor {
 
       const ChildEntity = rel.getRelatedEntity();
       const fkKeys = resolveFkWriteKeys(rel.mappedBy, ChildEntity);
-      const parentPk = this.idMap.getParentPkValue(instance, entityClass);
+      const parentPk = this.idMap.requireOneToManyParentKey(
+        instance, entityClass, ChildEntity, rel.mappedBy, rel.propertyKey,
+      );
 
       for (const child of children) {
         if (visited.has(child)) continue;
@@ -408,13 +410,22 @@ export class CascadeProcessor {
     reparented?: ReparentedChildren,
   ): Promise<void> {
     const { snapshot } = diff;
-    const parentPk = this.idMap.getParentPkValue(parentEntry.instance, parentEntry.entity);
 
     // Added children - cascade insert if cascade includes insert
     if (this.options.cascade.persist && hasCascade(snapshot.cascade, "insert")) {
       const fkKeys = snapshot.mappedBy
         ? resolveFkWriteKeys(snapshot.mappedBy, snapshot.relatedEntity)
         : undefined;
+      const parentPk =
+        snapshot.mappedBy && diff.added.length > 0
+          ? this.idMap.requireOneToManyParentKey(
+              parentEntry.instance,
+              parentEntry.entity,
+              snapshot.relatedEntity,
+              snapshot.mappedBy,
+              snapshot.propertyKey,
+            )
+          : undefined;
       const ChildEntity = snapshot.relatedEntity;
       for (const child of diff.added) {
         // A TRACKED child must not be skipped on `visited`: the dirty-tracked
@@ -543,7 +554,7 @@ export class CascadeProcessor {
 
       const ChildEntity = rel.getRelatedEntity();
       const fkKeys = resolveFkWriteKeys(rel.mappedBy, ChildEntity);
-      const parentPk = this.idMap.getParentPkValue(instance, entityClass);
+      const parentPk = this.idMap.oneToManyParentKey(instance, entityClass, ChildEntity, rel.mappedBy);
       const childInfo = this.idMap.getColumnInfo(ChildEntity);
 
       for (const child of children) {
@@ -648,25 +659,46 @@ export class CascadeProcessor {
       if (!hasCascade(rel.cascade, "delete")) continue;
 
       const ChildEntity = rel.getRelatedEntity();
-      const fkColumn = resolveFkColumn(rel, ChildEntity);
+      // The child criteria name the FK by the property the child instances
+      // hold it under, so the same criteria both delete the rows and match
+      // the tracked children to evict (a hydrated child keeps an
+      // @RelationColumn key under `${relation}Id`, not the column name).
+      const fkColumn =
+        this.idMap.foreignKeyFields(ChildEntity).find((f) => f.relation === rel.mappedBy)
+          ?.property ?? resolveFkColumn(rel, ChildEntity);
       const { pkColumns: parentPks } = this.idMap.getColumnInfo(entityClass);
       if (parentPks.length === 0) continue;
 
-      // The child FK references a single parent column: the inverse
-      // @ManyToOne's `references` option when set, else the parent's FIRST PK
-      // column (mirroring core CascadeHandler.cascadeDeleteOneToMany). A
-      // composite-PK parent cascades through that referenced column — it was
-      // previously skipped outright (`parentPks.length === 1` gate), leaving
-      // child rows and stale identity-map entries behind.
-      const m2oMeta: any[] =
-        Reflect.getMetadata(MANY_TO_ONE_TOKEN, ChildEntity) ?? [];
-      const inverse = m2oMeta.find((m: any) => m.columnName === rel.mappedBy);
-      const referencedCol = inverse?.references ?? parentPks[0];
+      // The child FK references a single parent column: the one the inverse
+      // @ManyToOne references (`references` / @RelationColumn
+      // `referencedColumn`), else the parent's FIRST PK column (mirroring
+      // core CascadeHandler.cascadeDeleteOneToMany). A composite-PK parent
+      // cascades through that referenced column — it was previously skipped
+      // outright (`parentPks.length === 1` gate), leaving child rows and
+      // stale identity-map entries behind.
+      const referencedCol =
+        this.idMap.oneToManyReferencedProperty(entityClass, ChildEntity, rel.mappedBy) ??
+        parentPks[0];
 
-      // Build child criteria from the referenced parent column value
+      // Build child criteria from the referenced parent column value. A
+      // delete by key does not state a referenced non-key column, so it is
+      // read from the parent rows.
       const childCriteria: ColumnValueMap = {};
       if (criteria[referencedCol] != null) {
         childCriteria[fkColumn] = criteria[referencedCol];
+      } else if (!parentPks.includes(referencedCol)) {
+        const parents = await txEm.find(entityClass, {
+          where: criteria as any,
+          withDeleted: true,
+        } as any);
+        const keys = [
+          ...new Set(
+            (parents as any[])
+              .map((p) => p[referencedCol])
+              .filter((v) => v !== undefined && v !== null),
+          ),
+        ];
+        if (keys.length > 0) childCriteria[fkColumn] = keys.length === 1 ? keys[0] : keys;
       }
 
       if (Object.keys(childCriteria).length > 0 && childCriteria[fkColumn] != null) {

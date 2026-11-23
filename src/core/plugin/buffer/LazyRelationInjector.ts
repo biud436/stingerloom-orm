@@ -116,8 +116,17 @@ export class LazyRelationInjector {
       const RelatedEntity = rel.getMappingEntity() as any as ClazzType<any>;
       if (!this.idMap.isRegistered(RelatedEntity)) continue;
 
+      // The target property the FK holds: the referenced column
+      // (`references` / @RelationColumn `referencedColumn`), else the single PK.
       const relatedPkCols = this.idMap.getColumnInfo(RelatedEntity).pkColumns;
-      const refColumn = rel.references ?? (relatedPkCols.length === 1 ? relatedPkCols[0] : null);
+      const field = this.idMap
+        .foreignKeyFields(entityClass)
+        .find((f) => f.relation === rel.columnName);
+      const refColumn = field?.references
+        ? this.idMap.referencedProperty(field)
+        : relatedPkCols.length === 1
+          ? relatedPkCols[0]
+          : null;
       if (!refColumn) continue;
 
       // Inside the loader the proxy is already installed on rel.columnName —
@@ -165,7 +174,7 @@ export class LazyRelationInjector {
       if (!this.idMap.isRegistered(ChildEntity)) continue;
 
       const fkColumn = resolveFkColumn(rel, ChildEntity);
-      const parentPk = this.idMap.getParentPkValue(instance, entityClass);
+      const parentPk = this.idMap.oneToManyParentKey(instance, entityClass, ChildEntity, rel.mappedBy);
       if (parentPk === undefined || parentPk === null) continue;
 
       this.injectLazyCollectionProxy(instance, rel.propertyKey, ChildEntity, {

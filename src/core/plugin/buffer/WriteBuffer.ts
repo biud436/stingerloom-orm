@@ -1073,7 +1073,9 @@ export class WriteBuffer {
     for (const { entry, colSnap, diff } of pendingDiffs) {
       if (colSnap.relationType === "oneToMany") {
         const childInfo = this.idMap.getColumnInfo(colSnap.relatedEntity);
-        const parentPk = this.idMap.getParentPkValue(entry.instance, entry.entity);
+        const parentPk = colSnap.mappedBy
+          ? this.idMap.oneToManyParentKey(entry.instance, entry.entity, colSnap.relatedEntity, colSnap.mappedBy)
+          : this.idMap.getParentPkValue(entry.instance, entry.entity);
 
         if (this.options.cascade.persist && hasCascade(colSnap.cascade, "insert")) {
           const fkKeys = colSnap.mappedBy
