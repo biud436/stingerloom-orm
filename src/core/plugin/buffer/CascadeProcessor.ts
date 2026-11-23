@@ -52,6 +52,11 @@ export interface CascadeFlushHooks {
     instance: EntityInstance,
     isInsert: boolean,
   ): void;
+  syncForeignKeys(
+    entityClass: ClazzType<any>,
+    instance: EntityInstance,
+    exceptRelation?: string,
+  ): void;
 }
 
 /**
@@ -108,10 +113,10 @@ export class CascadeProcessor {
   /**
    * Assign the parent PK to every FK write target of `child`, reporting
    * whether any target actually changed. The report matters for tracked
-   * children whose FK is declared without a backing @Column (@RelationColumn
-   * pattern): the shadow keys are not in columnNames, so the snapshot diff
-   * alone cannot see a reparent — without this signal the write would be
-   * skipped as "clean".
+   * children whose FK property is not the target the cascade writes (an
+   * explicit `fkProperty` besides the `${relation}Id` shadow): the snapshot
+   * diff alone may not see the reparent, and the write would be skipped as
+   * "clean".
    */
   private assignFkDetectingChange(
     child: EntityInstance,
@@ -153,8 +158,11 @@ export class CascadeProcessor {
     ChildEntity: ClazzType<any>,
     child: EntityInstance,
     result: BufferFlushResult,
-    fk?: { keys: FkWriteKeys; parentPk: any; changed: boolean },
+    fk?: { keys: FkWriteKeys; parentPk: any; changed: boolean; relation?: string },
   ): Promise<"skipped" | "updated" | "inserted"> {
+    // The child's own foreign keys, except the back-reference the cascade
+    // assigns from the parent.
+    this.flushHooks?.syncForeignKeys(ChildEntity, child, fk?.relation);
     const entry = this.idMap.getTrackedEntry(child);
     if (entry) {
       if (entry.readOnly) return "skipped";
@@ -254,6 +262,7 @@ export class CascadeProcessor {
           keys: fkKeys,
           parentPk,
           changed: fkChanged,
+          relation: rel.mappedBy,
         });
 
         // A tracked child's M2M pivot rows are managed by the collection-diff
@@ -291,6 +300,9 @@ export class CascadeProcessor {
         const relatedPk = this.idMap.getParentPkValue(related, RelatedEntity);
         if (relatedPk != null && instance[rel.joinColumn] !== relatedPk) {
           instance[rel.joinColumn] = relatedPk;
+          // The FK property too, so the key the related row now has is not
+          // written a second time as a pending foreign key.
+          this.idMap.syncForeignKeys(instance, entityClass);
 
           const parentInfo = this.idMap.getColumnInfo(entityClass);
           const parentPkValue = this.idMap.getParentPkValue(instance, entityClass);
@@ -421,7 +433,9 @@ export class CascadeProcessor {
           : false;
         await this.saveCascadeChild(
           txEm, ChildEntity, child, result,
-          fkKeys ? { keys: fkKeys, parentPk, changed: fkChanged } : undefined,
+          fkKeys
+            ? { keys: fkKeys, parentPk, changed: fkChanged, relation: snapshot.mappedBy }
+            : undefined,
         );
       }
     }

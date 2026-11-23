@@ -14,7 +14,14 @@
  */
 import "reflect-metadata";
 import { EntityManager } from "../../src/core/EntityManager";
-import { Entity, Column, PrimaryGeneratedColumn, BeforeInsert } from "../../src";
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  BeforeInsert,
+  ManyToOne,
+  RelationColumn,
+} from "../../src";
 import { MetadataContext } from "../../src/metadata/MetadataContext";
 import { bufferPlugin } from "../../src/core/plugin/buffer/bufferPlugin";
 import type { WriteBuffer } from "../../src/core/plugin/buffer/WriteBuffer";
@@ -144,6 +151,86 @@ describe.each(getTestDrivers())(
         MetadataContext.run(tenant, () => em.find(Note, { orderBy: { id: "ASC" } }));
       expect((await read("acme")).map((n: any) => n.body)).toEqual(["one", "two"]);
       expect(await read("globex")).toEqual([]);
+    });
+  },
+);
+
+describe.each(getTestDrivers())(
+  "[Integration] $label: WriteBuffer batch writes a relation's foreign key",
+  ({ type, options }: TestDriverConfig) => {
+    let conn: TestConnectionResult;
+    let em: EntityManager;
+    let Writer: any;
+    let Article: any;
+    const writers = `bbip_writer_${suffix}`;
+    const articles = `bbip_article_${suffix}`;
+
+    beforeAll(async () => {
+      conn = await createTestConnection(
+        { ...options, synchronize: true, logging: false, plugins: [bufferPlugin()] },
+        () => {
+          @Entity({ name: writers })
+          class BatchWriter {
+            @PrimaryGeneratedColumn() id!: number;
+            @Column({ type: "varchar", length: 40 }) name!: string;
+          }
+          @Entity({ name: articles })
+          class BatchArticle {
+            @PrimaryGeneratedColumn() id!: number;
+            @Column({ type: "varchar", length: 40 }) title!: string;
+            // The join column is no @Column: only the relation names it.
+            @ManyToOne(() => BatchWriter, () => undefined as any)
+            @RelationColumn({ name: "writer_id", type: "int", nullable: true } as any)
+            writer!: BatchWriter | null;
+          }
+          Writer = BatchWriter;
+          Article = BatchArticle;
+          return { entities: [BatchWriter, BatchArticle] };
+        },
+      );
+      em = conn.em;
+    }, 60000);
+
+    afterAll(async () => {
+      for (const table of [articles, writers]) {
+        try {
+          await dropTestTable(table);
+        } catch {
+          // ignore
+        }
+      }
+      if (conn) await conn.cleanup();
+    }, 30000);
+
+    const q = (name: string) => (type === "postgres" ? `"${name}"` : `\`${name}\``);
+    const keysOf = async (ids: number[]) => {
+      const rows: any[] = await rawQuery(
+        `SELECT ${q("writer_id")} FROM ${q(articles)} WHERE ${q("id")} IN (${ids.join(", ")}) ORDER BY ${q("id")}`,
+      );
+      return rows.map((r) => (r.writer_id === null ? null : Number(r.writer_id)));
+    };
+
+    it("inserts and updates the key in the multi-row statements", async () => {
+      const ann: any = await em.save(Writer, { name: "ann" });
+      const ben: any = await em.save(Writer, { name: "ben" });
+
+      const insert: WriteBuffer = (em as any).buffer({ batchInsert: true });
+      const a = Object.assign(new Article(), { title: "a", writer: ann });
+      const b = Object.assign(new Article(), { title: "b", writer: ben.id });
+      insert.persist(a).persist(b);
+      await insert.flush();
+      expect(await keysOf([a.id, b.id])).toEqual([ann.id, ben.id]);
+
+      const update: WriteBuffer = (em as any).buffer({ batchUpdate: true });
+      const [ta, tb] = await Promise.all([
+        update.findOne(Article, { where: { id: a.id } } as any),
+        update.findOne(Article, { where: { id: b.id } } as any),
+      ]);
+      (ta as any).writer = ben;
+      (tb as any).writer = null;
+      const result = await update.flush();
+      expect(result.updates).toBe(2);
+      expect(await keysOf([a.id, b.id])).toEqual([ben.id, null]);
     });
   },
 );

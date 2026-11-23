@@ -405,6 +405,19 @@ User를 참조하는 FK가 있는 Post를 삽입한다고 해 봐요. Post가 Us
 
 의존성 그래프에 순환이 있으면 감지한 뒤, 원래 순서로 graceful하게 fallback해요.
 
+### 외래 키는 관계에서 읽습니다
+
+행의 `@ManyToOne` / 소유측 `@OneToOne` 키는 인스턴스가 가진 값으로 기록하고, 우선순위는 `save()`와 같습니다. 관계에 관련 인스턴스를 넣으면 그 인스턴스의 키를, 값을 직접 넣으면 그 값을 키로 쓰고, `null`이면 키를 지웁니다. 관계를 설정하지 않았다면 FK 프로퍼티(`authorId`, 또는 조인 컬럼에 선언한 `@Column`)를 씁니다. 한 번도 로드하지 않은 관계(아직 지연 프록시인 관계)는 저장된 키를 건드리지 않아요.
+
+```typescript
+const post = await buf.findOne(Post, { where: { id: 1 } });
+post.author = newAuthor;   // 같은 flush에서 persist하는 행
+buf.persist(newAuthor);
+await buf.flush();         // author INSERT 후 UPDATE post SET author_id = <새 id>
+```
+
+관련 인스턴스에 아직 키가 없으면, flush가 그 행을 INSERT한 뒤에 키를 기록합니다. 대상이 행보다 늦게 큐에 들어간 자기 참조도 마찬가지예요. flush가 그 인스턴스를 끝내 기록하지 않으면 키 없이 행을 저장하지 않고, `flush()`가 `InvalidQueryError`를 던지며 롤백합니다. 관련 인스턴스를 `persist()`하거나 먼저 저장하세요.
+
 ### Atomicity -- 전부 성공하거나, 전부 실패하거나
 
 하나라도 실패하면 전체 트랜잭션이 롤백돼요:

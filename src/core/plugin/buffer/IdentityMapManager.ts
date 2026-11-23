@@ -16,6 +16,8 @@ import { OrmErrorCode } from "../../../errors/OrmErrorCode";
 import { MetadataContext } from "../../../metadata/MetadataContext";
 import { SchemaQualifiedStrategy, SearchPathStrategy } from "../../TenantQueryStrategy";
 import { InheritanceResolver } from "../../InheritanceResolver";
+import { RelationMetadataResolver, referencedColumnIn } from "../../RelationMetadataResolver";
+import { readLoadedRelationValue } from "./CollectionTracker";
 import { PluginContext } from "../PluginContext";
 import { EntityState } from "./EntityUnitState";
 import type { TrackedEntry } from "./BufferEntry";
@@ -33,6 +35,37 @@ export type EntityInstance = any;
 export type ColumnValueMap = Record<string, any>;
 
 /**
+ * A foreign key the entity's own row holds — the join column of a
+ * `@ManyToOne` or an owning `@OneToOne` — as the buffer reads and writes it:
+ * through an instance property, like every other column.
+ */
+export interface ForeignKeyField {
+  /** The relation property (`author`). */
+  relation: string;
+  /**
+   * The instance property holding the key: the declared `@Column` on the
+   * join column, otherwise `fkProperty`, otherwise `${relation}Id` — the
+   * property reads hydrate the key into.
+   */
+  property: string;
+  /** The join column. */
+  column: string;
+  /** Whether a declared `@Column` is the join column (then `property` is already a column). */
+  declared: boolean;
+  /** The related entity. */
+  getTarget: () => ClazzType<unknown>;
+  /** The related column the key is, when not the primary key. */
+  references?: string;
+}
+
+/** A foreign key whose target had no key yet when the flush reached the row. */
+export interface PendingForeignKey {
+  field: ForeignKeyField;
+  /** The related instance, keyless when it was read. */
+  target: EntityInstance;
+}
+
+/**
  * Manages the Identity Map and entity metadata helpers for WriteBuffer.
  *
  * The Identity Map ensures that the same database row (identified by
@@ -46,6 +79,8 @@ export class IdentityMapManager {
   readonly stateMap = new Map<EntityInstance, string>();
   private readonly ctx: PluginContext;
   private readonly inheritance = new InheritanceResolver();
+  private readonly relations = new RelationMetadataResolver();
+  private readonly foreignKeyFieldCache = new Map<ClazzType<any>, ForeignKeyField[]>();
   private _maxSize: number | undefined;
   /**
    * External reference to the WriteBuffer's trackedEntries map.
@@ -111,7 +146,7 @@ export class IdentityMapManager {
   diffTracked(entry: TrackedEntry): ColumnValueMap | null {
     if (!this.snapshotStrategy) return null;
     return this.snapshotStrategy.diff(
-      entry.instance,
+      this.foreignKeyView(entry.instance, entry.entity),
       entry.snapshot,
       entry.columnNames,
       entry.pkColumns,
@@ -249,7 +284,131 @@ export class IdentityMapManager {
       .filter((c) => c.options?.primary)
       .map((c) => c.propertyKey ?? c.name);
 
+    // A foreign key with no declared @Column is still a column of the row:
+    // snapshot, diff and the save payload carry it under its FK property.
+    for (const field of this.foreignKeyFields(entityClass)) {
+      if (!field.declared && !columnNames.includes(field.property)) {
+        columnNames.push(field.property);
+      }
+    }
+
     return { columnNames, pkColumns };
+  }
+
+  /**
+   * The foreign keys `entityClass`'s rows hold (see {@link ForeignKeyField}),
+   * read through the same relation metadata the core write path uses.
+   */
+  foreignKeyFields(entityClass: ClazzType<any>): ForeignKeyField[] {
+    const cached = this.foreignKeyFieldCache.get(entityClass);
+    if (cached) return cached;
+    const columns: ColumnMetadata[] =
+      Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
+    const fields: ForeignKeyField[] = [];
+    for (const rel of this.relations.resolveForeignKeyRelations(entityClass)) {
+      const backing = columns.find((c) => c.name === rel.joinColumn);
+      const property = backing
+        ? (backing.propertyKey ?? backing.name)
+        : (rel.fkProperty ?? `${rel.propertyKey}Id`);
+      // The key must never be written over the relation property itself.
+      if (property === rel.propertyKey) continue;
+      fields.push({
+        relation: rel.propertyKey,
+        property,
+        column: rel.joinColumn,
+        declared: !!backing,
+        getTarget: rel.getRelatedEntity,
+        references: rel.references,
+      });
+    }
+    this.foreignKeyFieldCache.set(entityClass, fields);
+    return fields;
+  }
+
+  /**
+   * The key a related instance contributes to a foreign key: its value of
+   * the referenced column (the primary key unless `references` names
+   * another). Undefined or null while the instance has none.
+   */
+  referencedKeyOf(target: EntityInstance, field: ForeignKeyField): unknown {
+    const TargetClass = field.getTarget() as ClazzType<any>;
+    const columns: ColumnMetadata[] =
+      Reflect.getMetadata(COLUMN_TOKEN, TargetClass.prototype) ?? [];
+    const column = referencedColumnIn(columns, field.references);
+    return column ? target[column.propertyKey ?? column.name] : undefined;
+  }
+
+  /**
+   * The foreign-key values `instance`'s loaded relations state, by FK
+   * property, with the precedence `save()` applies: a relation set to
+   * `null` clears the key, a related instance contributes its referenced
+   * key, a bare value is the key itself. An unloaded relation (a lazy proxy)
+   * or one never set says nothing, leaving the FK property as it is.
+   *
+   * A related instance without its key yet is returned as pending: a row
+   * this flush inserts later, whose key is only known then.
+   */
+  resolveForeignKeys(
+    instance: EntityInstance,
+    entityClass: ClazzType<any>,
+    exceptRelation?: string,
+  ): { values: Map<string, unknown>; pending: PendingForeignKey[] } {
+    const values = new Map<string, unknown>();
+    const pending: PendingForeignKey[] = [];
+    if (instance === null || typeof instance !== "object") return { values, pending };
+    for (const field of this.foreignKeyFields(entityClass)) {
+      if (field.relation === exceptRelation) continue;
+      const own = Object.getOwnPropertyDescriptor(instance, field.relation);
+      if (!own || !("value" in own) || own.value === undefined) continue;
+      if (own.value === null) {
+        values.set(field.property, null);
+        continue;
+      }
+      if (typeof own.value !== "object") {
+        values.set(field.property, own.value);
+        continue;
+      }
+      const target = readLoadedRelationValue(instance, field.relation);
+      if (!target || Array.isArray(target)) continue;
+      const key = this.referencedKeyOf(target, field);
+      if (key === undefined || key === null) {
+        pending.push({ field, target });
+      } else {
+        values.set(field.property, key);
+      }
+    }
+    return { values, pending };
+  }
+
+  /**
+   * Writes the foreign keys `instance`'s relations state onto their FK
+   * properties (see {@link resolveForeignKeys}), returning the ones whose
+   * target has no key yet.
+   */
+  syncForeignKeys(
+    instance: EntityInstance,
+    entityClass: ClazzType<any>,
+    exceptRelation?: string,
+  ): PendingForeignKey[] {
+    const { values, pending } = this.resolveForeignKeys(instance, entityClass, exceptRelation);
+    for (const [property, value] of values) instance[property] = value;
+    return pending;
+  }
+
+  /**
+   * `instance` as a diff sees it once its relations are written onto the FK
+   * properties — without touching the instance, for the read-only views
+   * (`dirty()`, `preview()`, eviction checks).
+   */
+  foreignKeyView(instance: EntityInstance, entityClass: ClazzType<any>): EntityInstance {
+    const { values } = this.resolveForeignKeys(instance, entityClass);
+    let view: EntityInstance | undefined;
+    for (const [property, value] of values) {
+      if (instance[property] === value) continue;
+      view ??= Object.create(instance);
+      Object.defineProperty(view, property, { value, enumerable: true, writable: true });
+    }
+    return view ?? instance;
   }
 
   /**
@@ -265,10 +424,14 @@ export class IdentityMapManager {
   }[] {
     const columns: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
-    return columns.map((c) => ({
+    const bindings = columns.map((c) => ({
       prop: c.propertyKey ?? c.name,
       column: c.name ?? c.propertyKey!,
     }));
+    for (const field of this.foreignKeyFields(entityClass)) {
+      if (!field.declared) bindings.push({ prop: field.property, column: field.column });
+    }
+    return bindings;
   }
 
   /**
@@ -279,7 +442,9 @@ export class IdentityMapManager {
     const columns: ColumnMetadata[] =
       Reflect.getMetadata(COLUMN_TOKEN, entityClass.prototype) ?? [];
     const match = columns.find((c) => (c.propertyKey ?? c.name) === prop);
-    return match?.name ?? prop;
+    if (match) return match.name ?? prop;
+    const field = this.foreignKeyFields(entityClass).find((f) => f.property === prop);
+    return field?.column ?? prop;
   }
 
   /**
