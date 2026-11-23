@@ -6,7 +6,7 @@ import sql, { Sql, raw } from "../utils/sqlTag";
 import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
 import { ResultTransformerFactory } from "./ResultTransformerFactory";
 import { QueryResult } from "../types/QueryResult";
-import { RelationMetadataResolver } from "./RelationMetadataResolver";
+import { RelationMetadataResolver, referencedColumnIn } from "./RelationMetadataResolver";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 import { Conditions } from "./Conditions";
 import {
@@ -503,9 +503,16 @@ export class RelationLoader {
     }
     const parentMetadata = this.resolver.resolveEntityMetadata(entity);
     if (!parentMetadata) return [];
-    return parentMetadata.columns.filter(
+    const keys = parentMetadata.columns.filter(
       (column: ColumnMetadata) => column.options?.primary,
     );
+    // A OneToMany whose owning side references another column matches on
+    // that column instead.
+    for (const rel of this.requestedOneToMany(entity, relations)) {
+      const key = this.resolver.resolveOneToManyParentKey(entity, rel);
+      if (key && !keys.includes(key)) keys.push(key);
+    }
+    return keys;
   }
 
   /**
@@ -558,6 +565,8 @@ export class RelationLoader {
       propertyKey: string;
       fkKeys: string[];
       RelatedEntity: ClazzType<any>;
+      /** The target column the join column holds, when not the primary key. */
+      references?: string;
     }> = [];
     for (const rel of manyToOne) {
       const joinColumn = rel.joinColumn ?? rel.columnName;
@@ -569,6 +578,7 @@ export class RelationLoader {
         propertyKey: rel.columnName,
         fkKeys: [fkShadow, joinColumn],
         RelatedEntity: rel.getMappingEntity() as ClazzType<any>,
+        references: rel.references,
       });
     }
     for (const rel of oneToOne) {
@@ -587,10 +597,11 @@ export class RelationLoader {
         RelationLoader.optionsOf(tree, propertyKey)?.withDeleted ?? withDeleted;
       const relatedMetadata = this.resolver.resolveEntityMetadata(RelatedEntity);
       if (!relatedMetadata) continue;
-      const relatedPk = relatedMetadata.columns.find(
-        (col: ColumnMetadata) => col.options?.primary,
-      );
+      const relatedPk = referencedColumnIn(relatedMetadata.columns, target.references);
       if (!relatedPk) continue;
+      // A referenced column that is not the key may be left out by the
+      // relation's `select`, so it is read again under an alias.
+      const keyAlias = relatedPk.options?.primary ? undefined : "__stg_ref_key";
 
       const fkOf = (parent: EntityRecord): unknown => {
         for (const key of fkKeys) {
@@ -620,6 +631,9 @@ export class RelationLoader {
           true,
           tree?.nodes.get(propertyKey),
         ).map((name) => this.ctx.wrap(name));
+        if (keyAlias) {
+          selectCols.push(`${this.ctx.wrap(relatedPk.name)} AS ${this.ctx.wrap(keyAlias)}`);
+        }
         const whereConditions: Sql[] = [
           Conditions.in(this.ctx.wrap(relatedPk.name), ids),
         ];
@@ -659,9 +673,12 @@ export class RelationLoader {
       const relatedByPk = new Map<unknown, unknown>();
       const rows = queryResult.results ?? [];
       if (rows.length > 0) {
-        const related = this.hydrateRelated(RelatedEntity, rows);
+        const related = this.hydrateRelated(
+          RelatedEntity,
+          keyAlias ? rows.map((row) => RelationLoader.withoutAliases(row, [keyAlias])) : rows,
+        );
         for (let i = 0; i < related.length; i++) {
-          relatedByPk.set(rows[i][relatedPk.name], related[i]);
+          relatedByPk.set(rows[i][keyAlias ?? relatedPk.name], related[i]);
         }
       }
 
@@ -830,11 +847,6 @@ export class RelationLoader {
     const parentMetadata = this.resolver.resolveEntityMetadata(entity);
     if (!parentMetadata) return;
 
-    const pk = parentMetadata.columns.find(
-      (column: ColumnMetadata) => column.options?.primary,
-    );
-    if (!pk) return;
-
     const parents = this.toParentRecords(parentResults);
 
     for (const rel of oneToManyMeta) {
@@ -846,6 +858,9 @@ export class RelationLoader {
       const matchingRelation = manyToOneItems.find(
         (m) => m.columnName === rel.mappedBy,
       );
+      // The parent column the children's join column holds.
+      const pk = referencedColumnIn(parentMetadata.columns, matchingRelation?.references);
+      if (!pk) continue;
       const fkColumn = matchingRelation?.joinColumn ?? rel.mappedBy;
       const fkAlias = "__stg_o2m_fk";
       const options = RelationLoader.optionsOf(tree, rel.propertyKey);
@@ -1242,13 +1257,18 @@ export class RelationLoader {
     if (parents.length === 0) return;
 
     const parentMetadata = this.resolver.resolveEntityMetadata(entity);
-    const pk = parentMetadata?.columns.find(
+    const primary = parentMetadata?.columns.find(
       (column: ColumnMetadata) => column.options?.primary,
     );
-    if (!pk) return;
-    const parentIds = this.collectParentIds(parents, pk);
+    if (!primary) return;
 
     for (const spec of counts) {
+      // A OneToMany is counted by the parent column its rows reference.
+      const o2m = this.resolver
+        .resolveOneToManyMetadata(entity)
+        .find((rel) => rel.propertyKey === spec.relation);
+      const pk = (o2m && this.resolver.resolveOneToManyParentKey(entity, o2m)) || primary;
+      const parentIds = this.collectParentIds(parents, pk);
       const byParent =
         parentIds.length > 0
           ? await this.countRelated(entity, spec, parentIds, existingSession, withDeleted)

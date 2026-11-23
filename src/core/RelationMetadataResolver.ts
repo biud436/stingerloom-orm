@@ -40,10 +40,29 @@ export interface ForeignKeyRelation {
   propertyKey: string;
   /** The FK column on the declaring entity's table. */
   joinColumn: string;
-  /** The related entity, whose primary key a related instance contributes. */
+  /** The related entity, whose referenced key a related instance contributes. */
   getRelatedEntity: () => ClazzType<unknown>;
+  /** The related column the join column holds, when it is not the primary key. */
+  references?: string;
   /** An explicit FK property (`option.fkProperty`), besides `${propertyKey}Id`. */
   fkProperty?: string;
+}
+
+/**
+ * The column among `columns` a join column holds the value of: the one
+ * `references` names (by DB column or property), otherwise the primary key.
+ */
+export function referencedColumnIn(
+  columns: readonly ColumnMetadata[],
+  references: string | undefined,
+): ColumnMetadata | undefined {
+  if (references) {
+    const named =
+      columns.find((col) => col.name === references) ??
+      columns.find((col) => col.propertyKey === references);
+    if (named) return named;
+  }
+  return columns.find((col) => col.options?.primary);
 }
 
 /**
@@ -447,6 +466,36 @@ export class RelationMetadataResolver {
   }
 
   /**
+   * The column of `RelatedEntity` a join column holds the value of: the one
+   * the relation's `references` names (by DB column or property), otherwise
+   * the primary key. Reads, writes and cascades all match rows through this
+   * column, the same one the foreign key constraint points at.
+   */
+  resolveReferencedColumn(
+    references: string | undefined,
+    RelatedEntity: ClazzType<any>,
+  ): ColumnMetadata | undefined {
+    return referencedColumnIn(
+      this.resolveEntityMetadata(RelatedEntity)?.columns ?? [],
+      references,
+    );
+  }
+
+  /**
+   * The column of `entity` that the rows of a `@OneToMany` hold in their
+   * join column: what the owning `@ManyToOne` (`mappedBy`) references.
+   */
+  resolveOneToManyParentKey<T>(
+    entity: ClazzType<T>,
+    rel: OneToManyMetadata<any>,
+  ): ColumnMetadata | undefined {
+    const owner = this.resolveManyToOneMetadata(rel.getRelatedEntity()).find(
+      (m) => m.columnName === rel.mappedBy,
+    );
+    return this.resolveReferencedColumn(owner?.references, entity);
+  }
+
+  /**
    * The relations whose foreign key `entity`'s rows hold: every `@ManyToOne`
    * and the owning side of every `@OneToOne` — the ones with a resolved join
    * column, the same test the DDL uses to give a relation its column.
@@ -460,6 +509,7 @@ export class RelationMetadataResolver {
         joinColumn: rel.joinColumn,
         getRelatedEntity: () => rel.getMappingEntity() as ClazzType<unknown>,
         fkProperty: rel.option?.fkProperty,
+        references: rel.references,
       });
     }
     for (const rel of this.resolveOneToOneMetadata(entity)) {
