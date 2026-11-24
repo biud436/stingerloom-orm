@@ -68,10 +68,10 @@ import {
   type JsonPathExpression,
 } from "./expressions/JsonPathExpression";
 import {
-  isConditionLike,
   type ConditionLike,
   type ColumnResolver,
 } from "./expressions/ConditionLike";
+import { resolveConditionInput } from "./expressions/conditionInput";
 import { OrderExpression, isOrderExpression } from "./expressions/OrderExpression";
 import { resolveColumnOrExpression, withColumnNames } from "./expressions/bareColumnRef";
 import {
@@ -815,6 +815,18 @@ export class SelectQueryBuilder<T, TResult = T> {
         (el) =>
           el !== null && typeof el === "object" && this.isPlainWhereClause(el),
       );
+    }
+    // Built-in value objects have no filter keys — read as a where clause
+    // they would be an empty one, i.e. no filter at all.
+    if (
+      value instanceof Date ||
+      value instanceof RegExp ||
+      value instanceof Map ||
+      value instanceof Set ||
+      value instanceof Promise ||
+      ArrayBuffer.isView(value)
+    ) {
+      return false;
     }
     const o = value as Record<string, unknown>;
     if ("sql" in o && "values" in o) return false; // Sql
@@ -2545,16 +2557,14 @@ export class SelectQueryBuilder<T, TResult = T> {
   having(condition: Sql): this;
   having(condition: ConditionLike): this;
   having(condition: Sql | ConditionLike): this {
-    if (isConditionLike(condition)) {
-      this.havingClauses.push(
-        condition.resolve(
-          this.columnResolver,
-          this.dialectExpression,
-        ),
-      );
-      return this;
-    }
-    this.havingClauses.push(condition);
+    this.havingClauses.push(
+      resolveConditionInput(
+        condition,
+        "SelectQueryBuilder.having()",
+        this.columnResolver,
+        this.dialectExpression,
+      ),
+    );
     return this;
   }
 
@@ -5326,16 +5336,16 @@ export class SelectQueryBuilder<T, TResult = T> {
     // All QueryDSL conditions share the ConditionLike contract: column
     // refs are deferred, so resolve them through the builder's registry
     // and thread the dialect through for JSON / case-insensitive ops.
-    if (isConditionLike(columnOrCondition)) {
-      return columnOrCondition.resolve(
+    // Overload 1: a raw Sql condition. Anything else that is not a column
+    // name (undefined, a number, a Date, ...) is not a condition and is
+    // refused rather than spliced into the statement.
+    if (typeof columnOrCondition !== "string") {
+      return resolveConditionInput(
+        columnOrCondition,
+        "SelectQueryBuilder where()/andWhere()/orWhere()",
         this.columnResolver,
         this.dialectExpression,
       );
-    }
-
-    // Overload 1: raw Sql condition
-    if (typeof columnOrCondition !== "string") {
-      return columnOrCondition;
     }
 
     const column = columnOrCondition;
