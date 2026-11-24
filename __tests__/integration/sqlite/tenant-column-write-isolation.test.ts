@@ -695,7 +695,7 @@ describe("[Integration] SQLite: tenant_column write isolation", () => {
           em
             .createUpdateBuilder(TwiOrder)
             .set({ tenant_id: "globex" } as any)
-            .where({ id: 1 } as any)
+            .where(sql`id = ${1}`)
             .execute(),
         ),
       );

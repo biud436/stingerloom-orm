@@ -4,10 +4,10 @@ import { ClazzType } from "../utils";
 import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import {
-  isConditionLike,
   type ConditionLike,
   type ColumnResolver,
 } from "./expressions/ConditionLike";
+import { resolveConditionInput } from "./expressions/conditionInput";
 import type { DialectExpression } from "../dialects/DialectExpression";
 import type { EntityManager } from "./EntityManager";
 import type { SelectQueryBuilder } from "./SelectQueryBuilder";
@@ -285,7 +285,7 @@ export class InsertQueryBuilder<T> {
     this.conflictTarget = {
       properties,
       indexPredicate: options?.where
-        ? this.resolveCondition(options.where)
+        ? this.resolveCondition(options.where, "onConflict() where")
         : undefined,
     };
     return this;
@@ -396,7 +396,7 @@ export class InsertQueryBuilder<T> {
     }
     this.action = {
       ...this.action,
-      where: this.resolveCondition(condition),
+      where: this.resolveCondition(condition, "doUpdateWhere()"),
     };
     return this;
   }
@@ -575,11 +575,13 @@ export class InsertQueryBuilder<T> {
     );
   }
 
-  private resolveCondition(condition: Sql | ConditionLike): Sql {
-    if (isConditionLike(condition)) {
-      return condition.resolve(this.columnResolver, this.dialectExpression);
-    }
-    return condition;
+  private resolveCondition(condition: Sql | ConditionLike, slot: string): Sql {
+    return resolveConditionInput(
+      condition,
+      `InsertQueryBuilder.${slot}`,
+      this.columnResolver,
+      this.dialectExpression,
+    );
   }
 
   /**

@@ -6,10 +6,10 @@ import { OrmError } from "../errors/OrmError";
 import { OrmErrorCode } from "../errors/OrmErrorCode";
 import { Conditions } from "./Conditions";
 import {
-  isConditionLike,
   type ConditionLike,
   type ColumnResolver,
 } from "./expressions/ConditionLike";
+import { resolveConditionInput } from "./expressions/conditionInput";
 import {
   OrderExpression,
   isOrderExpression,
@@ -116,13 +116,13 @@ export class UpdateQueryBuilder<T> {
    * Subsequent calls should use `.andWhere()` / `.orWhere()`.
    */
   where(condition: Sql | ConditionLike): this {
-    this.conditions = [this.resolveCondition(condition)];
+    this.conditions = [this.resolveCondition(condition, "where")];
     return this;
   }
 
   /** AND another condition onto the WHERE clause. */
   andWhere(condition: Sql | ConditionLike): this {
-    this.conditions.push(this.resolveCondition(condition));
+    this.conditions.push(this.resolveCondition(condition, "andWhere"));
     return this;
   }
 
@@ -133,14 +133,14 @@ export class UpdateQueryBuilder<T> {
    */
   orWhere(condition: Sql | ConditionLike): this {
     if (this.conditions.length === 0) {
-      this.conditions.push(this.resolveCondition(condition));
+      this.conditions.push(this.resolveCondition(condition, "orWhere"));
       return this;
     }
     const prior =
       this.conditions.length === 1
         ? this.conditions[0]
         : Conditions.and(this.conditions);
-    const next = this.resolveCondition(condition);
+    const next = this.resolveCondition(condition, "orWhere");
     this.conditions = [Conditions.or([prior, next])];
     return this;
   }
@@ -256,11 +256,16 @@ export class UpdateQueryBuilder<T> {
 
   // ── internals ──────────────────────────────────────────
 
-  private resolveCondition(condition: Sql | ConditionLike): Sql {
-    if (isConditionLike(condition)) {
-      return condition.resolve(this.columnResolver, this.dialectExpression);
-    }
-    return condition;
+  private resolveCondition(
+    condition: Sql | ConditionLike,
+    method: string,
+  ): Sql {
+    return resolveConditionInput(
+      condition,
+      `UpdateQueryBuilder.${method}()`,
+      this.columnResolver,
+      this.dialectExpression,
+    );
   }
 
   private columnResolver: ColumnResolver = (ref: string) => {

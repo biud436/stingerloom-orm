@@ -1,10 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import sql, { Sql, raw } from "../../../utils/sqlTag";
 import { Conditions } from "../../Conditions";
-import {
-  isConditionLike,
-  type ConditionLike,
-} from "../../expressions/ConditionLike";
+import type { ConditionLike } from "../../expressions/ConditionLike";
+import { resolveConditionInput } from "../../expressions/conditionInput";
 import type { DialectExpression } from "../../../dialects/DialectExpression";
 import { OrmError } from "../../../errors/OrmError";
 import { OrmErrorCode } from "../../../errors/OrmErrorCode";
@@ -53,17 +51,15 @@ export class WhereGroupBuilder<T> {
     valueOrOperator?: any,
     value?: any,
   ): this {
-    if (isConditionLike(columnOrCondition)) {
+    if (typeof columnOrCondition !== "string") {
       this.conditions.push(
-        columnOrCondition.resolve(
+        resolveConditionInput(
+          columnOrCondition,
+          "WhereGroupBuilder.where()",
           (ref) => this.columnResolver(ref),
           this.dialectExpression,
         ),
       );
-      return this;
-    }
-    if (typeof columnOrCondition === "object" && "sql" in columnOrCondition) {
-      this.conditions.push(columnOrCondition as Sql);
       return this;
     }
     if (arguments.length === 3 && value === undefined) {
