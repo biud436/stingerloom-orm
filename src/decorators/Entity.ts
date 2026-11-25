@@ -16,6 +16,8 @@ import { DISCRIMINATOR_COLUMN_TOKEN } from "./DiscriminatorColumn";
 import { DISCRIMINATOR_VALUE_TOKEN } from "./DiscriminatorValue";
 import { KnownColumnType } from "./Column";
 import { Logger } from "../utils/Logger";
+import { OrmError } from "../errors/OrmError";
+import { OrmErrorCode } from "../errors/OrmErrorCode";
 
 const entityLogger = new Logger("Entity");
 
@@ -268,10 +270,17 @@ function resolveInheritanceMetadata(
           | undefined;
 
         // For STI: use the root's table name (all subclasses share one table)
-        if (inheritanceStrategy === "SINGLE_TABLE" && !hasExplicitName) {
-          if (rootMeta) {
-            nameKey = rootMeta.name;
+        if (inheritanceStrategy === "SINGLE_TABLE" && rootMeta) {
+          // A child naming a table of its own would be read from and
+          // written to a table nothing creates.
+          if (hasExplicitName && declaration.name !== rootMeta.name) {
+            throw new OrmError(
+              OrmErrorCode.SCHEMA_ERROR,
+              `${target.name} names the table "${declaration.name}", but it is a SINGLE_TABLE child of ${parent.name} and shares its table "${rootMeta.name}".`,
+              `Remove the table name from ${target.name}, or use the JOINED or TABLE_PER_CLASS strategy on ${parent.name} to give each subclass its own table.`,
+            );
           }
+          nameKey = rootMeta.name;
         }
 
         // Register this child in the root's metadata

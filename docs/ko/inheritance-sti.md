@@ -97,6 +97,8 @@ await em.register({
 
 `@DiscriminatorColumn`을 생략하면 Stingerloom이 기본적으로 `"dtype"`이라는 이름의 `VARCHAR(31)` 타입 컬럼을 만들어요. 자식에 `@DiscriminatorValue`를 생략하면 클래스 이름이 값으로 사용돼요 (예: `"CreditCardPayment"`).
 
+자식은 루트의 테이블을 함께 쓰므로 자기 테이블 이름을 따로 가질 수 없습니다. 자식에 루트 테이블과 다른 이름으로 `@Entity({ name: "..." })`을 붙이면 클래스를 선언하는 시점에 `ORM_SCHEMA_ERROR`가 발생합니다.
+
 ## INSERT -- Discriminator 값이 설정되는 방식
 
 discriminator 값을 직접 설정할 필요가 없어요. ORM이 `@DiscriminatorValue("credit_card")`에서 값을 읽어서 모든 INSERT에 자동으로 주입해요.
