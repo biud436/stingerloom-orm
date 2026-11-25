@@ -1500,7 +1500,7 @@ describe("EntitySchema — Inheritance Mapping", () => {
   });
 
   describe("Edge cases", () => {
-    it("should allow explicit tableName to override STI table name sharing", () => {
+    it("should reject a tableName on an STI child that differs from the root's table", () => {
       const { Payment, CreditCardPayment } = createPaymentHierarchy();
 
       new EntitySchema<any>({
@@ -1509,15 +1509,15 @@ describe("EntitySchema — Inheritance Mapping", () => {
         columns: { id: { type: "int", primary: true, autoIncrement: true } },
       });
 
-      new EntitySchema<any>({
-        target: CreditCardPayment,
-        tableName: "custom_cc_table",
-        discriminatorValue: "credit_card",
-        columns: { cardNumber: { type: "varchar", nullable: true } },
-      });
-
-      const childMeta = Reflect.getMetadata(ENTITY_TOKEN, CreditCardPayment) as EntityMetadata;
-      expect(childMeta.name).toBe("custom_cc_table");
+      expect(
+        () =>
+          new EntitySchema<any>({
+            target: CreditCardPayment,
+            tableName: "custom_cc_table",
+            discriminatorValue: "credit_card",
+            columns: { cardNumber: { type: "varchar", nullable: true } },
+          }),
+      ).toThrow(expect.objectContaining({ code: "ORM_SCHEMA_ERROR" }));
     });
 
     it("should not set inheritance fields for non-inheritance entities", () => {

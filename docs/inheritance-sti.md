@@ -97,6 +97,8 @@ Child-specific columns **must** be `nullable: true`. A CreditCardPayment row has
 
 If you omit `@DiscriminatorColumn`, Stingerloom creates a column named `"dtype"` with type `VARCHAR(31)` by default. If you omit `@DiscriminatorValue` on a child, the class name is used as the value (e.g., `"CreditCardPayment"`).
 
+A child shares the root's table, so it cannot name one of its own: `@Entity({ name: "..." })` on a child with a name other than the root's table throws `ORM_SCHEMA_ERROR` when the class is declared.
+
 ## INSERT -- How Discriminator Values Are Set
 
 You never set the discriminator value yourself. The ORM reads it from `@DiscriminatorValue("credit_card")` and injects it into every INSERT automatically.

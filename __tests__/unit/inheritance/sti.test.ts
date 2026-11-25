@@ -21,6 +21,47 @@ describe("Single Table Inheritance (STI)", () => {
   // ── Decorator metadata tests ──────────────────────────
 
   describe("Decorator metadata", () => {
+    it("should reject a child that names a table of its own", () => {
+      @Entity()
+      @Inheritance({ strategy: "SINGLE_TABLE" })
+      class Vehicle {
+        @PrimaryGeneratedColumn() id!: number;
+      }
+
+      expect(() => {
+        @Entity({ name: "trucks" })
+        @DiscriminatorValue("truck")
+        class Truck extends Vehicle {
+          @Column() payload!: number;
+        }
+        return Truck;
+      }).toThrow(
+        expect.objectContaining({
+          code: "ORM_SCHEMA_ERROR",
+          message: expect.stringContaining('shares its table "vehicle"'),
+        }),
+      );
+
+      const rootMeta = Reflect.getMetadata(ENTITY_TOKEN, Vehicle) as EntityMetadata;
+      expect(rootMeta.childEntities).toEqual([]);
+    });
+
+    it("should accept a child that repeats the root's table name", () => {
+      @Entity({ name: "vehicles" })
+      @Inheritance({ strategy: "SINGLE_TABLE" })
+      class Vehicle {
+        @PrimaryGeneratedColumn() id!: number;
+      }
+
+      @Entity({ name: "vehicles" })
+      class Car extends Vehicle {
+        @Column() doors!: number;
+      }
+
+      const meta = Reflect.getMetadata(ENTITY_TOKEN, Car) as EntityMetadata;
+      expect(meta.name).toBe("vehicles");
+    });
+
     it("should store @Inheritance metadata on root entity", () => {
       @Entity()
       @Inheritance({ strategy: "SINGLE_TABLE" })
