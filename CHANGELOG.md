@@ -127,6 +127,7 @@ Releases: https://github.com/biud436/stingerloom-orm/releases
 
 ### Documentation
 
+- **The documentation site serves `/llms.txt`**, a summary of the ORM for AI coding assistants: what it is, its requirements and dependencies, a minimal example, notes on the API, and a link with a one-line description for every guide page and example. The README links to it.
 - **The Errors section of the API reference matches what the ORM throws** (EN and KO): the example messages include their `Suggestion:` line, `ValidationError.actual` / `expected` are the measured value and the limit, the error table names each code and when it is thrown, and the `OrmErrorCode` list holds every code, marking the two the ORM never produces. `express` and `logging` no longer say that `QueryTimeoutError` is never thrown or that it carries the SQL, and `configuration` says which failures fail `register()` under `retry`.
 - **Changes dated to 2.1 are dated to 3.0**, the release that shipped them (`entity-manager-writes`, `relations`, EN and KO, and the `unknownWriteKeys` option comment).
 
