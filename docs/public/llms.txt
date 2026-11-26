@@ -1,0 +1,141 @@
+# Stingerloom ORM
+
+> Stingerloom is a TypeScript ORM for PostgreSQL, MySQL/MariaDB and SQLite on Node.js. Entities are defined with the decorator-free `defineEntity` builder, which infers the row type, or with decorators. It provides a typed query DSL without code generation, multi-tenancy scoped by AsyncLocalStorage, an opt-in Unit of Work, schema-diff migrations with a CLI, and a NestJS module.
+
+- Package: `@stingerloom/orm` on npm, MIT license, current major version 3.x
+- Runtime: Node.js 22 or later; CommonJS and ES module builds with type declarations
+- Runtime dependencies: one (`sql-template-tag`). Database drivers and integrations are optional peer dependencies, installed only when used: `pg`, `mysql2`, `better-sqlite3`, `reflect-metadata`, `class-transformer`, `@nestjs/common` / `@nestjs/core`, `fast-glob`
+- CLI: `npx stingerloom migrate:run | migrate:rollback | migrate:status | migrate:generate | introspect`
+- Source: https://github.com/biud436/stingerloom-orm
+- Changelog: https://github.com/biud436/stingerloom-orm/blob/main/CHANGELOG.md
+
+**Verification.** CI runs on every pull request: the unit suite, SQLite integration tests, MySQL 8 and PostgreSQL 16 integration tests against real database servers, stress tests, a timezone matrix, a type check of every example project, and a check of the TypeScript samples in the documentation against the public API. In November 2026 the unit suite held about 7,000 tests and the SQLite integration suite about 2,100.
+
+**Minimal example** (`npm install @stingerloom/orm reflect-metadata better-sqlite3`):
+
+```typescript
+import "reflect-metadata";
+import { EntityManager, defineEntity, t, InferEntity } from "@stingerloom/orm";
+
+export const Todo = defineEntity("todos", {
+  id: t.int().primary().generated(),
+  title: t.varchar(200),
+  done: t.boolean().default(false),
+  createdAt: t.datetime().createTimestamp(),
+});
+export interface Todo extends InferEntity<typeof Todo> {}
+
+const em = new EntityManager();
+await em.register({
+  type: "sqlite", // "postgres" and "mysql" also take host, port, username and password
+  database: ":memory:",
+  entities: [Todo],
+  synchronize: true, // for development; production schemas are managed with migrations
+});
+
+const todo = await em.save(Todo, new Todo({ title: "Ship it" }));
+const open = await em.find(Todo, {
+  where: { done: false },
+  orderBy: { createdAt: "ASC" },
+  take: 10,
+});
+await em.update(Todo, { id: todo.id }, { done: true });
+await em.propagateShutdown({ closeConnections: true });
+```
+
+**Notes for writing code with Stingerloom:**
+
+- Entities are written with `defineEntity` and the `t` field builders, or with decorators (`@Entity`, `@Column`, `@ManyToOne`, ...). Both produce the same metadata and can be mixed in one project. Decorators need `experimentalDecorators`, `emitDecoratorMetadata` and `import "reflect-metadata"`; `defineEntity` needs no compiler flags.
+- Two `defineEntity` entities that reference each other break type inference unless one side names the row type and annotates the thunk, as in `t.oneToMany<Post>((): AnyEntityClass => Post, "author")`, and both row types are declared by interface merging (`export interface Post extends InferEntity<typeof Post> {}`).
+- `em.find()` and `em.findOne()` take `where`, `relations`, `orderBy`, `take`, `skip` and `select`. A `select` narrows the result type.
+- JOINs, grouping, window functions and computed expressions go through `em.createQueryBuilder(qAlias(Entity, "e"))`. The alias exposes each column as a typed property with operators such as `.eq()`, `.gt()` and `.in()`, so a misspelled column fails the TypeScript build.
+- `synchronize: true` applies every column change, `"safe"` only creates tables and adds columns, and `"dry-run"` logs the DDL without running it. Production schemas are usually managed with `npx stingerloom migrate:generate` and `npx stingerloom migrate:run`.
+- Multi-tenant code runs each request inside `MetadataContext.run(tenantId, async () => { ... })`. The `tenantStrategy` option chooses the isolation: `"search_path"` (default) and `"schema_qualified"` use a PostgreSQL schema per tenant, `"tenant_column"` filters by a tenant column on every database, and `"database"` gives each tenant its own database.
+- Transactions use `em.transaction(async (txEm) => { ... })` or the `@Transactional()` decorator.
+- The Unit of Work (identity map, dirty checking, batched flush) is opt-in: `em.extend(bufferPlugin())`, then `const buf = em.buffer()` and `await buf.flush()`.
+- Each major version has an upgrade guide, and the changelog lists every breaking change together with the change it requires.
+
+## Getting started
+
+- [Getting Started](https://biud436.github.io/stingerloom-orm/getting-started): Install, define a first entity, and run create/read/update/delete in about five minutes
+- [Configuration](https://biud436.github.io/stingerloom-orm/configuration): Every `register()` option, from a minimal setup to production settings
+- [Upgrading to 3.0](https://biud436.github.io/stingerloom-orm/upgrade-3.0): What changed from 2.x and what to update
+- [Upgrading to 2.0](https://biud436.github.io/stingerloom-orm/upgrade-2.0): What changed from 1.x and what to update
+
+## Defining entities
+
+- [Defining Entities](https://biud436.github.io/stingerloom-orm/define-entity): The recommended code-first `defineEntity` API with `t` field builders and inferred row types
+- [Entities & Columns (Decorators)](https://biud436.github.io/stingerloom-orm/entities): Class-based entities with `@Entity`, `@Column` and the other decorators
+- [Decorator-Free Reference](https://biud436.github.io/stingerloom-orm/decorator-free): The decorator-free equivalent of every decorator, with runnable examples
+- [Relations](https://biud436.github.io/stingerloom-orm/relations): ManyToOne, OneToMany, OneToOne and ManyToMany, eager and lazy loading, and cascades
+- [Inheritance Mapping](https://biud436.github.io/stingerloom-orm/inheritance-mapping): Class hierarchies as single-table, joined (TPT) or table-per-class (TPC) tables
+
+## Reading and writing
+
+- [EntityManager CRUD Basics](https://biud436.github.io/stingerloom-orm/entity-manager): The EntityManager, the entry point of every create, read, update and delete
+- [Querying & Pagination](https://biud436.github.io/stingerloom-orm/entity-manager-querying): Column selection, ordering, filtering, pagination, aggregates and EXPLAIN
+- [Writes & Transactions](https://biud436.github.io/stingerloom-orm/entity-manager-writes): Batch writes, upserts, transactions and raw SQL execution
+- [Transactions](https://biud436.github.io/stingerloom-orm/transactions): `em.transaction()`, `@Transactional`, isolation levels, savepoints and deadlock retry
+- [EntityManager Advanced](https://biud436.github.io/stingerloom-orm/entity-manager-advanced): Event listeners, subscribers, multi-tenancy, plugins, query diagnostics, repositories and graceful shutdown
+- [Pagination & Streaming](https://biud436.github.io/stingerloom-orm/pagination): Offset pagination, cursor pagination and streaming large result sets
+- [Query Result Cache](https://biud436.github.io/stingerloom-orm/caching): Opting individual reads into a short-lived result cache
+- [Dates & Timezones](https://biud436.github.io/stingerloom-orm/timezone): How temporal values are written and read on each database
+
+## Query builder and SQL
+
+- [Query Builder](https://biud436.github.io/stingerloom-orm/query-builder): `SelectQueryBuilder` for the queries `find()` cannot express
+- [JOINs](https://biud436.github.io/stingerloom-orm/query-builder-joins): Joins written by hand or derived from relation metadata
+- [QueryDSL Expressions](https://biud436.github.io/stingerloom-orm/query-builder-querydsl): The `qAlias` typed expression chain: operators, functions, CAST, CASE, window functions
+- [JSON Navigation](https://biud436.github.io/stingerloom-orm/query-builder-json): Querying into JSON columns by path
+- [Aggregations & Subqueries](https://biud436.github.io/stingerloom-orm/query-builder-aggregations): GROUP BY, HAVING, subqueries and DISTINCT
+- [Execution & Results](https://biud436.github.io/stingerloom-orm/query-builder-execution): Ordering, pagination, locking, index hints, result validation and the methods that run a query
+- [Patterns & Productivity](https://biud436.github.io/stingerloom-orm/query-builder-patterns): Conditional building, reusable scopes and the other builder helpers
+- [Raw SQL & CTE](https://biud436.github.io/stingerloom-orm/raw-sql): `RawQueryBuilder` for CTEs, window functions and set operations
+- [Typed Raw Rows](https://biud436.github.io/stingerloom-orm/row-shapes): `defineRow` for typed reads of tables that have no entity
+- [Raw Pipeline](https://biud436.github.io/stingerloom-orm/raw-pipeline): Streaming raw rows in batches without entity transformation
+
+## Schema and migrations
+
+- [Migrations](https://biud436.github.io/stingerloom-orm/migrations): Writing and running migrations, and generating them from a schema diff
+- [Migration CLI](https://biud436.github.io/stingerloom-orm/cli): The `stingerloom` command: `migrate:run`, `migrate:rollback`, `migrate:status`, `migrate:generate`, `introspect`
+- [Seeding](https://biud436.github.io/stingerloom-orm/seeding): Filling a database with initial or test data
+- [Introspection](https://biud436.github.io/stingerloom-orm/introspection): Generating entity code from an existing database
+
+## Multi-tenancy and advanced features
+
+- [Multi-Tenancy](https://biud436.github.io/stingerloom-orm/multi-tenancy): Layered tenant metadata, `MetadataContext.run()`, the four tenant strategies and tenant provisioning
+- [Advanced Features](https://biud436.github.io/stingerloom-orm/advanced): Subscribers, N+1 detection, cursor pagination, validation, repositories, streaming, deadlock retry and operational settings
+- [Events & Subscribers](https://biud436.github.io/stingerloom-orm/events): Lifecycle hooks, event listeners and `EntitySubscriber`
+- [Logging & Diagnostics](https://biud436.github.io/stingerloom-orm/logging): Query logging, N+1 detection, slow-query warnings, EXPLAIN and query timeouts
+- [Plugins](https://biud436.github.io/stingerloom-orm/plugins): Extending an EntityManager with `em.extend()`
+- [Write Buffer Basics](https://biud436.github.io/stingerloom-orm/write-buffer): The Unit of Work: identity map, dirty checking, entity states and `flush()`
+- [Write Buffer Advanced](https://biud436.github.io/stingerloom-orm/write-buffer-advanced): Lazy loading, pessimistic locking, bulk DML, flush events and modes, and nested units of work
+
+## Integrations
+
+- [NestJS](https://biud436.github.io/stingerloom-orm/nestjs): `StingerloomOrmModule`, `@InjectRepository`, `@InjectEntityManager` and named connections
+- [Express](https://biud436.github.io/stingerloom-orm/express): Using the EntityManager in an Express application
+
+## Reference
+
+- [API Reference](https://biud436.github.io/stingerloom-orm/api-reference): Method signatures, options and error codes
+- [Troubleshooting](https://biud436.github.io/stingerloom-orm/troubleshooting): Common errors and how to fix them
+- [Production Guide](https://biud436.github.io/stingerloom-orm/production-guide): Configuration and operations for running in production
+
+## Examples
+
+- [vanilla-todo-sqlite](https://github.com/biud436/stingerloom-orm/tree/main/examples/vanilla-todo-sqlite): `defineEntity` in a plain script, with no framework and no decorators, on in-memory SQLite
+- [nestjs-todo](https://github.com/biud436/stingerloom-orm/tree/main/examples/nestjs-todo): Minimal NestJS CRUD
+- [nestjs-todo-sqlite](https://github.com/biud436/stingerloom-orm/tree/main/examples/nestjs-todo-sqlite): Minimal NestJS CRUD on SQLite through `better-sqlite3`
+- [nestjs-cats](https://github.com/biud436/stingerloom-orm/tree/main/examples/nestjs-cats): CRUD, relations, soft delete, cursor pagination and `EntitySubscriber`
+- [nestjs-blog](https://github.com/biud436/stingerloom-orm/tree/main/examples/nestjs-blog): ManyToMany, upsert and soft delete, with e2e tests
+- [nestjs-linear-clone](https://github.com/biud436/stingerloom-orm/tree/main/examples/nestjs-linear-clone): An issue tracker with recursive CTEs, window functions, `SKIP LOCKED` queues and optimistic locking
+- [nestjs-multitenant](https://github.com/biud436/stingerloom-orm/tree/main/examples/nestjs-multitenant): PostgreSQL schema-per-tenant isolation with `TenantMigrationRunner`
+
+## Optional
+
+- [Architecture](https://biud436.github.io/stingerloom-orm/architecture): How the ORM is structured internally
+- [Analytical Query Cookbook](https://biud436.github.io/stingerloom-orm/cookbook): Analytical query recipes with window functions, `date_trunc` and recursive CTEs
+- [Tutorial: IoT Smart Thermometer Backend](https://biud436.github.io/stingerloom-orm/tutorial-iot): A full backend built step by step
+- [Contributor Guide](https://biud436.github.io/stingerloom-orm/onboarding): Setting up the repository and contributing
+- [Korean documentation](https://biud436.github.io/stingerloom-orm/ko/): The same documentation in Korean

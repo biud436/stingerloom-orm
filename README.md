@@ -12,6 +12,7 @@
   <a href="https://biud436.github.io/stingerloom-orm/"><b>Documentation</b></a> ·
   <a href="https://biud436.github.io/stingerloom-orm/getting-started"><b>Getting Started</b></a> ·
   <a href="https://biud436.github.io/stingerloom-orm/api-reference"><b>API Reference</b></a> ·
+  <a href="https://biud436.github.io/stingerloom-orm/llms.txt"><b>llms.txt</b></a> ·
   <a href="https://github.com/biud436/stingerloom-orm/tree/main/examples"><b>Examples</b></a>
 </p>
 
