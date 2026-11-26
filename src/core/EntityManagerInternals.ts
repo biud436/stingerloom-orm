@@ -287,6 +287,12 @@ export interface EntityManagerInternals {
     session?: TransactionSessionManager,
   ): Promise<T | null>;
 
+  /** The statement find() would run for these options, unexecuted. */
+  buildFindStatement<T>(
+    entity: ClazzType<T>,
+    opt: FindOption<T>,
+  ): import("sql-template-tag").Sql;
+
   // For CascadeHandler
   save<T>(
     entity: ClazzType<T>,

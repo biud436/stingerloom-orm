@@ -4,52 +4,7 @@ import { RelationMetadataResolver } from "../../src/core/RelationMetadataResolve
 import { EntityManagerInternals } from "../../src/core/EntityManagerInternals";
 import { InvalidQueryError } from "../../src/errors/InvalidQueryError";
 import { EntityMetadataNotFoundError } from "../../src/errors/EntityMetadataNotFoundError";
-
-// Mock RawQueryBuilderFactory. Every builder records the arguments it was
-// handed so the pagination/soft-delete tests can assert what the handler
-// actually translated the FindOption into (they used to call explain() and
-// assert nothing).
-const mockQbInstances: any[] = [];
-
-jest.mock("../../src/core/RawQueryBuilderFactory", () => ({
-  RawQueryBuilderFactory: {
-    create: jest.fn(() => {
-      const qb: any = {
-        _dbType: null,
-        calls: {
-          select: [] as any[],
-          from: [] as any[],
-          where: [] as any[],
-          orderBy: [] as any[],
-          limit: [] as any[],
-        },
-        select(cols: any) { qb.calls.select.push(cols); return qb; },
-        from(t: any) { qb.calls.from.push(t); return qb; },
-        where(w: any) { qb.calls.where.push(w); return qb; },
-        orderBy(o: any) { qb.calls.orderBy.push(o); return qb; },
-        limit(l: any) { qb.calls.limit.push(l); return qb; },
-        setDatabaseType(t: any) { qb._dbType = t; return qb; },
-        build() { return { text: "SELECT * FROM test", values: [] }; },
-      };
-      mockQbInstances.push(qb);
-      return qb;
-    }),
-  },
-}));
-
-/** The builder the most recent explain() call used. */
-function lastQb(): any {
-  expect(mockQbInstances.length).toBeGreaterThan(0);
-  return mockQbInstances[mockQbInstances.length - 1];
-}
-
-/** Flattened SQL text of the WHERE fragments the last explain() emitted. */
-function lastWhereSql(): string {
-  const [whereMap] = lastQb().calls.where;
-  return ((whereMap ?? []) as any[])
-    .map((w) => w?.sql ?? w?.text ?? String(w))
-    .join(" AND ");
-}
+import sql from "../../src/utils/sqlTag";
 
 class TestEntity {
   id!: number;
@@ -112,6 +67,7 @@ function createMockCtx(overrides: Partial<EntityManagerInternals> = {}): jest.Mo
     markDirty: jest.fn(),
     findInternal: jest.fn(),
     findOneInternal: jest.fn(),
+    buildFindStatement: jest.fn(() => sql`SELECT 1 FROM t WHERE a = ${7}`),
     save: jest.fn(),
     saveWithSession: jest.fn(),
     find: jest.fn(),
@@ -151,7 +107,6 @@ describe("ExplainQueryHandler", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockQbInstances.length = 0;
     resolver = createMockResolver();
     ctx = createMockCtx();
     handler = new ExplainQueryHandler(resolver, ctx);
@@ -178,106 +133,28 @@ describe("ExplainQueryHandler", () => {
       await expect(handler.explain(TestEntity)).rejects.toThrow(EntityMetadataNotFoundError);
     });
 
-    it("should set database type to mysql for MySQL family", async () => {
-      ctx.isMySqlFamily.mockReturnValue(true);
+    it("plans the statement find() builds for the same options", async () => {
       const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
       ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
+      const option = { where: { age: 7 }, relations: ["owner"] } as any;
 
-      await handler.explain(TestEntity);
+      await handler.explain(TestEntity, option);
 
-      expect(ctx.isMySqlFamily).toHaveBeenCalled();
+      expect(ctx.buildFindStatement).toHaveBeenCalledWith(TestEntity, option);
+      const [sent] = mockSession.query.mock.calls[0];
+      expect(sent.sql).toBe("EXPLAIN SELECT 1 FROM t WHERE a = ?");
+      expect(sent.values).toEqual([7]);
     });
 
-    it("should set database type to sqlite for SQLite", async () => {
-      ctx.isMySqlFamily.mockReturnValue(false);
-      (ctx as any).isSqlite = jest.fn().mockReturnValue(true);
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
+    it("should let a rejection from the statement builder through without querying", async () => {
+      ctx.buildFindStatement.mockImplementation(() => {
+        throw new InvalidQueryError("Unknown column 'nope'.");
+      });
 
-      await handler.explain(TestEntity);
-
-      expect((ctx as any).isSqlite).toHaveBeenCalled();
-    });
-
-    it("should handle select option with no eager joins", async () => {
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-      ctx.resolveSelectColumns.mockReturnValue(["id", "name"]);
-
-      await handler.explain(TestEntity, { select: ["id", "name"] as any });
-
-      expect(ctx.resolveSelectColumns).toHaveBeenCalledWith(["id", "name"]);
-    });
-
-    it("should qualify columns when eager joins exist", async () => {
-      resolver.resolveManyToOneMetadata.mockReturnValue([
-        { columnName: "author", option: { eager: true } },
-      ] as any);
-
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity);
-
-      // wrap should be called with table-qualified columns
-      expect(ctx.wrap).toHaveBeenCalled();
-    });
-
-    it("should handle eager OneToOne relations", async () => {
-      resolver.resolveOneToOneMetadata.mockReturnValue([
-        { propertyKey: "profile", joinColumn: "profile_id", option: { eager: true } },
-      ] as any);
-
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity);
-
-      expect(resolver.resolveOneToOneMetadata).toHaveBeenCalled();
-    });
-
-    it("should handle relations option in findOption", async () => {
-      resolver.resolveManyToOneMetadata.mockReturnValue([
-        // getMappingEntity is part of the real metadata shape — explain() now
-        // validates requested relation names, and a missing target thunk is
-        // reported as an unloadable (circular-import) relation.
-        { columnName: "author", option: { eager: false }, getMappingEntity: () => TestEntity },
-      ] as any);
-
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity, { relations: ["author"] });
-
-      expect(resolver.resolveManyToOneMetadata).toHaveBeenCalled();
-    });
-
-    it("rejects an unknown column in a relation's where / orderBy the way find() does", async () => {
-      resolver.resolveOneToManyMetadata.mockReturnValue([
-        { propertyKey: "comments", mappedBy: "post", getRelatedEntity: () => TestEntity },
-      ] as any);
-
-      await expect(
-        handler.explain(TestEntity, { relations: { comments: { where: { nmae: "x" } } } }),
-      ).rejects.toThrow(InvalidQueryError);
-      await expect(
-        handler.explain(TestEntity, { relations: { comments: { orderBy: { nmae: "ASC" } } } }),
-      ).rejects.toThrow(InvalidQueryError);
-      expect(mockQbInstances).toHaveLength(0);
-
-      // The per-relation options shape the follow-up reads, not the planned
-      // statement: a valid one plans the top level as before.
-      await handler.explain(TestEntity, { relations: { comments: { where: { name: "x" }, take: 1 } } });
-      expect(mockQbInstances).toHaveLength(1);
-    });
-
-    it("should pass limit array [offset, count] through unchanged", async () => {
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity, { limit: [10, 20] });
-
-      expect(lastQb().calls.limit).toEqual([[10, 20]]);
+      await expect(handler.explain(TestEntity, { where: { nope: 1 } as any })).rejects.toThrow(
+        "Unknown column 'nope'.",
+      );
+      expect(ctx.executeReadOnly).not.toHaveBeenCalled();
     });
 
     it("should reject a negative offset or count in the limit array, as find() does", async () => {
@@ -285,88 +162,6 @@ describe("ExplainQueryHandler", () => {
         "'limit[0]' must be a non-negative integer, got -5.",
       );
       expect(ctx.executeReadOnly).not.toHaveBeenCalled();
-    });
-
-    it("should keep count=0 in limit array as LIMIT 0 (#448)", async () => {
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity, { limit: [0, 0] });
-
-      // An explicit 0 means "no rows", not "unbounded" — the read path was
-      // fixed to the same contract.
-      expect(lastQb().calls.limit).toEqual([[0, 0]]);
-    });
-
-    it("should let a positive take override the count in limit array", async () => {
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity, { limit: [0, 100], take: 5 });
-
-      expect(lastQb().calls.limit).toEqual([[0, 5]]);
-    });
-
-    it("should translate skip/take without limit into [skip, take]", async () => {
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity, { skip: 10, take: 5 });
-
-      expect(lastQb().calls.limit).toEqual([[10, 5]]);
-    });
-
-    it("should apply an unbounded count for skip without take", async () => {
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity, { skip: 10 });
-
-      expect(lastQb().calls.limit).toEqual([[10, 2147483647]]);
-    });
-
-    it("should pass a numeric limit through as a scalar", async () => {
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity, { limit: 50 as any });
-
-      expect(lastQb().calls.limit).toEqual([50]);
-    });
-
-    it("should handle deletedAt column filtering", async () => {
-      resolver.getDeletedAtColumn.mockReturnValue("deletedAt");
-
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity);
-
-      expect(resolver.getDeletedAtColumn).toHaveBeenCalledWith(TestEntity);
-      // The soft-delete predicate must reach the query, not just the resolver:
-      // an EXPLAIN over unfiltered rows describes a plan find() never runs.
-      expect(lastWhereSql()).toContain(`"deletedAt" IS NULL`);
-    });
-
-    it("should skip deletedAt filtering when withDeleted is set", async () => {
-      resolver.getDeletedAtColumn.mockReturnValue("deletedAt");
-
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity, { withDeleted: true } as any);
-
-      expect(lastWhereSql()).not.toContain("deletedAt");
-    });
-
-    it("should handle orderBy option", async () => {
-      const mockSession = { query: jest.fn().mockResolvedValue({ results: [] }) };
-      ctx.executeReadOnly.mockImplementation(async (fn: any) => fn(mockSession));
-
-      await handler.explain(TestEntity, { orderBy: { name: "ASC", age: "DESC" } as any });
-
-      expect(ctx.wrap).toHaveBeenCalledWith("name");
-      expect(ctx.wrap).toHaveBeenCalledWith("age");
     });
 
     it("should pass useMaster to getReadNode", async () => {

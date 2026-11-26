@@ -1577,7 +1577,7 @@ Use it during development to verify that:
 `explain()` accepts the same `FindOption` as `find()`, so you can test the plan for any query you would actually run in production.
 
 ::: info
-`explain()` is supported on MySQL and PostgreSQL. On SQLite, it throws `InvalidQueryError`.
+`explain()` is supported on MySQL, PostgreSQL and SQLite (`EXPLAIN QUERY PLAN`). It plans the statement `find()` runs for the same options, including the joins and unions an inheritance hierarchy or an eager relation adds; relations loaded by follow-up queries are not part of the plan.
 :::
 
 ---
