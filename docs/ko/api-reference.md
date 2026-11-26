@@ -453,7 +453,7 @@ class SelectQueryBuilder<T, TResult = T> {
   getAvg(column: ColumnOf<T>): Promise<number>;   // AVG — 빈 결과 시 0
   getMin(column: ColumnOf<T>): Promise<number>;   // MIN — 빈 결과 시 0
   getMax(column: ColumnOf<T>): Promise<number>;   // MAX — 빈 결과 시 0
-  explain(): Promise<ExplainResult>;          // 쿼리 플랜 (MySQL / PostgreSQL만 지원)
+  explain(): Promise<ExplainResult>;          // 쿼리 플랜
 
   // ── 실행: 타입이 있는 plain 객체 (역직렬화 없음) ───────
   getPartialMany(): Promise<TResult[]>;

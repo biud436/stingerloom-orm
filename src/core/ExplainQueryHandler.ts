@@ -1,25 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ClazzType } from "../utils";
 import { FindOption } from "../dialects/FindOption";
-import sql, { Sql, raw } from "../utils/sqlTag";
-import { Conditions } from "./Conditions";
-import { resolveWhereClause } from "./WhereResolver";
-import { createDialectExpression } from "../dialects/DialectExpression";
-import { RawQueryBuilderFactory } from "./RawQueryBuilderFactory";
+import sql, { raw } from "../utils/sqlTag";
 import { ExplainResult } from "./ExplainResult";
 import { EntityMetadataNotFoundError } from "../errors/EntityMetadataNotFoundError";
 import { InvalidQueryError } from "../errors/InvalidQueryError";
 import { RelationMetadataResolver } from "./RelationMetadataResolver";
-import { resolveRelationTree } from "./RelationTree";
-import { resolveRelationCounts } from "./RelationCount";
-import { validateReadIdentifiers } from "./ColumnNameValidator";
 import { validateReadOptionShape } from "./QueryOptionShape";
-import {
-  RelationWhereFilterBuilder,
-  relationAwareScope,
-  validateRelationCountIdentifiers,
-  validateRelationOptionIdentifiers,
-} from "./RelationWhereFilter";
 import { EntityManagerInternals } from "./EntityManagerInternals";
 
 /**
@@ -41,155 +28,19 @@ export class ExplainQueryHandler {
     if (!driver || !driver.supportsExplain()) {
       throw new InvalidQueryError(
         "EXPLAIN is not supported by the current database driver.",
-        "Use MySQL or PostgreSQL driver which support EXPLAIN queries.",
+        "Use the MySQL, PostgreSQL or SQLite driver, which support EXPLAIN queries.",
       );
     }
 
-    const { select, orderBy, where, take, skip } = findOption;
-    const { limit } = findOption;
-
-    const metadata = this.resolver.resolveEntityMetadata(entity);
-    if (!metadata) {
+    if (!this.resolver.resolveEntityMetadata(entity)) {
       throw new EntityMetadataNotFoundError(entity.name);
     }
 
-    // Same guard as find(): explain() mirrors the read path, so an unresolvable
-    // relation name — or an unknown column in a relation's own where /
-    // orderBy — must fail here too instead of silently planning fewer joins.
-    // Only the top level shapes the statement; nested levels, the
-    // per-relation options and the `withCount` counts are follow-up reads.
-    const relationTree = resolveRelationTree(entity, findOption.relations, this.resolver);
-    validateRelationOptionIdentifiers(this.ctx, this.resolver, entity, relationTree);
-    validateRelationCountIdentifiers(
-      this.ctx,
-      this.resolver,
-      entity,
-      resolveRelationCounts(entity, findOption.withCount, this.resolver),
-    );
-    const relationNames = relationTree?.names ?? [];
-
-    const qb = RawQueryBuilderFactory.create();
-    const selectMap: string[] = [];
-    const whereMap: Sql[] = [];
-    const orderByMap: Array<{ column: string; direction: "ASC" | "DESC" }> = [];
-
-    const manyToOneRelations = this.resolver.resolveManyToOneMetadata(entity);
-    const eagerRelations = manyToOneRelations.filter((rel) => {
-      const isEager = rel.option?.eager === true;
-      const isInRelations = relationNames.includes(rel.columnName);
-      return isEager || isInRelations;
-    });
-
-    const oneToOneRelations = this.resolver.resolveOneToOneMetadata(entity);
-    const eagerOneToOneRelations = oneToOneRelations.filter((rel) => {
-      if (!rel.joinColumn) return false;
-      const isEager = rel.option?.eager === true;
-      const isInRelations = relationNames.includes(rel.propertyKey);
-      return isEager || isInRelations;
-    });
-
-    const hasEagerJoins =
-      eagerRelations.length > 0 || eagerOneToOneRelations.length > 0;
-    const tableName = metadata.name;
-
-    if (select) {
-      const selectedColumns = this.ctx.resolveSelectColumns<T>(select);
-      if (hasEagerJoins) {
-        selectMap.push(
-          ...selectedColumns.map(
-            (col) => `${this.ctx.wrap(tableName)}.${this.ctx.wrap(col)}`,
-          ),
-        );
-      } else {
-        selectMap.push(...selectedColumns.map((col) => this.ctx.wrap(col)));
-      }
-    } else {
-      if (hasEagerJoins) {
-        selectMap.push(
-          ...metadata.columns.map(
-            (column) => `${this.ctx.wrap(tableName)}.${this.ctx.wrap(column.name)}`,
-          ),
-        );
-      } else {
-        selectMap.push(
-          ...metadata.columns.map((column) => this.ctx.wrap(column.name)),
-        );
-      }
-    }
-
-    // Map property names to DB columns (incl. FK shadow props) like
-    // findInternal, so a NamingStrategy WHERE resolves correctly.
-    const propToCol = this.ctx.buildPropertyToColumnMap(metadata);
-
-    // explain() mirrors the find() SQL, so it mirrors the identifier guard too.
-    validateReadIdentifiers(
-      findOption,
-      select ? this.ctx.resolveSelectColumns<T>(select) : undefined,
-      relationAwareScope(this.ctx, this.resolver, entity, metadata),
-    );
-
-    whereMap.push(
-      ...resolveWhereClause(where, {
-        wrapColumn: (n) => this.ctx.wrap(n),
-        qualified: hasEagerJoins,
-        tableName: hasEagerJoins ? tableName : undefined,
-        dialect: this.ctx.getDialect(),
-        dialectExpression: createDialectExpression(this.ctx.getDialect()),
-        propertyToColumn: propToCol,
-        relationFilter: new RelationWhereFilterBuilder(
-          this.ctx,
-          this.resolver,
-          (findOption as any).withDeleted,
-        ).hookFor(entity, (column) => `${this.ctx.wrap(tableName)}.${this.ctx.wrap(column)}`),
-      }),
-    );
-
-    const deletedAtColumn = this.resolver.getDeletedAtColumn(entity);
-    if (deletedAtColumn && !(findOption as any).withDeleted) {
-      if (hasEagerJoins) {
-        whereMap.push(
-          Conditions.isNull(
-            `${this.ctx.wrap(tableName)}.${this.ctx.wrap(deletedAtColumn)}`,
-          ),
-        );
-      } else {
-        whereMap.push(Conditions.isNull(this.ctx.wrap(deletedAtColumn)));
-      }
-    }
-
-    for (const key in orderBy) {
-      const value = orderBy[key];
-      if (value) {
-        orderByMap.push({ column: this.ctx.wrap(key), direction: value });
-      }
-    }
-
-    qb.select(selectMap).from(this.ctx.wrapTable(tableName));
-    qb.where(whereMap).orderBy(orderByMap);
-
-    // #145: Set database type for all dialects, not just MySQL
-    if (this.ctx.isMySqlFamily()) qb.setDatabaseType("mysql");
-    else if (this.ctx.isSqlite?.()) qb.setDatabaseType("sqlite");
-    else qb.setDatabaseType("postgresql");
-
-    // Negative and non-integer values were rejected on entry, as find() does.
-    if (Array.isArray(limit)) {
-      const [offset, count] = limit;
-      // An explicit count of 0 means LIMIT 0; only a positive `take` overrides it.
-      qb.limit([offset, take && take > 0 ? take : count]);
-    } else if (skip != null || (take != null && limit == null)) {
-      const offset = skip ?? 0;
-      // An explicit `take: 0` means LIMIT 0 — only an unset take drops the cap.
-      if (take != null) {
-        qb.limit([offset, take]);
-      } else if (offset > 0) {
-        qb.limit([offset, 2147483647]);
-      }
-    } else if (limit != null) {
-      qb.limit(limit as number);
-    }
-
-    const selectQuery = qb.build();
+    // The statement is find()'s own, so the plan is the plan of the read:
+    // inheritance sources and joins, eager and requested to-one joins, the
+    // tenant, discriminator and soft-delete predicates. Nested levels, to-many
+    // relations and the `withCount` counts are follow-up reads and stay out.
+    const selectQuery = this.ctx.buildFindStatement(entity, findOption);
     const explainPrefix = driver.buildExplainSql("");
     const explainQuery = sql`${raw(explainPrefix)}${selectQuery}`;
 

@@ -1700,6 +1700,49 @@ export class ReadExecutor {
   }
 
   /**
+   * Resolves one read into its {@link FindOperation} and assembles the
+   * statement for it, clause by clause in the order the builders above
+   * document. find() executes the result; explain() plans it.
+   */
+  private assembleFindStatement<T>(
+    entity: ClazzType<T>,
+    findOption: FindOption<T>,
+    relationTree: ReturnType<typeof resolveRelationTree>,
+    relationCounts: ReturnType<ReadExecutor["resolveRelationCounts"]>,
+  ): { op: FindOperation<T>; qb: BaseRawQueryBuilder } {
+    const op = this.prepareFindOperation(entity, findOption, relationTree, relationCounts);
+
+    const qb = RawQueryBuilderFactory.create();
+
+    const selectMap = this.buildSelectList(op);
+    const whereMap = this.buildWhereClauses(op);
+    const orderByMap = this.buildOrderByList(op);
+
+    this.applyFromClause(op, qb, selectMap);
+    this.appendInheritanceJoins(op, qb);
+    this.appendEagerJoins(op, qb);
+
+    qb.where(whereMap);
+    this.appendGroupByHaving(op, qb);
+    qb.orderBy(orderByMap);
+    this.applyLimitAndLock(op, qb);
+
+    return { op, qb };
+  }
+
+  /**
+   * The statement find() would run for these options, unexecuted — what
+   * explain() hands to the database's planner.
+   */
+  buildFindStatement<T>(entity: ClazzType<T>, findOption: FindOption<T> = {}): Sql {
+    const relationTree = resolveRelationTree(entity, findOption.relations, this.resolver);
+    this.validateRelationOptionIdentifiers(entity, relationTree);
+    if (relationTree) findOption = { ...findOption, relations: relationTree.names };
+    const relationCounts = this.resolveRelationCounts(entity, findOption.withCount);
+    return this.assembleFindStatement(entity, findOption, relationTree, relationCounts).qb.build();
+  }
+
+  /**
    * The engine behind find / findOne and everything that funnels into them.
    *
    * Runs one read as a fixed pipeline: validate the options, resolve the
@@ -1754,22 +1797,12 @@ export class ReadExecutor {
         : rawSession;
       const resultTransformer = ResultTransformerFactory.create();
 
-      const op = this.prepareFindOperation(entity, findOption, relationTree, relationCounts);
-
-      const qb = RawQueryBuilderFactory.create();
-
-      const selectMap = this.buildSelectList(op);
-      const whereMap = this.buildWhereClauses(op);
-      const orderByMap = this.buildOrderByList(op);
-
-      this.applyFromClause(op, qb, selectMap);
-      this.appendInheritanceJoins(op, qb);
-      this.appendEagerJoins(op, qb);
-
-      qb.where(whereMap);
-      this.appendGroupByHaving(op, qb);
-      qb.orderBy(orderByMap);
-      this.applyLimitAndLock(op, qb);
+      const { op, qb } = this.assembleFindStatement(
+        entity,
+        findOption,
+        relationTree,
+        relationCounts,
+      );
 
       const queryResult = await this.executeFindQuery(op, session, qb);
       if (!queryResult) {

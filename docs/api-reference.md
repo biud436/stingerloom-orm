@@ -453,7 +453,7 @@ class SelectQueryBuilder<T, TResult = T> {
   getAvg(column: ColumnOf<T>): Promise<number>;   // AVG — 0 on empty/NULL
   getMin(column: ColumnOf<T>): Promise<number>;   // MIN — 0 on empty/NULL
   getMax(column: ColumnOf<T>): Promise<number>;   // MAX — 0 on empty/NULL
-  explain(): Promise<ExplainResult>;          // Query plan (MySQL / PostgreSQL only)
+  explain(): Promise<ExplainResult>;          // Query plan
 
   // ── EXECUTION: typed plain objects (no deserialization) ─
   getPartialMany(): Promise<TResult[]>;

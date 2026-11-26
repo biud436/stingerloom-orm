@@ -1577,7 +1577,7 @@ WHERE "email" = $1
 `explain()`은 `find()`와 같은 `FindOption`을 받으므로, 프로덕션에서 실행할 쿼리의 플랜을 그대로 테스트할 수 있어요.
 
 ::: info
-`explain()`은 MySQL과 PostgreSQL에서 지원돼요. SQLite에서는 `InvalidQueryError`를 던져요.
+`explain()`은 MySQL, PostgreSQL, SQLite(`EXPLAIN QUERY PLAN`)에서 지원됩니다. 같은 옵션으로 `find()`가 실행하는 문장을 그대로 계획하므로 상속 계층이나 eager 관계가 더하는 조인과 UNION도 포함돼요. 후속 쿼리로 불러오는 관계는 계획에 들어가지 않습니다.
 :::
 
 ---

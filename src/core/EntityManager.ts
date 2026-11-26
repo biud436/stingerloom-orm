@@ -422,6 +422,7 @@ export class EntityManager implements BaseEntityManager {
     },
     findInternal: (e, o, s) => this.findInternal(e, o, s),
     findOneInternal: (e, o, s) => this.findOneInternal(e, o, s),
+    buildFindStatement: (e, o) => this.readExecutor.buildFindStatement(e, o),
     save: (e, i) => this.save(e, i),
     saveWithSession: (e, i, s) => this.finishWrite(e, this.writeExecutor.saveInternal(e, i, s), s),
     find: (e, o) => this.find(e, o),
