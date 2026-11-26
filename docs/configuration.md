@@ -302,6 +302,29 @@ Why exponential backoff instead of a fixed delay? If the database is down for a 
 
 ---
 
+## Connections Lost After Startup
+
+`retry` covers `register()`. A connection can also fail later, while nothing is running on it: the database restarts, a failover moves the primary, an administrator terminates the session, or a firewall drops an idle connection. No call is waiting on that connection, so the error cannot be thrown to one. `onConnectionError` receives it:
+
+```typescript
+await em.register({
+  type: "postgres",
+  // ...
+  onConnectionError: (error) => {
+    metrics.increment("db.connection_lost");
+    logger.warn(error.message, { cause: error.cause });
+  },
+});
+```
+
+The error is an `OrmError` with code `ORM_CONNECTION_LOST`; `cause` is the driver error. Each lost connection is reported once. Without the option, the ORM logs the error as a warning.
+
+There is nothing to repair in the callback. The pool has already discarded the connection and opens a new one for the next query. A transaction that was using the connection fails on its next statement. The replica pools of the connection report to the same callback. Every other connection, a named one or a per-tenant database, takes the option in its own options.
+
+What does not come here: an error of a statement is thrown to the caller of that statement, and a connection that `register()` or a query cannot open is thrown as `ORM_CONNECTION_FAILED`.
+
+PostgreSQL, MySQL and MariaDB. SQLite has no network connection to lose.
+
 ## Query Logging
 
 ### Why query logging matters

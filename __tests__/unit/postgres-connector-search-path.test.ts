@@ -45,7 +45,11 @@ describe("PostgresConnector — search_path on new pooled clients", () => {
     expect(typeof config.verify).toBe("function");
     // The connect event does not wait for the SET, so the caller's first
     // query would queue behind it on the same client.
-    expect(mockPoolOn).not.toHaveBeenCalledWith("connect", expect.anything());
+    const client = { on: jest.fn(), query: jest.fn() };
+    for (const [event, listener] of mockPoolOn.mock.calls) {
+      if (event === "connect") listener(client);
+    }
+    expect(client.query).not.toHaveBeenCalled();
   });
 
   it("sets search_path to the configured schema, quoted", async () => {

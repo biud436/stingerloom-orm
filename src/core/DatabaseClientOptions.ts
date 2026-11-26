@@ -234,6 +234,24 @@ interface BaseDatabaseClientOptions {
   retry?: RetryOptions;
 
   /**
+   * Receives the error of a pooled connection that fails outside a
+   * statement: the server closed it while it sat idle in the pool, or
+   * between two statements of a transaction (a restart, a failover, an
+   * administrator terminating the session, a dropped network path).
+   *
+   * No call is waiting on such an error, so it cannot be thrown to one. The
+   * error is an `OrmError` with code `ORM_CONNECTION_LOST` and the driver
+   * error as `cause`. The pool has already discarded the connection and
+   * opens a new one on demand. Without this option the error is logged as a
+   * warning. Errors of a statement, and of `register()` failing to connect,
+   * are thrown to their caller and do not come here.
+   *
+   * PostgreSQL, MySQL and MariaDB. The replica pools of the connection
+   * report here too.
+   */
+  onConnectionError?: (error: OrmError) => void;
+
+  /**
    * Read replica (read/write split) configuration (PostgreSQL, MySQL and
    * MariaDB). When set, reads route to slaves and writes to the master.
    * Each node gets one connection pool, opened by the first read routed to
@@ -677,6 +695,7 @@ const DATABASE_OPTION_RULES: ObjectShape = {
   tenantColumnLength: isPositiveInteger,
   tenantOnMissingContext: isOneOf(["throw", "warn", "allow"]),
   tenantDatabaseResolver: isFunction,
+  onConnectionError: isFunction,
   tenantDatabaseMap: isRecordOf(isNonEmptyString),
   eagerProvisionTenants: isArrayOf(isNonEmptyString),
   publicTenantBehavior: isOneOf(["default", "throw"]),

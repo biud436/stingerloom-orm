@@ -17,6 +17,7 @@ import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DbVersion, detectDbVersion } from "../DbVersion";
 import { isValidPgIdentifier } from "./pgIdentifier";
 import { toConstraintViolation } from "../constraintViolation";
+import { createConnectionErrorReporter } from "../connectionErrorReporter";
 
 /**
  * Pool options that run `statement` on each new client before the pool
@@ -138,6 +139,19 @@ export class PostgresConnector extends IConnector {
         idleTimeoutMillis: poolOptions?.idleTimeoutMs ?? 10000,
         ...(sslConfig ? { ssl: sslConfig } : {}),
         ...runOnEachNewClient(setSearchPath),
+      });
+
+      // A connection the server closes outside a statement raises "error"
+      // on its client — and on the pool too when the client was idle. An
+      // "error" event nobody listens to ends the process.
+      const reportLostConnection = createConnectionErrorReporter(
+        options,
+        this.logger,
+        "PostgreSQL",
+      );
+      pool.on("error", (error, client) => reportLostConnection(error, client));
+      pool.on("connect", (client) => {
+        client.on("error", (error) => reportLostConnection(error, client));
       });
 
       this.isDebug = !!logging;

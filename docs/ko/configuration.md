@@ -302,6 +302,29 @@ delay = backoffMs * 2^(attempt - 1)
 
 ---
 
+## 시작 이후 끊긴 연결
+
+`retry`는 `register()`를 다룹니다. 연결은 그 뒤에도, 아무 쿼리도 돌고 있지 않을 때 끊길 수 있어요. 데이터베이스가 재시작되거나, 페일오버로 프라이머리가 바뀌거나, 관리자가 세션을 종료하거나, 방화벽이 유휴 연결을 끊는 경우입니다. 그 연결을 기다리는 호출이 없으니 에러를 던져 줄 곳도 없습니다. 이런 에러는 `onConnectionError`가 받습니다:
+
+```typescript
+await em.register({
+  type: "postgres",
+  // ...
+  onConnectionError: (error) => {
+    metrics.increment("db.connection_lost");
+    logger.warn(error.message, { cause: error.cause });
+  },
+});
+```
+
+에러는 코드가 `ORM_CONNECTION_LOST`인 `OrmError`이고, `cause`에 드라이버 에러가 담깁니다. 끊긴 연결 하나당 한 번만 알려요. 옵션을 주지 않으면 ORM이 경고로 로그를 남깁니다.
+
+콜백에서 복구할 것은 없습니다. 풀은 이미 그 연결을 버렸고, 다음 쿼리 때 새 연결을 엽니다. 그 연결을 쓰던 트랜잭션은 다음 문장에서 실패해요. 같은 연결의 레플리카 풀도 같은 콜백으로 알립니다. 이름 붙인 연결이나 테넌트별 데이터베이스 같은 다른 연결은 각자의 옵션에서 이 값을 받습니다.
+
+여기로 오지 않는 것도 있습니다. 문장의 에러는 그 문장을 호출한 쪽으로 던져지고, `register()`나 쿼리가 열지 못한 연결은 `ORM_CONNECTION_FAILED`로 던져집니다.
+
+PostgreSQL, MySQL, MariaDB에서 동작합니다. SQLite는 끊길 네트워크 연결이 없어요.
+
 ## 쿼리 로깅
 
 ### 쿼리 로깅이 중요한 이유

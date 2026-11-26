@@ -16,6 +16,7 @@ import { OrmError } from "../../errors/OrmError";
 import { OrmErrorCode } from "../../errors/OrmErrorCode";
 import { DbVersion, detectDbVersion } from "../DbVersion";
 import { toConstraintViolation } from "../constraintViolation";
+import { createConnectionErrorReporter } from "../connectionErrorReporter";
 export type AnyEntity = any;
 export type IDatabaseType = "mysql" | "mariadb" | "postgres" | "sqlite";
 
@@ -82,6 +83,17 @@ export class MySqlConnector extends IConnector {
         connectionLimit: maxConnections,
         charset: charset ?? "utf8mb4",
         ...(sslConfig ? { ssl: sslConfig } : {}),
+      });
+
+      // mysql2 drops a pooled connection the server closes without telling
+      // anyone; report it the way the PostgreSQL connector does.
+      const reportLostConnection = createConnectionErrorReporter(
+        options,
+        this.logger,
+        "MySQL",
+      );
+      pool.on("connection", (connection) => {
+        connection.on("error", (error) => reportLostConnection(error, connection));
       });
 
       this.isDebug = !!logging;
