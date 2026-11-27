@@ -126,7 +126,7 @@ UPDATE "user" SET "name" = $1 WHERE "id" = $2
 -- NOTE: email and age are NOT in the SET clause — they didn't change
 ```
 
-This is more efficient than `em.save()`, which would send all columns in the UPDATE regardless of whether they changed.
+Saving the loaded `user` with `em.save()` instead would send every column the instance holds, changed or not, because `save()` writes the properties it is given.
 
 After a successful flush, the snapshot is refreshed with the current values. You can make more changes and flush again:
 

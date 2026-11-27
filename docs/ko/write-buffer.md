@@ -125,7 +125,7 @@ UPDATE "user" SET "name" = $1 WHERE "id" = $2
 -- NOTE: email and age are NOT in the SET clause — they didn't change
 ```
 
-`em.save()`는 변경 여부와 관계없이 모든 컬럼을 UPDATE에 담습니다. 반면 dirty checking은 변경된 컬럼만 보내므로 더 효율적입니다.
+조회한 `user`를 `em.save()`로 저장하면 인스턴스가 가진 모든 컬럼이 변경 여부와 관계없이 UPDATE에 담깁니다. `save()`는 넘겨받은 속성을 그대로 쓰기 때문입니다. 반면 변경 추적(dirty checking)은 변경된 컬럼만 보내므로 더 효율적입니다.
 
 flush가 성공하면 스냅샷이 현재 값으로 갱신됩니다. 그 뒤에 다시 변경하고 flush할 수 있습니다.
 

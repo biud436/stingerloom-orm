@@ -468,7 +468,7 @@ map.has(99);  // false: id 99는 없음
 const hasAdmin = await em.exists(User, { role: "admin" }); // boolean
 ```
 
-`findByPKs()`가 반환하는 `T[]`는 입력한 id의 순서를 보장하지 않습니다. 결과를 입력 순서대로 다시 맞추거나 누락된 id를 `map.has(id)`로 바로 확인해야 할 때 `findByPKsMap()`을 씁니다. 단일 기본 키 엔티티는 raw 값(number, string, bigint)이 키가 됩니다. 복합 기본 키 엔티티는 `"col1=v1,col2=v2"` 형태의 문자열이 키가 됩니다.
+`findByPKs()`가 반환하는 `T[]`는 입력한 id의 순서를 보장하지 않습니다. 결과를 입력 순서대로 다시 맞추거나 누락된 id를 `map.has(id)`로 바로 확인해야 할 때 `findByPKsMap()`을 씁니다. 단일 기본 키 엔티티는 raw 값(number, string, bigint)이 키가 됩니다. 복합 기본 키 엔티티는 기본 키 속성을 선언한 순서대로 이은 `"prop1=v1,prop2=v2"` 형태의 문자열이 키가 됩니다.
 
 `exists()`는 전체 행을 조회하지 않고 `SELECT 1 ... LIMIT 1`을 생성합니다. 그래서 `find()`로 조회한 뒤 길이를 비교하는 것보다 효율적입니다.
 
