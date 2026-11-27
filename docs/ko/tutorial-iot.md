@@ -2,11 +2,11 @@
 
 ## 무엇을 만드나요?
 
-스마트 빌딩을 상상해 보세요. 수천 개의 작은 온도계가 벽, 천장, 에어덕트에 마치 신경 말단처럼 설치되어 있어요. 30초마다 각 온도계가 중앙 서버로 온도 데이터를 전송해요. 모바일 앱에서는 실시간 대시보드를 볼 수 있고, 서버실이 과열되면 알림이 울려요. 매일 밤 cron job이 데이터를 집계해서 일일 리포트를 만들어요.
+스마트 빌딩을 떠올려 보세요. 벽, 천장, 에어덕트에 작은 온도계 수천 개가 설치되어 있습니다. 각 온도계는 30초마다 중앙 서버로 온도 데이터를 전송합니다. 모바일 앱은 실시간 대시보드를 보여 줍니다. 서버실이 과열되면 알림이 울립니다. 매일 밤 cron job이 데이터를 집계해서 일일 리포트를 만듭니다.
 
-이제 서로 다른 회사가 소유한 10개의 빌딩이 하나의 백엔드에서 돌아간다고 생각해 보세요. A회사는 B회사의 데이터를 절대 볼 수 없어야 해요. 이게 바로 **멀티테넌시**(multi-tenancy)에요.
+이번에는 서로 다른 회사가 소유한 빌딩 10개가 백엔드 하나에서 동작한다고 가정해 보겠습니다. A회사는 B회사의 데이터를 절대 볼 수 없어야 합니다. 이런 구조를 **멀티테넌시**(multi-tenancy)라고 합니다.
 
-이 튜토리얼에서는 NestJS와 Stingerloom ORM으로 이 백엔드를 처음부터 만들어 볼 거예요. 아키텍처는 다음과 같아요:
+NestJS와 Stingerloom ORM으로 이 백엔드를 처음부터 만들어 보겠습니다. 아키텍처는 아래와 같습니다.
 
 ```
 ┌───────────────┐     ┌───────────────┐
@@ -38,29 +38,29 @@
 
 ### ORM의 역할 - 그리고 ORM이 아닌 것
 
-코드를 쓰기 전에 경계를 명확히 해 둘게요. ORM은 TypeScript 객체와 데이터베이스 사이의 번역기예요. 캐시도 아니고, 잡 큐도 아니고, 인증 시스템도 아니에요.
+코드를 작성하기 전에 ORM이 맡는 범위를 분명히 짚고 넘어가겠습니다. ORM은 TypeScript 객체와 데이터베이스 사이를 변환하는 도구입니다. 캐시도 잡 큐도 인증 시스템도 아닙니다.
 
 | 관심사 | 담당 | 담당하지 않는 것 |
 |--------|------|-----------------|
-| 엔티티 정의 & 스키마 | **Stingerloom ORM** | -- |
-| 멀티테넌트 스키마 라우팅 | **Stingerloom ORM** (MetadataContext) | -- |
-| CRUD 연산 | **Stingerloom ORM** (EntityManager) | -- |
-| 집계 쿼리 | **Stingerloom ORM** (avg/min/max/count) | -- |
-| 대량 데이터 배치 처리 | **Stingerloom ORM** (stream()) | -- |
+| 엔티티 정의 & 스키마 | Stingerloom ORM | 없음 |
+| 멀티테넌트 스키마 라우팅 | Stingerloom ORM (MetadataContext) | 없음 |
+| CRUD 연산 | Stingerloom ORM (EntityManager) | 없음 |
+| 집계 쿼리 | Stingerloom ORM (avg/min/max/count) | 없음 |
+| 대량 데이터 배치 처리 | Stingerloom ORM (stream()) | 없음 |
 | JWT 인증 | NestJS + Passport | ORM |
 | 응답 캐싱 | Redis (ioredis) | ORM |
 | 백그라운드 잡 / cron | BullMQ (@nestjs/bullmq) | ORM |
 | 푸시 알림 | FCM / APNs | ORM |
 
-이 튜토리얼 전체에서 경계를 넘을 때마다 `::: tip` 또는 `::: warning` 박스로 어떤 도구가 무엇을 하는지 알려 드릴게요.
+ORM의 범위를 벗어나는 곳에는 `::: tip`이나 `::: warning` 박스를 두고 어떤 도구가 무엇을 맡는지 설명합니다.
 
 ---
 
 ## Step 0: Docker Compose로 인프라 구성
 
-코드를 작성하기 전에 세 가지 서비스가 로컬에서 실행되어야 해요: 데이터 저장용 PostgreSQL, 캐싱용 Redis, JWT 인증용 Keycloak이에요.
+코드를 작성하기 전에 로컬에서 서비스 세 개를 실행해야 합니다. 데이터 저장용 PostgreSQL, 캐싱용 Redis, JWT 인증용 Keycloak입니다.
 
-프로젝트 루트에 `docker-compose.yml`을 만들어 주세요:
+프로젝트 루트에 `docker-compose.yml`을 만드세요.
 
 ```yaml
 # docker-compose.yml
@@ -104,12 +104,12 @@ volumes:
 docker compose up -d
 ```
 
-세 컨테이너 모두 healthy 상태가 되면, Keycloak을 설정해요:
+세 컨테이너가 모두 healthy 상태가 되면 Keycloak을 설정합니다.
 
 1. `http://localhost:8080`에서 `admin` / `admin`으로 로그인
 2. `smart-thermo` 이름의 realm 생성
 3. `smart-thermo-api` 이름의 client 생성 (Access Type: confidential)
-4. client의 **Mappers** 탭에서 mapper 추가:
+4. client의 Mappers 탭에서 아래 mapper 추가
    - Name: `tenantId`
    - Mapper Type: User Attribute
    - User Attribute: `tenantId`
@@ -118,7 +118,7 @@ docker compose up -d
    - Add to ID token: ON, Add to access token: ON
 5. 테스트 사용자를 생성하고 `tenantId` 속성을 `building_a`로 설정
 
-이렇게 하면 테넌트 식별자가 JWT에 직접 포함돼요. 모바일 앱이 인증하면 받는 토큰에 이미 어떤 빌딩에 속하는지 정보가 들어 있어요.
+이렇게 설정하면 테넌트 식별자가 JWT에 직접 들어갑니다. 그래서 모바일 앱이 인증하고 받은 토큰에는 사용자가 속한 빌딩 정보가 이미 담겨 있습니다.
 
 ---
 
@@ -152,7 +152,7 @@ npm install -D @types/passport-jwt
 
 ### 데코레이터 활성화
 
-`tsconfig.json`에 다음 두 옵션이 있는지 확인하세요:
+`tsconfig.json`에 아래 옵션이 있는지 확인하세요.
 
 ```json
 {
@@ -200,24 +200,24 @@ import { DailyStats } from "./entities/daily-stats.entity";
 export class AppModule {}
 ```
 
-`RedisModule.forRoot()`는 글로벌 Redis 연결을 등록해서 어디서든 `@InjectRedis()`로 주입할 수 있게 해 줘요. 서비스마다 `new Redis()`를 흩뿌릴 필요가 없어요.
+`RedisModule.forRoot()`는 글로벌 Redis 연결을 등록합니다. 그래서 어디서든 `@InjectRedis()`로 이 연결을 주입할 수 있습니다. 서비스마다 `new Redis()`를 만들 필요가 없습니다.
 
 ::: warning
-`synchronize: true`는 개발 중에는 편리해요 -- ORM이 엔티티에 맞춰 테이블을 자동으로 생성하고 변경해 줘요. **프로덕션에서는 절대 사용하면 안 돼요.** 대신 [Migrations](./migrations.md)를 사용하세요.
+`synchronize: true`는 개발 중에 편리합니다. ORM이 엔티티에 맞춰 테이블을 자동으로 생성하고 변경하기 때문입니다. 하지만 프로덕션에서는 절대 쓰면 안 됩니다. 프로덕션에서는 [마이그레이션](./migrations.md)을 쓰세요.
 :::
 
 ---
 
 ## Step 2: 엔티티 설계
 
-좋은 엔티티 설계는 도메인에 대한 이해에서 시작해요. 스마트 온도계 시스템의 핵심 개념은 다음과 같아요:
+좋은 엔티티 설계는 도메인을 이해하는 데서 시작합니다. 스마트 온도계 시스템의 핵심 개념은 아래와 같습니다.
 
-- **Users** -- 디바이스를 소유한 사람 (온도계를 설치한 사람)
-- **Devices** -- 물리적 온도계, 각각 시리얼 넘버와 위치 정보를 가져요
-- **Temperature Readings** -- 시계열 데이터 포인트, 디바이스당 30초마다 하나씩 생성
-- **Alert Rules** -- 임계값 정의 ("온도가 35도를 넘으면 알려줘")
-- **Alerts** -- 규칙이 위반됐을 때 발생하는 알림
-- **Daily Stats** -- 사전 계산된 일일 요약 (평균, 최소, 최대) - 빠른 대시보드 렌더링용
+- **Users**: 디바이스를 소유한 사람 (온도계를 설치한 사람)
+- **Devices**: 물리적 온도계. 온도계마다 시리얼 넘버와 위치 정보가 있습니다.
+- **Temperature Readings**: 시계열 데이터 포인트. 디바이스마다 30초에 하나씩 생성됩니다.
+- **Alert Rules**: "온도가 35도를 넘으면 알려 줘" 같은 임계값 정의
+- **Alerts**: 규칙을 위반했을 때 발생하는 알림
+- **Daily Stats**: 평균, 최소, 최대를 미리 계산한 일일 요약. 대시보드를 빠르게 렌더링하는 데 씁니다.
 
 ```
 ┌──────────┐       ┌──────────┐       ┌─────────────────────┐
@@ -290,7 +290,7 @@ export class User {
 }
 ```
 
-`@DeletedAt()` 데코레이터는 **soft delete**를 활성화해요. `em.delete(User, { id: 1 })`를 호출하면 ORM이 실제로 행을 삭제하지 않아요. 대신 `deletedAt`에 현재 타임스탬프를 설정해요. 이후 모든 `find()` 쿼리는 soft delete된 행을 자동으로 제외해요 -- `withDeleted: true`를 전달하지 않는 한. GDPR 준수에 필수적이에요: 사용자의 가시적인 존재는 "삭제"하면서도 감사 추적은 보존할 수 있어요.
+`@DeletedAt()` 데코레이터는 소프트 삭제를 켭니다. `em.delete(User, { id: 1 })`를 호출해도 ORM은 행을 실제로 삭제하지 않습니다. 대신 `deletedAt`에 현재 타임스탬프를 설정합니다. 이후 모든 `find()` 쿼리는 `withDeleted: true`를 넘기지 않는 한 소프트 삭제된 행을 자동으로 제외합니다. 이 기능은 GDPR 준수에 꼭 필요합니다. 화면에서는 사용자를 "삭제"한 것처럼 보이게 하면서 감사 추적은 보존하기 때문입니다.
 
 ```sql
 -- What the ORM generates for this entity (PostgreSQL)
@@ -362,7 +362,7 @@ export class Device {
 }
 ```
 
-`@BeforeInsert()` 훅은 INSERT SQL이 데이터베이스로 전송되기 전에 실행돼요. 여기서는 합리적인 기본값을 설정하는 데 사용해요 -- 새로 등록된 온도계는 활성 상태여야 하고, 이름이 주어지지 않으면 시리얼 넘버로 자동 생성해요.
+`@BeforeInsert()` 훅은 INSERT SQL을 데이터베이스로 전송하기 전에 실행됩니다. 여기서는 이 훅으로 알맞은 기본값을 설정합니다. 새로 등록한 온도계는 활성 상태여야 합니다. 그리고 이름이 없으면 시리얼 넘버로 이름을 만듭니다.
 
 ```sql
 -- What the ORM generates for this entity (PostgreSQL)
@@ -381,7 +381,7 @@ CREATE INDEX "idx_devices_serialNumber" ON "devices" ("serialNumber");
 
 ### TemperatureReading
 
-이건 **대용량 엔티티**예요 -- 수백만 행을 갖게 될 테이블이에요. 설계 결정이 쿼리 성능에 직접적으로 영향을 줘요.
+이 엔티티는 행이 수백만 개까지 늘어날 대용량 엔티티입니다. 그래서 설계 결정이 쿼리 성능에 직접 영향을 줍니다.
 
 ```typescript
 // src/entities/temperature-reading.entity.ts
@@ -450,9 +450,9 @@ CREATE INDEX "idx_temperature_readings_temperatureCelsius" ON "temperature_readi
 CREATE INDEX "idx_temperature_readings_recordedAt" ON "temperature_readings" ("recordedAt");
 ```
 
-`recordedAt`와 `temperatureCelsius`에 `@Index()`가 있는 걸 주목하세요. 인덱스가 없으면 "최근 7일간 최고 온도 찾기" 같은 쿼리가 테이블의 모든 행을 스캔해야 해요. 인덱스가 있으면 데이터베이스가 해당 날짜 범위로 바로 점프할 수 있어요.
+`recordedAt`과 `temperatureCelsius`에 `@Index()`가 붙어 있습니다. 인덱스가 없으면 "최근 7일간 최고 온도 찾기" 같은 쿼리가 테이블의 모든 행을 스캔해야 합니다. 인덱스가 있으면 데이터베이스가 해당 날짜 범위로 바로 이동합니다.
 
-`@BeforeInsert()` 훅은 데이터 품질 게이트 역할을 해요. -500도를 보고하는 센서는 분명히 오작동 중이에요. 데이터가 데이터베이스에 도달하기도 전에 거부해요.
+`@BeforeInsert()` 훅은 데이터 품질을 검사하는 관문 역할을 합니다. -500도를 보고하는 센서는 분명히 고장 난 센서입니다. 이런 데이터는 데이터베이스에 도달하기 전에 거부합니다.
 
 ### AlertRule
 
@@ -558,7 +558,7 @@ CREATE TABLE "alerts" (
 
 ### DailyStats
 
-이 엔티티를 **월간 은행 명세서**라고 생각해 보세요. 은행이 개별 거래를 모두 나열하는 대신 요약을 제공하듯이 -- 총 입금액, 총 출금액, 잔액 -- 우리도 온도 데이터를 같은 방식으로 처리해요. 누군가 대시보드를 열 때마다 수백만 건의 원시 데이터를 쿼리하는 대신, 일일 요약을 사전 계산해 둬요.
+이 엔티티는 월간 은행 명세서와 같습니다. 은행은 개별 거래를 모두 나열하지 않고 총 입금액, 총 출금액, 잔액 같은 요약을 줍니다. 온도 데이터도 같은 방식으로 다룹니다. 누군가 대시보드를 열 때마다 원시 데이터 수백만 건을 쿼리하지 않고 일일 요약을 미리 계산해 둡니다.
 
 ```typescript
 // src/entities/daily-stats.entity.ts
@@ -603,7 +603,7 @@ export class DailyStats {
 }
 ```
 
-`@UpdateTimestamp()` 데코레이터가 여기서 중요해요. 야간 cron job이 오늘의 데이터를 재집계할 때, ORM이 이 필드를 자동으로 업데이트해요. `updatedAt`이 오래됐다면 cron job이 실행되지 않았다는 걸 바로 알 수 있어요.
+여기서는 `@UpdateTimestamp()` 데코레이터가 중요합니다. 야간 cron job이 오늘의 데이터를 다시 집계하면 ORM이 이 필드를 자동으로 갱신합니다. 그래서 `updatedAt`이 오래되었다면 cron job이 실행되지 않았다는 뜻입니다.
 
 ```sql
 -- What the ORM generates for this entity (PostgreSQL)
@@ -624,36 +624,36 @@ CREATE INDEX "idx_daily_stats_date" ON "daily_stats" ("date");
 
 #### `recordedAt`와 `temperatureCelsius`에 `@Index()`를 쓰는 이유
 
-PostgreSQL은 기본적으로 인덱스를 B-tree 구조로 저장해요. `recordedAt`에 B-tree가 있으면 범위 쿼리(`BETWEEN`, `>=`, `<`)와 `ORDER BY`를 전체 테이블 스캔 없이 처리할 수 있어요. "최근 7일간의 데이터"를 찾기 위해 모든 행을 읽는 대신, 트리에서 시작 지점으로 이동해서 순차적으로 읽어요.
+PostgreSQL은 기본적으로 인덱스를 B-tree 구조로 저장합니다. `recordedAt`에 B-tree 인덱스가 있으면 데이터베이스는 범위 쿼리(`BETWEEN`, `>=`, `<`)와 `ORDER BY`를 전체 테이블 스캔 없이 처리합니다. "최근 7일간의 데이터"를 찾을 때 모든 행을 읽지 않습니다. 트리를 따라 시작 지점으로 이동한 뒤 거기서부터 순서대로 읽습니다.
 
-인덱스가 없으면 1,000만 행이 있는 테이블에서 순차 스캔이 필요해요 -- 모든 행을 읽고 WHERE 조건을 확인해야 해요. 이건 초 단위로 걸려요. B-tree 인덱스가 있으면 같은 쿼리가 밀리초 만에 완료돼요. 해당 범위로 직접 건너뛰기 때문이에요.
+인덱스가 없으면 행이 1,000만 개인 테이블에서 순차 스캔을 해야 합니다. 데이터베이스가 모든 행을 읽고 WHERE 조건을 확인합니다. 이 작업은 몇 초가 걸립니다. B-tree 인덱스가 있으면 같은 쿼리가 밀리초 만에 끝납니다. 데이터베이스가 해당 범위로 바로 건너뛰기 때문입니다.
 
-`temperatureCelsius` 인덱스도 같은 목적이에요 -- "35도 이상인 모든 데이터 찾기" 같은 임계값 쿼리용이에요. Step 6에서 `explain()`을 사용해서 이 인덱스들이 실제로 쿼리 플래너에 의해 사용되는지 확인할 거예요.
+`temperatureCelsius` 인덱스도 같은 목적으로 씁니다. "35도 이상인 데이터 모두 찾기" 같은 임계값 쿼리를 위한 인덱스입니다. Step 6에서는 `explain()`으로 쿼리 플래너가 이 인덱스들을 실제로 쓰는지 확인합니다.
 
 #### `@BeforeInsert()`를 데이터베이스 CHECK 제약조건 대신 쓰는 이유
 
-둘 다 데이터를 검증하지만, 서로 다른 레이어에서 동작해요:
+두 방법 모두 데이터를 검증합니다. 하지만 동작하는 계층이 다릅니다.
 
-- **ORM 훅** (`@BeforeInsert()`)은 애플리케이션 코드에서, SQL이 데이터베이스에 도달하기 전에 실행돼요. 설명적인 에러 메시지("Temperature cannot be below absolute zero")를 생성하고, 복잡한 비즈니스 로직(교차 필드 검증, 외부 API 호출)을 실행하고, 애플리케이션의 에러 처리 파이프라인과 통합할 수 있어요.
+- **ORM 훅** (`@BeforeInsert()`): 애플리케이션 코드에서 실행되므로 SQL이 데이터베이스에 도달하기 전에 동작합니다. "Temperature cannot be below absolute zero" 같은 설명적인 에러 메시지를 만들 수 있습니다. 필드 간 검증이나 외부 API 호출 같은 복잡한 비즈니스 로직도 실행할 수 있습니다. 애플리케이션의 에러 처리 파이프라인과도 연결됩니다.
 
-- **데이터베이스 CHECK 제약조건** (`CHECK (temperature_celsius >= -273.15)`)은 PostgreSQL 내부에서 실행돼요. 이건 최후의 방어선이에요 -- ORM을 우회하는 데이터도 잡아내요 (raw SQL 스크립트, 마이그레이션, 같은 DB에 쓰는 다른 애플리케이션).
+- **데이터베이스 CHECK 제약조건** (`CHECK (temperature_celsius >= -273.15)`): PostgreSQL 내부에서 실행됩니다. 최후의 방어선입니다. raw SQL 스크립트, 마이그레이션, 같은 데이터베이스에 쓰는 다른 애플리케이션처럼 ORM을 우회하는 데이터도 잡아냅니다.
 
-이상적인 접근법은 둘 다 사용하는 거예요: 명확한 에러 메시지를 위한 훅 + 데이터 무결성을 위한 CHECK 제약조건. 이 튜토리얼에서는 ORM 기능 시연이 목적이라 훅에 집중하지만, 프로덕션에서는 마이그레이션 파일에 CHECK 제약조건을 추가하세요.
+가장 좋은 방법은 둘 다 쓰는 것입니다. 훅으로는 사용자에게 보여 줄 명확한 에러 메시지를 만들고 CHECK 제약조건으로는 데이터 무결성을 지킵니다. 예제 코드는 ORM 기능인 훅만 씁니다. 하지만 프로덕션에서는 마이그레이션 파일에 CHECK 제약조건도 추가하세요.
 
 #### Users에는 `@DeletedAt()` (soft delete)를 쓰고 Readings에는 안 쓰는 이유
 
-Users에는 감사 및 규정 준수 요구사항이 있어요. GDPR 같은 규정에서는 사용자의 가시적인 존재를 "삭제"하면서도 데이터를 올바르게 처리했음을 증명하는 기록을 보존해야 할 수 있어요. Soft delete가 이걸 해결해요 -- 모든 쿼리에서 사용자가 사라지지만, 행은 감사용으로 남아 있어요.
+Users에는 감사와 규정 준수 요구사항이 있습니다. GDPR 같은 규정에서는 사용자를 보이지 않게 "삭제"하면서도 데이터를 올바르게 처리했음을 증명하는 기록은 보존해야 하기도 합니다. 소프트 삭제가 이 요구를 해결합니다. 사용자는 모든 쿼리 결과에서 사라지지만 행은 감사용으로 남습니다.
 
-Temperature readings는 원시 센서 데이터예요. 사람을 나타내지 않아요. 삭제가 필요하면 보통 날짜 범위로 일괄 삭제해요 (`DELETE FROM temperature_readings WHERE recordedAt < '2025-01-01'`). 수천만 행이 있는 테이블에 `deletedAt` 컬럼을 추가하면 상당한 스토리지가 낭비되고, 모든 쿼리에 `WHERE deletedAt IS NULL` 필터가 추가돼요 -- 가장 볼륨이 큰 테이블에 불필요한 비용이에요.
+Temperature readings는 원시 센서 데이터입니다. 사람을 나타내지 않습니다. 삭제가 필요하면 보통 하나씩 삭제하지 않고 `DELETE FROM temperature_readings WHERE recordedAt < '2025-01-01'`처럼 날짜 범위로 일괄 삭제합니다. 행이 수천만 개인 테이블에 `deletedAt` 컬럼을 추가하면 저장 공간이 크게 낭비됩니다. 그리고 모든 쿼리에 `WHERE deletedAt IS NULL` 필터가 붙습니다. 데이터가 가장 많은 테이블에 불필요한 비용을 더하는 셈입니다.
 
 #### materialized view 대신 별도의 `DailyStats`를 쓰는 이유
 
-PostgreSQL materialized view(`CREATE MATERIALIZED VIEW`)도 비슷한 목적으로 쓸 수 있지만, 실용적인 한계가 있어요:
+PostgreSQL materialized view(`CREATE MATERIALIZED VIEW`)도 비슷한 목적으로 씁니다. 하지만 실제로 쓰기에는 한계가 있습니다.
 
-1. **이식성.** 모든 PostgreSQL 호스팅 제공자가 materialized view의 모든 기능(concurrent refresh, indexes)을 지원하는 건 아니에요. 일반 테이블은 모든 제공자와 ORM이 지원하는 모든 데이터베이스에서 동일하게 동작해요.
-2. **버전 관리.** `DailyStats` 엔티티는 코드에 정의되고 마이그레이션으로 추적돼요. 스키마 변경이 PR과 코드 리뷰를 거쳐요.
-3. **관측성.** `@UpdateTimestamp()` 데코레이터가 내장 "마지막 갱신" 지표를 제공해요. `updatedAt`이 3일 전이면 집계 cron job이 고장났다는 걸 바로 알 수 있어요.
-4. **세밀한 제어.** 전체 뷰를 새로고침하지 않고 특정 디바이스의 통계만 업데이트할 수 있어요. Materialized view refresh는 전부-아니면-전무예요.
+1. **이식성.** 모든 PostgreSQL 호스팅 업체가 concurrent refresh나 인덱스 같은 materialized view의 기능을 모두 지원하지는 않습니다. 일반 테이블은 모든 업체와 ORM이 지원하는 모든 데이터베이스에서 똑같이 동작합니다.
+2. **버전 관리.** `DailyStats` 엔티티는 코드에 정의되고 마이그레이션으로 추적됩니다. 그래서 스키마 변경도 다른 엔티티처럼 PR과 코드 리뷰를 거칩니다.
+3. **관측성.** `@UpdateTimestamp()` 데코레이터가 "마지막 갱신" 지표 역할을 합니다. `updatedAt`이 3일 전이라면 집계 cron job이 고장 났다는 뜻입니다.
+4. **세밀한 제어.** 전체 뷰를 새로 고치지 않고 특정 디바이스의 통계만 갱신할 수 있습니다. 반면 materialized view는 전체를 한 번에 새로 고치는 방식뿐입니다.
 
 ---
 
@@ -661,9 +661,9 @@ PostgreSQL materialized view(`CREATE MATERIALIZED VIEW`)도 비슷한 목적으�
 
 ### 비유
 
-우편함이 있는 아파트를 상상해 보세요. 모든 입주민이 같은 복도와 엘리베이터를 공유하지만, 각 우편함은 비공개예요 -- 내 키로는 내 우편함만 열 수 있어요.
+집집마다 우편함이 있는 아파트를 떠올려 보세요. 모든 입주민이 같은 복도와 엘리베이터를 공유합니다. 하지만 우편함은 각자의 것입니다. 내 열쇠로는 내 우편함만 열립니다.
 
-멀티테넌시도 같은 원리예요. 모든 테넌트가 같은 NestJS 서버와 PostgreSQL 인스턴스를 공유하지만, 각 테넌트의 데이터는 자체 **PostgreSQL 스키마**에 살아요. "building_a" 테넌트는 `building_a.devices`, `building_a.temperature_readings` 등을 갖고 있어요. "building_b" 테넌트도 자체적으로 동일한 테이블 세트를 갖고 있어요. ORM이 자동으로 올바른 스키마로 쿼리를 라우팅해요.
+멀티테넌시도 같은 원리입니다. 모든 테넌트가 같은 NestJS 서버와 PostgreSQL 인스턴스를 공유합니다. 하지만 각 테넌트의 데이터는 테넌트마다 따로 둔 PostgreSQL 스키마에 저장됩니다. "building_a" 테넌트에는 `building_a.devices`, `building_a.temperature_readings` 같은 테이블이 있습니다. "building_b" 테넌트에도 같은 구성의 테이블이 따로 있습니다. ORM은 쿼리를 올바른 스키마로 자동으로 보냅니다.
 
 ```
 PostgreSQL Instance
@@ -682,7 +682,7 @@ PostgreSQL Instance
 
 ### Tenant Middleware
 
-기존 [Multi-Tenancy](./multi-tenancy.md) 가이드에서는 HTTP 헤더에서 테넌트를 추출해요. 실제 프로덕션 시스템에서는 테넌트 식별정보가 **신뢰할 수 있는 소스** -- JWT에서 와야 해요. 서명된 토큰에 포함되어 있으면 사용자가 헤더를 변경해서 테넌트를 위조할 수 없어요.
+[멀티테넌시](./multi-tenancy.md) 가이드에서는 HTTP 헤더에서 테넌트를 추출합니다. 하지만 실제 프로덕션 시스템에서는 테넌트 식별 정보를 JWT처럼 신뢰할 수 있는 출처에서 가져와야 합니다. 테넌트가 서명된 토큰에 들어 있으면 사용자가 헤더를 바꿔 테넌트를 위조하지 못합니다.
 
 ```typescript
 // src/tenant/tenant.middleware.ts
@@ -707,7 +707,7 @@ export class TenantMiddleware implements NestMiddleware {
 }
 ```
 
-핵심 라인은 `MetadataContext.run(tenantId, () => { next() })`예요. 이게 **전체 HTTP 요청 라이프사이클**을 Node.js `AsyncLocalStorage`를 사용해서 테넌트 컨텍스트로 감싸요. 이후 컨트롤러, 서비스, 리포지토리에서의 모든 ORM 호출이 자동으로 올바른 스키마를 대상으로 해요.
+핵심은 `MetadataContext.run(tenantId, () => { next() })` 줄입니다. 이 호출은 Node.js `AsyncLocalStorage`로 HTTP 요청의 전체 라이프사이클을 테넌트 컨텍스트로 감쌉니다. 그래서 이후 컨트롤러, 서비스, 리포지토리에서 호출하는 모든 ORM 메서드가 자동으로 올바른 스키마를 대상으로 합니다.
 
 ```
 HTTP Request (JWT: { tenantId: "building_a" })
@@ -724,9 +724,9 @@ SQL: SELECT * FROM "building_a"."devices" WHERE ...
 
 ### AsyncLocalStorage가 격리를 보장하는 방법
 
-Node.js는 싱글 스레드에서 실행되지만, 이벤트 루프를 통해 많은 동시 HTTP 요청을 처리해요. 주의 깊은 컨텍스트 관리가 없으면, 두 개의 동시 요청이 서로의 테넌트 식별정보를 간섭할 수 있어요. `AsyncLocalStorage`는 각 비동기 실행 체인에 자체 격리된 저장소를 제공해서 이 문제를 해결해요 -- 같은 스레드에서 작업이 인터리빙되더라도요.
+Node.js는 싱글 스레드에서 실행됩니다. 하지만 이벤트 루프로 많은 HTTP 요청을 동시에 처리합니다. 컨텍스트를 주의해서 관리하지 않으면 동시에 들어온 두 요청의 테넌트 정보가 서로 섞일 위험이 있습니다. `AsyncLocalStorage`는 비동기 실행 체인마다 격리된 저장 공간을 줘서 이 문제를 해결합니다. 같은 스레드에서 작업이 번갈아 실행되어도 마찬가지입니다.
 
-두 개의 동시 요청이 있는 구체적인 타임라인이에요:
+아래는 두 요청이 동시에 처리되는 타임라인입니다.
 
 ```
 Timeline (single Node.js thread):
@@ -744,13 +744,13 @@ t4: Request B's DB query executes
 ──────────────────────────────────────────────
 ```
 
-t3 시점에서, Request B가 이미 시작되어 t2에서 자체 컨텍스트를 설정했더라도, Request A는 여전히 `building_a`로 올바르게 해석돼요. 각 `MetadataContext.run()` 호출은 `await`, Promise, 콜백을 통해 비동기 호출 체인을 따르는 독립적인 실행 컨텍스트를 생성해요 -- 다른 동시 컨텍스트로 누출되지 않아요.
+Request B는 이미 시작되어 t2에서 자기 컨텍스트를 설정했습니다. 그래도 t3 시점에 Request A의 테넌트는 여전히 `building_a`로 올바르게 해석됩니다. `MetadataContext.run()`을 호출할 때마다 독립적인 실행 컨텍스트가 생성되기 때문입니다. 이 컨텍스트는 `await`, Promise, 콜백으로 이어지는 비동기 호출 체인을 따라가고 동시에 실행 중인 다른 컨텍스트로 새지 않습니다.
 
-`AsyncLocalStorage` 없이 단순한 전역 변수 접근법(예: `global.currentTenant = tenantId`)을 쓰면 레이스 컨디션이 발생해요: Request A의 DB 쿼리가 실행되기 전에 Request B가 테넌트를 `building_b`로 덮어쓰면, Request A가 잘못된 스키마를 쿼리하게 돼요. `AsyncLocalStorage`는 이런 동시성 버그를 설계적으로 제거해요.
+`AsyncLocalStorage` 없이 `global.currentTenant = tenantId` 같은 단순한 전역 변수를 쓰면 레이스 컨디션이 생깁니다. Request A의 데이터베이스 쿼리가 실행되기 전에 Request B가 테넌트를 `building_b`로 덮어씁니다. 그러면 Request A가 잘못된 스키마를 쿼리합니다. `AsyncLocalStorage`는 이런 전형적인 동시성 버그를 구조적으로 없앱니다.
 
 ### 테넌트 컨텍스트가 없을 때 어떻게 되나요?
 
-`MetadataContext.run()` 바깥에서 코드가 실행되면 -- 예를 들어 시작 스크립트나 모듈 초기화에서 -- ORM은 `public` 스키마로 폴백해요. 이건 의도된 동작이에요: public 스키마는 `ensureSchema()`가 복제하는 템플릿 테이블을 보관하는 곳이에요.
+시작 스크립트나 모듈 초기화 코드처럼 `MetadataContext.run()` 바깥에서 코드가 실행되면 ORM은 `public` 스키마로 폴백합니다. 이는 의도한 동작입니다. public 스키마에는 `ensureSchema()`가 복제하는 템플릿 테이블이 있기 때문입니다.
 
 ```typescript
 // Outside any MetadataContext — targets "public" schema
@@ -765,12 +765,12 @@ MetadataContext.run("building_a", async () => {
 ```
 
 ::: warning
-public 스키마에 테넌트별 데이터를 절대 저장하지 마세요. public 스키마는 `ensureSchema()`가 복제할 구조적 템플릿으로만 존재해요. 실수로 public 스키마에 데이터를 쓰면, 어떤 테넌트에도 보이지 않고, 테넌트 범위의 삭제 작업으로도 정리되지 않아요.
+public 스키마에 테넌트별 데이터를 절대 저장하지 마세요. public 스키마는 `ensureSchema()`가 복제할 구조 템플릿으로만 존재합니다. 실수로 public 스키마에 데이터를 쓰면 그 데이터는 어떤 테넌트에도 보이지 않습니다. 테넌트 범위의 삭제 작업으로도 정리되지 않습니다.
 :::
 
 ### Tenant Schema Service
 
-새 테넌트가 처음 요청하면 아직 스키마가 존재하지 않아요. `TenantSchemaService`가 자동으로 생성해요:
+새 테넌트가 처음 요청할 때는 아직 스키마가 없습니다. `TenantSchemaService`가 스키마를 자동으로 생성합니다.
 
 ```typescript
 // src/tenant/tenant-schema.service.ts
@@ -800,7 +800,7 @@ export class TenantSchemaService {
 }
 ```
 
-`ensureSchema()`는 두 가지를 해요: 스키마가 존재하는지 확인하고, 없으면 public 스키마의 테이블 구조를 복제해서 생성해요. 새 테넌트를 위해 빈 테이블 세트를 인쇄하는 것과 같아요.
+`ensureSchema()`는 먼저 스키마가 있는지 확인합니다. 스키마가 없으면 public 스키마의 테이블 구조를 복제해서 새로 생성합니다. 새 테넌트를 위해 빈 테이블 세트를 찍어 내는 것과 같습니다.
 
 ### 스키마 프로비저닝이 포함된 업데이트된 Middleware
 
@@ -852,7 +852,7 @@ export class TenantModule implements NestModule {
 }
 ```
 
-`AppModule` imports에 `TenantModule`을 추가하세요:
+`AppModule`의 imports에 `TenantModule`을 추가하세요.
 
 ```typescript
 // src/app.module.ts (updated imports)
@@ -866,14 +866,14 @@ export class TenantModule implements NestModule {
 export class AppModule {}
 ```
 
-이제 모든 요청이 자동으로 올바른 테넌트로 스코핑돼요. 서비스 코드가 깔끔하게 유지돼요 -- `withTenant()` 래퍼도 없고, 매번 `tenantId` 파라미터를 전달할 필요도 없어요.
+이제 모든 요청이 자동으로 올바른 테넌트 범위에서 실행됩니다. 서비스 코드도 깔끔하게 유지됩니다. `withTenant()` 래퍼도 필요 없고 `tenantId` 파라미터를 곳곳에 넘길 필요도 없습니다.
 
 ---
 
 ## Step 4: Keycloak JWT 인증
 
 ::: tip ORM 경계
-이 단계는 **ORM과 전혀 관련이 없어요**. 인증은 전송 계층의 관심사예요 -- *누가* 요청하는지를 판별해요. ORM은 *어떤 데이터*를 쿼리할지만 신경 써요. 이 단계를 포함하는 이유는 JWT가 TenantMiddleware에 전달되는 `tenantId` 클레임을 가지고 있기 때문이에요.
+이 단계는 ORM과 전혀 관계가 없습니다. 인증은 누가 요청하는지 판별하는 전송 계층의 일입니다. ORM은 어떤 데이터를 쿼리할지만 다룹니다. 그래도 이 단계를 넣은 이유는 JWT에 TenantMiddleware로 전달되는 `tenantId` 클레임이 들어 있기 때문입니다.
 :::
 
 ### JWT Strategy
@@ -941,7 +941,7 @@ import { JwtStrategy } from "./jwt.strategy";
 export class AuthModule {}
 ```
 
-`AppModule` imports에 `AuthModule`을 추가하세요. 그리고 보호할 라우트에 guard를 적용하세요:
+`AppModule`의 imports에 `AuthModule`을 추가하세요. 그리고 보호할 라우트에 guard를 적용하세요.
 
 ```typescript
 @Controller("devices")
@@ -951,13 +951,13 @@ export class DevicesController {
 }
 ```
 
-ORM을 전혀 건드리지 않았어요. JWT guard가 토큰을 검증하고, TenantMiddleware(Step 3)가 `req.user.tenantId`를 읽어서 ORM 컨텍스트를 설정해요. 이 두 시스템은 `req.user`를 통해 소통해요 -- NestJS의 표준 패턴이에요.
+이 단계에서는 ORM 코드를 전혀 고치지 않았습니다. JWT guard가 토큰을 검증합니다. 그러면 Step 3의 TenantMiddleware가 `req.user.tenantId`를 읽어 ORM 컨텍스트를 설정합니다. 두 시스템은 `req.user`로 값을 주고받습니다. NestJS의 표준 패턴입니다.
 
 ---
 
 ## Step 5: 온도 데이터 수집
 
-이제 애플리케이션의 핵심이에요: 디바이스에서 온도 데이터를 수신하는 거예요. ORM이 가장 무거운 작업을 하는 부분이에요.
+이제 애플리케이션의 핵심인 디바이스 온도 데이터 수신을 구현합니다. ORM이 가장 많은 일을 하는 부분입니다.
 
 ### 모듈 설정
 
@@ -983,7 +983,7 @@ export class ReadingsModule {}
 
 ### 단일 데이터 수집 -- save()
 
-단일 온도계가 하나의 데이터를 보낼 때 `save()`를 사용해요:
+온도계 하나가 데이터 하나를 보낼 때는 `save()`를 씁니다.
 
 ```typescript
 // src/readings/readings.service.ts
@@ -1026,11 +1026,11 @@ RETURNING *
 -- Parameters: [1, 23.5, 45.2, 0.87, '2026-03-28 10:30:00']
 ```
 
-이 SQL이 실행되기 전에 `@BeforeInsert()` 훅이 실행돼요. 온도가 절대영도 이하이면 훅이 에러를 던져서 INSERT가 데이터베이스에 도달하지 않아요.
+이 SQL이 실행되기 전에 `@BeforeInsert()` 훅이 실행됩니다. 온도가 절대영도보다 낮으면 훅이 에러를 던집니다. 그래서 INSERT가 데이터베이스에 도달하지 않습니다.
 
 ### 배치 수집 -- insertMany()
 
-디바이스가 데이터를 버퍼링하다가 한 번에 100개를 보낼 수 있어요. `save()`를 루프에서 호출하면 100개의 개별 INSERT 문이 생겨요. `insertMany()`는 하나의 문으로 묶어줘요:
+디바이스가 데이터를 버퍼에 모았다가 한 번에 100개를 보내기도 합니다. `save()`를 루프에서 호출하면 INSERT 문이 100개 생깁니다. `insertMany()`는 이 INSERT를 SQL 문 하나로 묶습니다.
 
 ```typescript
 async ingestBatch(deviceId: number, readings: Array<{
@@ -1061,15 +1061,15 @@ VALUES ($1, $2, $3, $4, $5, NOW()),
        ($496, $497, $498, $499, $500, NOW())
 ```
 
-100번의 라운드트립 대신 1번. 실제 벤치마크에서 10~50배 빨라요.
+왕복이 100번에서 1번으로 줄어듭니다. 실제 벤치마크에서는 10~50배 빠릅니다.
 
 ::: warning insertMany()는 라이프사이클 훅을 실행하지 않아요
-`@BeforeInsert()`와 `@AfterInsert()` 훅은 `save()`와 `saveMany()`에서만 동작해요. 배치 항목마다 검증이 필요하면, `insertMany()` 호출 전에 애플리케이션 코드에서 검증하거나, `saveMany()`를 사용하세요 (더 느리지만 훅이 동작해요).
+`@BeforeInsert()`와 `@AfterInsert()` 훅은 `save()`와 `saveMany()`에서만 동작합니다. 배치 항목마다 검증해야 한다면 `insertMany()`를 호출하기 전에 애플리케이션 코드에서 검증하세요. 아니면 `saveMany()`를 쓰세요. `saveMany()`는 더 느리지만 훅이 동작합니다.
 :::
 
 ### EntitySubscriber로 알림 체크
 
-새 데이터가 들어오면 해당 디바이스의 알림 규칙을 위반했는지 확인하고 싶어요. 이 로직을 `ReadingsService.ingestOne()` 안에 넣을 수도 있지만, 그러면 수집 서비스가 알림 시스템에 결합돼요. 대신 **EntitySubscriber**를 사용해요 -- 특정 엔티티의 이벤트에 반응하는 별도의 클래스예요.
+새 데이터가 들어오면 그 데이터가 해당 디바이스의 알림 규칙을 위반했는지 확인해야 합니다. 이 로직을 `ReadingsService.ingestOne()` 안에 넣어도 됩니다. 하지만 그러면 수집 서비스가 알림 시스템에 묶입니다. 대신 **EntitySubscriber**를 씁니다. EntitySubscriber는 특정 엔티티의 이벤트에 반응하는 별도의 클래스입니다.
 
 ```typescript
 // src/readings/temperature-alert.subscriber.ts
@@ -1123,7 +1123,7 @@ export class TemperatureAlertSubscriber
 }
 ```
 
-모듈 초기화 시 subscriber를 등록하세요:
+모듈을 초기화할 때 구독자를 등록하세요.
 
 ```typescript
 // src/readings/readings.module.ts (updated)
@@ -1144,7 +1144,7 @@ export class ReadingsModule implements OnModuleInit {
 }
 ```
 
-이제 흐름이 완전히 분리돼요:
+이제 흐름이 완전히 분리됩니다.
 
 ```
 save(TemperatureReading)
@@ -1201,9 +1201,9 @@ export class ReadingsController {
 
 ## Step 6: 모바일 앱을 위한 데이터 조회
 
-모바일 앱은 여러 종류의 쿼리가 필요해요. 하나씩 구현하면서 ORM이 생성하는 SQL을 확인해 볼게요.
+모바일 앱에는 여러 종류의 쿼리가 필요합니다. 하나씩 구현하면서 ORM이 생성하는 SQL을 확인해 보겠습니다.
 
-아래의 모든 메서드는 각각의 서비스에 위치하고, `@InjectRepository`로 리포지토리를 주입받아요:
+아래 메서드는 모두 각자의 서비스에 있고 `@InjectRepository`로 리포지토리를 주입받습니다.
 
 ```typescript
 // src/devices/devices.service.ts
@@ -1227,12 +1227,12 @@ export class DevicesService {
 ```
 
 ::: tip @InjectRepository vs @Inject(EntityManager)
-`@InjectRepository`는 표준 CRUD, 페이지네이션, 집계, upsert에 사용하세요 -- 사용 사례의 90%를 커버해요. `@Inject(EntityManager)`는 인프라 수준 작업용으로 남겨두세요: raw SQL(`em.query()`), 스트리밍(`em.stream()`), subscriber 등록(`em.addSubscriber()`), 드라이버 접근(`em.getDriver()`).
+표준 CRUD, 페이지네이션, 집계, upsert에는 `@InjectRepository`를 쓰세요. 사용 사례의 90%가 여기에 해당합니다. `@Inject(EntityManager)`는 인프라 수준 작업에만 쓰세요. raw SQL(`em.query()`), 스트리밍(`em.stream()`), 구독자 등록(`em.addSubscriber()`), 드라이버 접근(`em.getDriver()`)이 그런 작업입니다.
 :::
 
 ### 디바이스별 최신 데이터
 
-앱을 열면 가장 먼저 보이는 건 각 디바이스의 현재 온도예요.
+앱을 열면 가장 먼저 각 디바이스의 현재 온도가 보입니다.
 
 ```typescript
 async getLatestReading(deviceId: number): Promise<TemperatureReading | null> {
@@ -1253,9 +1253,9 @@ LIMIT 1
 
 ### 데이터 이력 -- 커서 페이지네이션을 활용한 무한 스크롤
 
-사용자가 디바이스를 탭해서 이력을 볼 때, 앱은 스크롤 가능한 목록을 보여줘요. 아래로 스크롤하면 더 많은 데이터가 로드돼요. 이게 **무한 스크롤**이고, 이에 가장 적합한 페이지네이션 전략은 커서 기반이에요.
+사용자가 디바이스를 탭해서 이력을 보면 앱은 스크롤 목록을 보여 줍니다. 아래로 스크롤하면 데이터가 더 로드됩니다. 이 방식을 **무한 스크롤**이라고 합니다. 무한 스크롤에 가장 알맞은 페이지네이션 전략은 커서 기반입니다.
 
-왜 offset 페이지네이션이 아닐까요? 디바이스에 100만 건의 데이터가 있다고 가정해 보세요. `OFFSET 500000`으로 500페이지를 요청하면 PostgreSQL이 500,000개의 행을 스캔하고 건너뛰어야 해요. 커서 페이지네이션은 "**이 특정 타임스탬프보다 오래된** 데이터를 줘"라고 말해요. 데이터베이스가 인덱스를 사용해서 바로 그 지점으로 점프해요 -- 1페이지든 10,000페이지든 똑같이 빨라요.
+offset 페이지네이션을 쓰지 않는 이유가 있습니다. 디바이스에 데이터가 100만 건 있다고 가정해 보세요. `OFFSET 500000`으로 500페이지를 요청하면 PostgreSQL이 행 500,000개를 스캔하고 건너뛰어야 합니다. 커서 페이지네이션은 "이 타임스탬프보다 오래된 데이터를 줘"라고 요청합니다. 데이터베이스는 인덱스로 그 지점에 바로 이동합니다. 그래서 1페이지든 10,000페이지든 똑같이 빠릅니다.
 
 ```typescript
 async getReadingHistory(deviceId: number, cursor?: string) {
@@ -1285,9 +1285,9 @@ LIMIT 51
 -- Parameters: [1, '2026-03-28 10:00:00']
 ```
 
-ORM은 51개의 행(50 + 1개 추가)을 가져와서 다음 페이지가 있는지 감지해요. 51개가 돌아오면 `hasNextPage`가 `true`이고 추가 행은 버려요.
+ORM은 요청한 50개보다 하나 많은 51개 행을 조회해서 다음 페이지가 있는지 판단합니다. 51개가 반환되면 `hasNextPage`가 `true`가 되고 추가 행은 버립니다.
 
-응답 형태가 모바일 클라이언트에 딱 맞아요:
+응답 형태는 모바일 클라이언트에 잘 맞습니다.
 
 ```json
 {
@@ -1298,11 +1298,11 @@ ORM은 51개의 행(50 + 1개 추가)을 가져와서 다음 페이지가 있는
 }
 ```
 
-클라이언트가 `nextCursor`를 저장해두고 사용자가 하단으로 스크롤하면 다시 전달해요.
+클라이언트는 `nextCursor`를 저장해 두었다가 사용자가 아래 끝까지 스크롤하면 다시 넘깁니다.
 
 ### 총 개수와 함께 디바이스 목록 조회
 
-"내 디바이스" 화면은 총 개수와 함께 페이지네이션된 목록을 보여줘요 ("47개 중 1-10 표시").
+"내 디바이스" 화면은 "47개 중 1-10 표시"처럼 총 개수와 함께 페이지네이션된 목록을 보여 줍니다.
 
 ```typescript
 async getDevices(page: number, pageSize: number) {
@@ -1328,11 +1328,11 @@ WHERE "isActive" = $1;
 -- Parameters: [true, 10, 0]
 ```
 
-`findAndCount()`는 `[Device[], number]`를 반환해요 -- 데이터와 총 개수를 한 번의 호출로 받아요.
+`findAndCount()`는 `[Device[], number]`를 반환합니다. 데이터와 총 개수를 한 번의 호출로 받습니다.
 
 ### 날짜 범위 필터
 
-"3월 1-7일 사이에 온도가 30도 이상인 모든 데이터를 보여줘":
+"3월 1-7일 사이에 온도가 30도 이상인 데이터를 모두 보여 줘"라는 요청을 처리해 보겠습니다.
 
 ```typescript
 async filterReadings(deviceId: number, from: Date, to: Date, minTemp: number) {
@@ -1356,11 +1356,11 @@ ORDER BY "recordedAt" ASC
 -- Parameters: [1, '2026-03-01', '2026-03-07', 30]
 ```
 
-`between`과 `gte` 연산자가 SQL `BETWEEN`과 `>=`로 직접 변환돼요. 문자열 결합도 없고, SQL injection 위험도 없어요 -- 모든 값이 파라미터 바인딩을 통해요.
+`between`과 `gte` 연산자는 SQL `BETWEEN`과 `>=`로 바로 변환됩니다. 문자열을 이어 붙이지 않으므로 SQL 인젝션 위험도 없습니다. 모든 값은 파라미터로 바인딩됩니다.
 
 ### EXPLAIN으로 느린 쿼리 진단
 
-쿼리가 예상보다 느릴 때, `explain()`은 데이터베이스의 실행 계획을 보여줘요 -- 어떤 인덱스를 사용하는지, 몇 개의 행을 스캔하는지, 어디에 병목이 있는지.
+쿼리가 예상보다 느리면 `explain()`으로 데이터베이스의 실행 계획을 확인하세요. 실행 계획에는 어떤 인덱스를 쓰는지, 행을 몇 개 스캔하는지, 병목이 어디인지가 나옵니다.
 
 ```typescript
 async diagnoseSlowQuery(deviceId: number) {
@@ -1384,16 +1384,16 @@ async diagnoseSlowQuery(deviceId: number) {
 }
 ```
 
-핵심적으로 봐야 할 것: **"Seq Scan"**은 전체 테이블 스캔을 의미해요 -- 매칭되는 행을 찾기 위해 테이블의 모든 행을 읽는 거예요. 수백만 행이 있는 테이블에서는 느려요. **"Index Scan"** 또는 **"Index Only Scan"**은 데이터베이스가 B-tree 인덱스를 효율적으로 사용해서 관련 행으로 바로 점프하는 거예요.
+가장 먼저 볼 것은 스캔 방식입니다. **Seq Scan**은 전체 테이블 스캔입니다. 조건에 맞는 행을 찾으려고 테이블의 모든 행을 읽는다는 뜻입니다. 행이 수백만 개인 테이블에서는 느립니다. **Index Scan**이나 **Index Only Scan**은 데이터베이스가 B-tree 인덱스를 써서 필요한 행으로 바로 이동한다는 뜻입니다.
 
-Index Scan이 예상되는데 Seq Scan이 보이면 확인하세요:
-1. 해당 컬럼에 `@Index()` 데코레이터가 있나요?
-2. `synchronize`나 마이그레이션을 실행해서 실제로 인덱스를 생성했나요?
-3. 테이블이 충분히 작아서 PostgreSQL이 순차 스캔이 더 빠르다고 판단한 건 아닌가요? (쿼리 플래너는 똑똑해요 -- ~1,000행 미만의 테이블에서는 순차 스캔이 인덱스 조회보다 빠를 수 있어요.)
+Index Scan을 예상했는데 Seq Scan이 보이면 아래 항목을 확인하세요.
+1. 해당 컬럼에 `@Index()` 데코레이터가 있는지
+2. `synchronize`나 마이그레이션을 실행해서 인덱스를 실제로 생성했는지
+3. 테이블이 작아서 PostgreSQL이 순차 스캔이 더 빠르다고 판단한 것은 아닌지. 쿼리 플래너는 똑똑합니다. 행이 약 1,000개보다 적은 테이블에서는 순차 스캔이 인덱스 조회보다 빠르기도 합니다.
 
 ### QueryTracker로 N+1 쿼리 감지
 
-N+1은 ORM에서 가장 흔한 성능 문제예요. 엔티티 목록을 로드한 다음, 루프를 돌면서 각 관련 엔티티에 대해 별도의 쿼리를 트리거할 때 발생해요.
+N+1은 ORM에서 가장 흔한 성능 문제입니다. 엔티티 목록을 로드한 뒤 루프를 돌며 관련 엔티티마다 쿼리를 따로 실행할 때 생깁니다.
 
 ```typescript
 // BAD: N+1 — one query for devices, then one query per device for readings
@@ -1408,7 +1408,7 @@ for (const device of devices) {
 // With 100 devices -> 101 queries (1 for devices + 100 for readings)
 ```
 
-Stingerloom ORM의 `QueryTracker`가 이 패턴을 감지합니다. ORM 설정의 `logging` 옵션으로 켜요(보통 개발이나 스테이징 환경에서):
+Stingerloom ORM의 `QueryTracker`가 이 패턴을 감지합니다. 보통 개발 환경이나 스테이징 환경에서 ORM 설정의 `logging` 옵션으로 켭니다.
 
 ```typescript
 StingerloomOrmModule.forRoot({
@@ -1417,13 +1417,13 @@ StingerloomOrmModule.forRoot({
 }),
 ```
 
-같은 엔티티를 100ms 안에 10번 이상 조회하면 tracker가 경고를 로깅합니다:
+같은 엔티티를 100ms 안에 10번 이상 조회하면 tracker가 경고를 로그로 남깁니다.
 
 ```
 [QueryTracker] [N+1 WARNING] Entity "TemperatureReading" queried 10+ times in 100ms. Consider using eager loading or relations option.
 ```
 
-**해결법**: `relations`를 사용해서 eager-load하거나, 단일 쿼리로 재구성하세요:
+해결법은 `relations`로 관계를 즉시 로딩하거나 쿼리 하나로 다시 구성하는 것입니다.
 
 ```typescript
 // GOOD: single query with join
@@ -1433,7 +1433,7 @@ const devices = await this.deviceRepo.find({
 });
 ```
 
-`relations: ["readings"]`를 사용하면 ORM이 단일 `LEFT JOIN` 쿼리를 생성해서 모든 디바이스와 그 데이터를 한 번의 라운드트립으로 가져와요. 100개의 디바이스에 대해 101개가 아닌 1개의 쿼리로 처리돼요.
+`relations: ["readings"]`를 쓰면 ORM이 `LEFT JOIN` 쿼리 하나를 생성합니다. 이 쿼리는 모든 디바이스와 각 디바이스의 데이터를 한 번의 왕복으로 조회합니다. 디바이스가 100개라면 쿼리 101개 대신 1개로 처리됩니다.
 
 ---
 
@@ -1441,7 +1441,7 @@ const devices = await this.deviceRepo.find({
 
 ### 실시간 집계의 문제점
 
-모바일 앱에 "이번 주 평균 온도"와 "최근 24시간 최고 기록"을 보여주는 대시보드가 있다고 가정해 보세요. 매번 원시 데이터에서 계산할 수도 있어요:
+모바일 앱에 "이번 주 평균 온도"와 "최근 24시간 최고 기록"을 보여 주는 대시보드가 있다고 가정해 보세요. 요청할 때마다 원시 데이터에서 계산하는 방법이 먼저 떠오릅니다.
 
 ```typescript
 const [avg, max] = await Promise.all([
@@ -1466,11 +1466,11 @@ FROM "building_a"."temperature_readings"
 WHERE "device_id" = $1 AND "recordedAt" >= $2;
 ```
 
-10,000건의 데이터에서는 잘 동작해요. 하지만 1,000만 건이면? 각 쿼리가 거대한 범위를 스캔해요. 100명의 사용자가 동시에 대시보드를 열면 데이터베이스가 200개의 집계 스캔을 동시에 실행하게 돼요.
+데이터가 10,000건이면 잘 동작합니다. 하지만 1,000만 건이라면 쿼리마다 거대한 범위를 스캔합니다. 사용자 100명이 동시에 대시보드를 열면 데이터베이스가 집계 스캔 200개를 동시에 실행합니다.
 
 ### 사전 집계: 월간 은행 명세서 접근법
 
-매 요청마다 원시 데이터를 스캔하는 대신, 일일 요약을 사전 계산해요. 은행이 개별 거래에서 월간 명세서를 생성하듯이, 각 디바이스의 각 날짜에 대해 `DailyStats` 행을 생성해요.
+요청마다 원시 데이터를 스캔하지 않고 일일 요약을 미리 계산합니다. 은행이 개별 거래로 월간 명세서를 만들듯이 디바이스마다 날짜별 `DailyStats` 행을 생성합니다.
 
 ```typescript
 // src/stats/stats.service.ts
@@ -1545,13 +1545,13 @@ ON CONFLICT ("id") DO UPDATE SET
   "updatedAt" = EXCLUDED."updatedAt"
 ```
 
-`upsert()`가 핵심이에요 -- cron job이 같은 날에 두 번 실행되면 중복을 만드는 대신 덮어써요. 설계적으로 멱등성(idempotent)이 보장돼요.
+핵심은 `upsert()`입니다. cron job이 같은 날에 두 번 실행되어도 중복 행을 만들지 않고 기존 행을 덮어씁니다. 그래서 이 작업은 처음부터 멱등성(idempotency)을 가집니다.
 
 ### 복잡한 집계를 위한 Raw SQL
 
-때로는 ORM의 내장 집계 함수로 부족할 때가 있어요. 예를 들어, "최근 24시간 동안 시간별 평균 온도"는 `GROUP BY`와 `date_trunc()`가 필요한데 -- ORM의 finder API로는 표현할 수 없어요.
+ORM의 내장 집계 함수로는 부족할 때도 있습니다. 예를 들어 "최근 24시간 동안 시간별 평균 온도"에는 `GROUP BY`와 `date_trunc()`가 필요합니다. 이 쿼리는 ORM의 finder API로 표현하지 못합니다.
 
-이때 `em.query()`가 빛을 발해요:
+이럴 때 `em.query()`를 씁니다.
 
 ```typescript
 async getHourlyBreakdown(deviceId: number): Promise<Array<{
@@ -1579,16 +1579,16 @@ async getHourlyBreakdown(deviceId: number): Promise<Array<{
 
 | 필요한 것 | 사용할 것 | 이유 |
 |-----------|----------|------|
-| 단일 집계 (count, avg, max) | `repo.count()`, `repo.avg()`, `repo.max()` | 더 간단하고, 타입 안전하고, dialect 이식성이 있어요 |
-| GROUP BY, window functions, CTEs | `em.query()` + `sql-template-tag` | ORM finder가 표현식과 함께하는 GROUP BY를 지원하지 않아요 |
-| 애플리케이션 측 집계 | `em.stream()` + loop | DB가 로직을 표현할 수 없을 때 (ML 스코어링, 커스텀 알고리즘) |
+| 단일 집계 (count, avg, max) | `repo.count()`, `repo.avg()`, `repo.max()` | 더 간단하고 타입이 안전하며 다이얼렉트 사이에서 이식됩니다 |
+| GROUP BY, window functions, CTEs | `em.query()` + `sql-template-tag` | ORM finder는 표현식을 쓰는 GROUP BY를 지원하지 않습니다 |
+| 애플리케이션 측 집계 | `em.stream()` + loop | ML 스코어링이나 커스텀 알고리즘처럼 데이터베이스가 표현하지 못하는 로직에 씁니다 |
 
-세 가지 경우 모두 ORM이 연결 관리, 파라미터 바인딩, 테넌트 컨텍스트를 처리해요. 차이는 SQL을 얼마나 직접 작성하느냐예요.
+세 경우 모두 ORM이 연결 관리, 파라미터 바인딩, 테넌트 컨텍스트를 처리합니다. 차이는 SQL을 얼마나 직접 작성하느냐입니다.
 :::
 
 ### 대시보드 엔드포인트
 
-이제 모바일 앱이 원시 데이터 대신 사전 계산된 통계를 쿼리할 수 있어요:
+이제 모바일 앱은 원시 데이터 대신 미리 계산한 통계를 쿼리합니다.
 
 ```typescript
 async getWeeklySummary(deviceId: number) {
@@ -1613,7 +1613,7 @@ ORDER BY "date" ASC
 -- Parameters: [1, '2026-03-21']
 ```
 
-이 쿼리는 최대 7개의 행만 스캔해요. 원시 데이터가 아무리 많아도 상관없어요.
+이 쿼리는 원시 데이터가 아무리 많아도 최대 7개 행만 스캔합니다.
 
 ---
 
@@ -1621,9 +1621,9 @@ ORDER BY "date" ASC
 
 ### 문제
 
-매일 새벽 2시에 모든 디바이스의 어제 데이터를 집계해야 해요. 어떤 테넌트는 10,000개의 디바이스를 가지고 있어요. 각 디바이스는 하루에 ~2,880개의 데이터를 생성해요 (30초마다 하나). 처리해야 할 행이 2,880만 개예요.
+매일 새벽 2시에 모든 디바이스의 어제 데이터를 집계해야 합니다. 디바이스가 10,000개인 테넌트도 있습니다. 디바이스 하나는 30초마다 데이터를 하나씩 만들어 하루에 약 2,880개를 생성합니다. 그러면 처리할 행이 2,880만 개입니다.
 
-2,880만 행을 메모리에 로드하면 Node.js 프로세스가 크래시돼요. `em.stream()`이 행을 작은 배치로 가져와서 이 문제를 해결해요:
+행 2,880만 개를 메모리에 로드하면 Node.js 프로세스가 죽습니다. `em.stream()`은 행을 작은 배치로 나눠 조회해서 이 문제를 해결합니다.
 
 ```typescript
 // src/stats/aggregation.processor.ts
@@ -1683,12 +1683,12 @@ SELECT * FROM "building_a"."devices" WHERE "isActive" = $1 LIMIT 500 OFFSET 1000
 -- ...continues until a batch returns fewer than 500 rows
 ```
 
-어떤 시점에서든 메모리에는 500개의 디바이스 객체만 존재해요. 각각 처리된 후 다음 배치가 도착하면 가비지 컬렉션돼요.
+어느 시점이든 메모리에는 디바이스 객체가 500개만 있습니다. 각 객체는 처리된 뒤 다음 배치가 도착하면 가비지 컬렉션됩니다.
 
 ### BullMQ로 트리거
 
 ::: tip ORM 경계
-BullMQ는 잡 큐 라이브러리예요 -- ORM과는 무관해요. 새벽 2시에 집계를 **트리거**하는 데 사용해요. 실제 데이터 처리는 `em.stream()`과 `em.avg()`/`em.min()`/`em.max()`가 해요.
+BullMQ는 ORM과 관계없는 잡 큐 라이브러리입니다. 여기서는 새벽 2시에 집계를 시작하는 데만 씁니다. 실제 데이터 처리는 `em.stream()`과 `em.avg()`/`em.min()`/`em.max()`가 맡습니다.
 :::
 
 ```typescript
@@ -1734,14 +1734,14 @@ import { AggregationWorker } from "./aggregation.queue";
 export class StatsModule {}
 ```
 
-worker 안에서 `MetadataContext.run(tenantId, ...)`을 호출하는 게 중요해요. BullMQ 잡은 HTTP 요청 라이프사이클 바깥에서 실행되므로 TenantMiddleware가 컨텍스트를 설정해 주지 않아요. 직접 해야 해요. ORM의 AsyncLocalStorage 컨텍스트는 HTTP 요청이든 백그라운드 잡이든 동일하게 동작해요.
+worker 안에서 `MetadataContext.run(tenantId, ...)`을 호출하는 것이 중요합니다. BullMQ 잡은 HTTP 요청 라이프사이클 바깥에서 실행되므로 TenantMiddleware가 컨텍스트를 설정하지 않습니다. 그래서 직접 설정해야 합니다. ORM의 AsyncLocalStorage 컨텍스트는 HTTP 요청이든 백그라운드 잡이든 똑같이 동작합니다.
 
 ---
 
 ## Step 9: Redis 캐싱
 
 ::: warning ORM 경계
-Redis 캐싱은 **ORM의 관심사가 아니에요**. ORM의 책임은 PostgreSQL에서 끝나요. ORM의 EntitySubscriber 패턴을 사용해서 두 시스템을 **연결**해요 -- 기반 데이터가 변경될 때 캐시를 무효화하는 거예요.
+Redis 캐싱은 ORM이 맡는 일이 아닙니다. ORM의 책임은 PostgreSQL에서 끝납니다. 여기서는 ORM의 EntitySubscriber 패턴으로 두 시스템을 연결합니다. 원본 데이터가 바뀌면 캐시를 무효화하는 방식입니다.
 :::
 
 ### 패턴: Redis 먼저, ORM 폴백
@@ -1807,11 +1807,11 @@ export class CachedStatsService {
 }
 ```
 
-어디에도 `new Redis()`가 없는 걸 주목하세요. `@InjectRedis()` 데코레이터가 Step 1에서 등록한 `RedisModule`에서 연결을 가져와요. 모든 Redis 연결이 NestJS의 라이프사이클로 관리돼요 -- 종료 시 적절한 정리, 공유 설정, DI를 통한 테스트 가능성.
+코드 어디에도 `new Redis()`가 없습니다. `@InjectRedis()` 데코레이터가 Step 1에서 등록한 `RedisModule`에서 연결을 가져오기 때문입니다. 그래서 모든 Redis 연결은 NestJS의 라이프사이클이 관리합니다. 종료할 때 연결이 제대로 정리되고 설정도 공유됩니다. DI 덕분에 테스트하기도 쉽습니다.
 
 ### EntitySubscriber로 캐시 무효화
 
-야간 집계 cron으로 새 일일 통계가 계산되면, 캐시된 데이터는 더 이상 유효하지 않아요. `EntitySubscriber`를 사용해서 관련 캐시 키를 자동으로 무효화해요:
+야간 집계 cron이 새 일일 통계를 계산하면 캐시된 데이터는 더 이상 최신이 아닙니다. `EntitySubscriber`로 관련 캐시 키를 자동으로 무효화합니다.
 
 ```typescript
 // src/stats/daily-stats-cache.subscriber.ts
@@ -1844,7 +1844,7 @@ export class DailyStatsCacheSubscriber implements EntitySubscriber<DailyStats> {
 }
 ```
 
-subscriber는 생성자를 통해 Redis 인스턴스를 받아요. subscriber를 등록할 때 DI가 관리하는 Redis를 전달해요:
+구독자는 생성자로 Redis 인스턴스를 받습니다. 구독자를 등록할 때 DI가 관리하는 Redis를 넘깁니다.
 
 ```typescript
 // src/stats/stats.module.ts (subscriber registration)
@@ -1861,7 +1861,7 @@ export class StatsModule implements OnModuleInit {
 }
 ```
 
-이 패턴의 장점: 집계 서비스(`StatsService`)는 Redis를 몰라요. 캐시 서비스는 집계 스케줄을 몰라요. subscriber가 이 둘을 연결해요 -- ORM이 `DailyStats` 행을 쓰면, subscriber가 반응해서 오래된 캐시를 삭제해요. 시스템이 완전히 분리돼 있어요.
+이 패턴에서는 집계 서비스(`StatsService`)가 Redis에 의존하지 않습니다. 캐시 서비스도 집계 스케줄에 의존하지 않습니다. 둘을 잇는 것은 구독자입니다. ORM이 `DailyStats` 행을 쓰면 구독자가 반응해서 오래된 캐시를 삭제합니다. 그래서 두 시스템이 완전히 분리됩니다.
 
 ---
 
@@ -1869,11 +1869,11 @@ export class StatsModule implements OnModuleInit {
 
 ### 시나리오
 
-온도 데이터가 알림 규칙을 위반하면 다음을 해야 해요:
-1. `Alert` 레코드 생성
-2. (선택) 중복 알림을 방지하기 위해 해당 데이터를 "alerted"로 표시
+온도 데이터가 알림 규칙을 위반하면 아래 작업을 해야 합니다.
+1. `Alert` 행 생성
+2. (선택) 중복 알림을 막기 위해 해당 데이터를 "alerted"로 표시
 
-이 두 작업은 함께 성공하거나 함께 실패해야 해요. 알림이 생성됐는데 데이터 업데이트가 실패하면 유령 알림이 생겨요. 데이터가 업데이트됐는데 알림 생성이 실패하면 알림을 모르는 사이 잃어요. 이게 바로 트랜잭션이 필요한 이유예요.
+이 두 작업은 함께 성공하거나 함께 실패해야 합니다. 알림은 생성됐는데 데이터 갱신이 실패하면 유령 알림이 생깁니다. 데이터는 갱신됐는데 알림 생성이 실패하면 알림이 모르는 사이에 사라집니다. 트랜잭션은 바로 이런 경우에 씁니다.
 
 ### @Transactional() 사용
 
@@ -1927,7 +1927,7 @@ COMMIT;
 
 ### 대안: em.transaction() 콜백
 
-트랜잭션 경계를 명시적으로 제어하고 싶다면:
+트랜잭션 경계를 명시적으로 제어하려면 `em.transaction()` 콜백을 씁니다.
 
 ```typescript
 async fireAlertExplicit(rule: AlertRule, reading: TemperatureReading): Promise<Alert> {
@@ -1945,7 +1945,7 @@ async fireAlertExplicit(rule: AlertRule, reading: TemperatureReading): Promise<A
 }
 ```
 
-두 접근법 모두 동일한 SQL을 생성해요. `@Transactional()`은 단순한 경우에 더 깔끔해요. `em.transaction()`은 조건부로 작업을 포함해야 할 때 명시적인 제어를 제공해요.
+두 방법은 같은 SQL을 생성합니다. 단순한 경우에는 `@Transactional()`이 더 깔끔합니다. 조건에 따라 작업을 넣거나 빼야 한다면 명시적으로 제어하는 `em.transaction()`이 알맞습니다.
 
 ### 모바일 앱을 위한 알림 조회
 
@@ -1979,7 +1979,7 @@ LIMIT 50
 
 ### 서비스 유닛 테스트
 
-리포지토리가 `@InjectRepository`로 주입되기 때문에, 테스트에서 mock할 수 있어요. 실행 중인 데이터베이스 없이, Docker 없이, 밀리초 만에 비즈니스 로직을 격리해서 테스트할 수 있어요.
+리포지토리는 `@InjectRepository`로 주입되므로 테스트에서 mock으로 바꿔도 됩니다. 그러면 실행 중인 데이터베이스나 Docker 없이 비즈니스 로직만 떼어 내어 밀리초 만에 테스트합니다.
 
 ```typescript
 // src/readings/readings.service.spec.ts
@@ -2039,7 +2039,7 @@ describe("ReadingsService", () => {
 
 ### 실제 데이터베이스를 사용한 통합 테스트
 
-트랜잭션, 제약조건, 테넌트 격리 같은 실제 데이터베이스 동작이 필요한 테스트에는 ORM의 테스트 유틸리티를 사용하세요:
+트랜잭션, 제약조건, 테넌트 격리처럼 실제 데이터베이스 동작이 필요한 테스트에는 ORM의 테스트 유틸리티를 쓰세요.
 
 ```typescript
 // test/integration/multi-tenant.spec.ts
@@ -2095,45 +2095,45 @@ describe("Multi-Tenant Isolation", () => {
 ```
 
 ::: tip
-항상 별도의 테스트 데이터베이스를 사용하세요. `synchronize: true` 옵션이 테이블을 자동으로 생성하지만, 드롭하고 재생성하기도 해요 -- 테스트를 프로덕션 데이터베이스에 연결하지 마세요.
+테스트에는 항상 별도의 데이터베이스를 쓰세요. `synchronize: true` 옵션은 테이블을 자동으로 생성하지만 삭제하고 다시 생성하기도 합니다. 그러니 테스트를 프로덕션 데이터베이스에 연결하지 마세요.
 :::
 
 ---
 
 ## 완성된 시스템
 
-한 발 물러서서 전체 시스템을 살펴볼게요:
+한 발 물러서서 전체 시스템을 살펴보겠습니다.
 
 | 컴포넌트 | 하는 일 | ORM 관여 여부 |
 |----------|---------|--------------|
 | Docker Compose | PostgreSQL + Redis + Keycloak 인프라 | 아니요 |
-| 6개 엔티티 | 관계, 인덱스, 훅이 포함된 데이터 모델 | **예** -- 데코레이터 |
-| Tenant Middleware | JWT 클레임 기반 스키마별 테넌트 라우팅 | **예** -- MetadataContext |
+| 6개 엔티티 | 관계, 인덱스, 훅이 포함된 데이터 모델 | 예: 데코레이터 |
+| Tenant Middleware | JWT 클레임 기반 스키마별 테넌트 라우팅 | 예: MetadataContext |
 | Keycloak JWT 인증 | 토큰 검증, 사용자 식별 | 아니요 |
-| 단일 + 배치 수집 | 온도 데이터의 save()와 insertMany() | **예** -- EntityManager |
-| Alert Subscriber | 새 데이터에 대한 분리된 알림 체크 | **예** -- EntitySubscriber |
-| 커서 페이지네이션 | 모바일 데이터 이력의 무한 스크롤 | **예** -- findWithCursor() |
-| 집계 | avg/min/max/count + upsert를 통한 일일 통계 | **예** -- 집계 함수 |
-| 스트리밍 | 메모리 오버플로 없이 수백만 행 처리 | **예** -- stream() |
-| Redis 캐싱 | 캐시 무효화가 포함된 빠른 대시보드 데이터 | EntitySubscriber를 통한 연결 |
-| 트랜잭션 | 원자적 알림 생성 | **예** -- @Transactional() |
-| BullMQ Cron | 야간 집계 트리거 | 아니요 (ORM 코드를 트리거) |
+| 단일 + 배치 수집 | 온도 데이터의 save()와 insertMany() | 예: EntityManager |
+| Alert Subscriber | 새 데이터의 알림 조건을 분리해서 확인 | 예: EntitySubscriber |
+| 커서 페이지네이션 | 모바일 데이터 이력의 무한 스크롤 | 예: findWithCursor() |
+| 집계 | avg/min/max/count와 upsert로 만드는 일일 통계 | 예: 집계 함수 |
+| 스트리밍 | 메모리 오버플로 없이 수백만 행 처리 | 예: stream() |
+| Redis 캐싱 | 캐시 무효화가 포함된 빠른 대시보드 데이터 | EntitySubscriber로 연결 |
+| 트랜잭션 | 원자적 알림 생성 | 예: @Transactional() |
+| BullMQ Cron | 야간 집계 트리거 | 아니요 (ORM 코드를 호출) |
 
-ORM은 TypeScript 객체와 PostgreSQL 사이의 모든 것을 처리해요. Redis, BullMQ, Keycloak은 ORM이 명확한 경계를 통해 연결하는 외부 시스템이에요 (캐시 무효화를 위한 EntitySubscriber, 백그라운드 잡을 위한 MetadataContext.run()).
+ORM은 TypeScript 객체와 PostgreSQL 사이의 모든 일을 처리합니다. Redis, BullMQ, Keycloak은 외부 시스템입니다. ORM은 명확한 경계에서 이 시스템들과 연결됩니다. 캐시 무효화에는 EntitySubscriber를 쓰고 백그라운드 잡에는 MetadataContext.run()을 씁니다.
 
 ### 프로덕션 체크리스트
 
-프로덕션 배포 전에 다음 항목을 확인하세요:
+프로덕션에 배포하기 전에 아래 항목을 확인하세요.
 
 | 항목 | 상태 | 비고 |
 |------|------|------|
-| 프로덕션 설정에서 `synchronize: false` | 필수 | synchronize는 컬럼을 드롭할 수 있으므로 마이그레이션 사용 |
-| 커넥션 풀링 설정 | 필수 | ORM 설정에서 `pool: { min: 2, max: 10 }` 설정 |
+| 프로덕션 설정에서 `synchronize: false` | 필수 | synchronize는 컬럼을 삭제하기도 하므로 마이그레이션 사용 |
+| 연결 풀링 설정 | 필수 | ORM 설정에서 `pool: { min: 2, max: 10 }` 설정 |
 | 쿼리 타임아웃 설정 | 권장 | `timeout: 30000` (30초)으로 폭주 쿼리 방지 |
 | 스테이징에서 N+1 감지 활성화 | 권장 | ORM 설정의 `logging: { nPlusOne: true }` |
-| Redis 연결 에러 처리 | 필수 | ioredis가 자동 재연결하지만 실패를 로깅하세요 |
+| Redis 연결 에러 처리 | 필수 | ioredis는 자동으로 다시 연결하지만 실패는 로그로 남기세요 |
 | 테넌트 스키마 마이그레이션 전략 | 필수 | 배포 시 `TenantMigrationRunner.syncTenantSchemas()` 실행 |
-| JWT 공개 키 로테이션 | 중요 | jwks-rsa가 키를 캐시해요 -- `cache: true, rateLimit: true` 설정 |
+| JWT 공개 키 로테이션 | 중요 | jwks-rsa가 키를 캐시합니다. `cache: true, rateLimit: true` 설정 |
 | 데이터베이스 백업 스케줄 | 필수 | 테넌트별 백업을 위해 `--schema` 플래그와 함께 pg_dump |
 | 그레이스풀 셧다운 | 필수 | NestJS `onModuleDestroy()`에서 `em.propagateShutdown()` 호출 |
 
@@ -2155,14 +2155,14 @@ export class AppModule implements OnModuleDestroy {
 }
 ```
 
-`propagateShutdown()`은 모든 데이터베이스 연결을 닫고, 이벤트 리스너와 subscriber를 정리하고, query tracker 리소스를 해제해요. 이게 없으면 PostgreSQL 연결이 남아있어서 프로세스가 종료 시 멈출 수 있어요. 컨테이너 환경(Docker, Kubernetes)에서는 남아있는 연결이 컨테이너의 정상 종료를 방해해서, 진행 중인 트랜잭션의 강제 종료와 데이터 손실로 이어질 수 있어요.
+`propagateShutdown()`은 모든 데이터베이스 연결을 닫습니다. 그리고 이벤트 리스너와 구독자를 정리하고 query tracker 리소스를 해제합니다. 이 호출이 없으면 PostgreSQL 연결이 남아서 프로세스가 종료되지 않고 멈추기도 합니다. Docker나 Kubernetes 같은 컨테이너 환경에서는 남은 연결 때문에 컨테이너가 정상적으로 종료되지 않습니다. 그러면 강제 종료로 이어지고 진행 중인 트랜잭션의 데이터를 잃을 위험이 있습니다.
 
 ## 다음 단계
 
-- [Entities & Columns](./entities.md) -- 모든 데코레이터 옵션 상세 설명
-- [Multi-Tenancy](./multi-tenancy.md) -- 스키마 전략, OverlayFS 메타데이터, 동시성 안전
-- [Querying & Pagination](./entity-manager-querying.md) -- 모든 WHERE 연산자, 스트리밍, 집계
-- [Writes & Transactions](./entity-manager-writes.md) -- 배치 연산, upsert, 데드락 재시도
-- [Events & Subscribers](./events.md) -- 라이프사이클 훅, 글로벌 리스너, subscriber 패턴
-- [Transactions](./transactions.md) -- 격리 수준, savepoint, 중첩 트랜잭션
-- [NestJS Integration](./nestjs.md) -- 모듈 설정, 의존성 주입, repository 패턴
+- [Entities & Columns](./entities.md): 모든 데코레이터 옵션 상세 설명
+- [Multi-Tenancy](./multi-tenancy.md): 스키마 전략, OverlayFS 메타데이터, 동시성 안전
+- [Querying & Pagination](./entity-manager-querying.md): 모든 WHERE 연산자, 스트리밍, 집계
+- [Writes & Transactions](./entity-manager-writes.md): 배치 연산, upsert, 데드락 재시도
+- [Events & Subscribers](./events.md): 라이프사이클 훅, 글로벌 리스너, 구독자 패턴
+- [Transactions](./transactions.md): 격리 수준, 세이브포인트, 중첩 트랜잭션
+- [NestJS Integration](./nestjs.md): 모듈 설정, 의존성 주입, 리포지토리 패턴
