@@ -2095,7 +2095,7 @@ describe("Multi-Tenant Isolation", () => {
 ```
 
 ::: tip
-Always use a separate test database. The `synchronize: true` option creates tables automatically, but it also drops and recreates them — never point tests at your production database.
+Always use a separate test database. The `synchronize: true` option creates tables automatically, but it also alters columns and drops the ones an entity no longer declares, so never point tests at your production database.
 :::
 
 ---
