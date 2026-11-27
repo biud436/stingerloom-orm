@@ -70,7 +70,7 @@ ORM을 사용하는 것이 목표라면 시작하기 가이드부터 읽으세�
 
 | 문서 | 필요한 상황 |
 |------|----------------|
-| [쿼리 빌더](https://biud436.github.io/stingerloom-orm/ko/query-builder.html) | 타입 안전 쿼리, JOIN, GROUP BY, UNION, CTE, 윈도우 함수 |
+| [쿼리 빌더](https://biud436.github.io/stingerloom-orm/ko/query-builder.html) | 타입 안전 쿼리, JOIN, GROUP BY, UNION, CTE, 윈도 함수 |
 | [트랜잭션](https://biud436.github.io/stingerloom-orm/ko/transactions.html) | 작업 그룹화, 격리 수준, 데드락 재시도 |
 | [마이그레이션](https://biud436.github.io/stingerloom-orm/ko/migrations.html) | 프로덕션에서 안전하게 스키마 변경, CLI (`npx stingerloom`) |
 | [설정 가이드](https://biud436.github.io/stingerloom-orm/ko/configuration.html) | 풀링, 타임아웃, 읽기 레플리카, CJS/ESM |

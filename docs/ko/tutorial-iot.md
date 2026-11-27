@@ -473,7 +473,7 @@ export class AlertRule {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  // 단방향 관계: Device에 알림 규칙의 역방향 프로퍼티가 없으므로
+  // 단방향 관계: Device에 알림 규칙의 역방향 속성이 없으므로
   // 필수인 두 번째 인자에 () => undefined를 전달합니다.
   @ManyToOne(() => Device, () => undefined)
   @RelationColumn({ name: "device_id" })
@@ -707,7 +707,7 @@ export class TenantMiddleware implements NestMiddleware {
 }
 ```
 
-핵심은 `MetadataContext.run(tenantId, () => { next() })` 줄입니다. 이 호출은 Node.js `AsyncLocalStorage`로 HTTP 요청의 전체 라이프사이클을 테넌트 컨텍스트로 감쌉니다. 그래서 이후 컨트롤러, 서비스, 리포지토리에서 호출하는 모든 ORM 메서드가 자동으로 올바른 스키마를 대상으로 합니다.
+핵심은 `MetadataContext.run(tenantId, () => { next() })` 줄입니다. 이 호출은 Node.js `AsyncLocalStorage`로 HTTP 요청의 전체 생명주기를 테넌트 컨텍스트로 감쌉니다. 그래서 이후 컨트롤러, 서비스, 리포지토리에서 호출하는 모든 ORM 메서드가 자동으로 올바른 스키마를 대상으로 합니다.
 
 ```
 HTTP Request (JWT: { tenantId: "building_a" })
@@ -746,7 +746,7 @@ t4: Request B's DB query executes
 
 Request B는 이미 시작되어 t2에서 자기 컨텍스트를 설정했습니다. 그래도 t3 시점에 Request A의 테넌트는 여전히 `building_a`로 올바르게 해석됩니다. `MetadataContext.run()`을 호출할 때마다 독립적인 실행 컨텍스트가 생성되기 때문입니다. 이 컨텍스트는 `await`, Promise, 콜백으로 이어지는 비동기 호출 체인을 따라가고 동시에 실행 중인 다른 컨텍스트로 새지 않습니다.
 
-`AsyncLocalStorage` 없이 `global.currentTenant = tenantId` 같은 단순한 전역 변수를 쓰면 레이스 컨디션이 생깁니다. Request A의 데이터베이스 쿼리가 실행되기 전에 Request B가 테넌트를 `building_b`로 덮어씁니다. 그러면 Request A가 잘못된 스키마를 쿼리합니다. `AsyncLocalStorage`는 이런 전형적인 동시성 버그를 구조적으로 없앱니다.
+`AsyncLocalStorage` 없이 `global.currentTenant = tenantId` 같은 단순한 전역 변수를 쓰면 경쟁 상태(race condition)가 생깁니다. Request A의 데이터베이스 쿼리가 실행되기 전에 Request B가 테넌트를 `building_b`로 덮어씁니다. 그러면 Request A가 잘못된 스키마를 쿼리합니다. `AsyncLocalStorage`는 이런 전형적인 동시성 버그를 구조적으로 없앱니다.
 
 ### 테넌트 컨텍스트가 없을 때 어떻게 되나요?
 
@@ -1734,7 +1734,7 @@ import { AggregationWorker } from "./aggregation.queue";
 export class StatsModule {}
 ```
 
-worker 안에서 `MetadataContext.run(tenantId, ...)`을 호출하는 것이 중요합니다. BullMQ 잡은 HTTP 요청 라이프사이클 바깥에서 실행되므로 TenantMiddleware가 컨텍스트를 설정하지 않습니다. 그래서 직접 설정해야 합니다. ORM의 AsyncLocalStorage 컨텍스트는 HTTP 요청이든 백그라운드 잡이든 똑같이 동작합니다.
+worker 안에서 `MetadataContext.run(tenantId, ...)`을 호출하는 것이 중요합니다. BullMQ 잡은 HTTP 요청 생명주기 바깥에서 실행되므로 TenantMiddleware가 컨텍스트를 설정하지 않습니다. 그래서 직접 설정해야 합니다. ORM의 AsyncLocalStorage 컨텍스트는 HTTP 요청이든 백그라운드 잡이든 똑같이 동작합니다.
 
 ---
 
@@ -1807,7 +1807,7 @@ export class CachedStatsService {
 }
 ```
 
-코드 어디에도 `new Redis()`가 없습니다. `@InjectRedis()` 데코레이터가 Step 1에서 등록한 `RedisModule`에서 연결을 가져오기 때문입니다. 그래서 모든 Redis 연결은 NestJS의 라이프사이클이 관리합니다. 종료할 때 연결이 제대로 정리되고 설정도 공유됩니다. DI 덕분에 테스트하기도 쉽습니다.
+코드 어디에도 `new Redis()`가 없습니다. `@InjectRedis()` 데코레이터가 Step 1에서 등록한 `RedisModule`에서 연결을 가져오기 때문입니다. 그래서 모든 Redis 연결은 NestJS의 생명주기가 관리합니다. 종료할 때 연결이 제대로 정리되고 설정도 공유됩니다. DI 덕분에 테스트하기도 쉽습니다.
 
 ### EntitySubscriber로 캐시 무효화
 
@@ -2163,6 +2163,6 @@ export class AppModule implements OnModuleDestroy {
 - [Multi-Tenancy](./multi-tenancy.md): 스키마 전략, OverlayFS 메타데이터, 동시성 안전
 - [Querying & Pagination](./entity-manager-querying.md): 모든 WHERE 연산자, 스트리밍, 집계
 - [Writes & Transactions](./entity-manager-writes.md): 배치 연산, upsert, 데드락 재시도
-- [Events & Subscribers](./events.md): 라이프사이클 훅, 글로벌 리스너, 구독자 패턴
+- [Events & Subscribers](./events.md): 생명주기 훅, 글로벌 리스너, 구독자 패턴
 - [Transactions](./transactions.md): 격리 수준, 세이브포인트, 중첩 트랜잭션
 - [NestJS Integration](./nestjs.md): 모듈 설정, 의존성 주입, 리포지토리 패턴

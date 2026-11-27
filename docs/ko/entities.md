@@ -1,6 +1,6 @@
 # 엔티티 & 컬럼 (데코레이터)
 
-**엔티티**(Entity)는 데이터베이스 테이블을 나타내는 TypeScript 클래스입니다. 엔티티 클래스 하나는 테이블 하나에 대응합니다. 클래스의 프로퍼티는 테이블의 컬럼이 됩니다.
+**엔티티**(Entity)는 데이터베이스 테이블을 나타내는 TypeScript 클래스입니다. 엔티티 클래스 하나는 테이블 하나에 대응합니다. 클래스의 속성은 테이블의 컬럼이 됩니다.
 
 ::: tip 코드 우선 스타일이 더 좋다면?
 데코레이터(`@Entity`, `@Column`, …) 없이 스키마에서 엔티티 타입을 추론하고 싶다면 `defineEntity` 빌더를 설명하는 [엔티티 정의하기](./define-entity.md)를 참고하세요. 데코레이터 API와 `defineEntity`는 같은 메타데이터를 생성하므로 두 스타일을 자유롭게 섞어 써도 됩니다.
@@ -91,9 +91,9 @@ INSERT INTO "user" ("name") VALUES ('Bob');
 -- DB가 자동으로 id = 2를 채워 넣음
 ```
 
-**`@Column()`** 은 일반 컬럼을 정의합니다. 프로퍼티의 TypeScript 타입을 보고 알맞은 데이터베이스 타입을 자동으로 추론합니다. 예를 들어 `string`은 `VARCHAR(255)`가 되고 `number`는 `INT`가 됩니다. 이 추론에는 TypeScript의 `emitDecoratorMetadata` 컴파일러 옵션이 만드는 `design:type` 메타데이터를 씁니다.
+**`@Column()`** 은 일반 컬럼을 정의합니다. 속성의 TypeScript 타입을 보고 알맞은 데이터베이스 타입을 자동으로 추론합니다. 예를 들어 `string`은 `VARCHAR(255)`가 되고 `number`는 `INT`가 됩니다. 이 추론에는 TypeScript의 `emitDecoratorMetadata` 컴파일러 옵션이 만드는 `design:type` 메타데이터를 씁니다.
 
-> 힌트: `!:`는 확정 할당 단언(definite assignment assertion) 구문입니다. 이 구문은 TypeScript에 "이 프로퍼티는 ORM이 관리하므로 초기화하지 않아도 된다"고 알립니다.
+> 힌트: `!:`는 확정 할당 단언(definite assignment assertion) 구문입니다. 이 구문은 TypeScript에 "이 속성은 ORM이 관리하므로 초기화하지 않아도 된다"고 알립니다.
 
 ## 다양한 컬럼 타입 사용
 
@@ -182,11 +182,11 @@ bio!: string | null;
 
 이 설정은 DDL에서 `NOT NULL` 제약 조건이 없는 `VARCHAR(255)`를 생성합니다. TypeScript 타입에도 `| null`을 추가하면 코드에서 null 검사를 자연스럽게 하게 됩니다.
 
-프로퍼티 타입이 유니온이라면 `type`을 반드시 직접 적어 주세요. `strictNullChecks`가 켜져 있으면 tsc는 `string | null`을 데코레이터 메타데이터에 `Object`로 기록합니다. ORM은 이 값을 `Date | null`이나 `Record<string, unknown>`과 구분하지 못합니다. 그래서 `@Column({ nullable: true }) bio!: string | null`은 `VARCHAR(255)`가 아니라 `text`로 추론되고 `Unknown design:type "Object"` 경고가 출력됩니다. 자세한 내용은 [문제 해결 가이드](./troubleshooting.md)에서 컬럼이 뜻하지 않게 `text`가 되는 항목을 참고하세요.
+속성 타입이 유니온이라면 `type`을 반드시 직접 적어 주세요. `strictNullChecks`가 켜져 있으면 tsc는 `string | null`을 데코레이터 메타데이터에 `Object`로 기록합니다. ORM은 이 값을 `Date | null`이나 `Record<string, unknown>`과 구분하지 못합니다. 그래서 `@Column({ nullable: true }) bio!: string | null`은 `VARCHAR(255)`가 아니라 `text`로 추론되고 `Unknown design:type "Object"` 경고가 출력됩니다. 자세한 내용은 [문제 해결 가이드](./troubleshooting.md)에서 컬럼이 뜻하지 않게 `text`가 되는 항목을 참고하세요.
 
 ### 컬럼 이름 별칭
 
-프로퍼티 이름과 실제 데이터베이스 컬럼 이름을 다르게 하려면 `name` 옵션을 씁니다. TypeScript에서는 camelCase를 쓰고 데이터베이스에서는 snake_case를 쓸 때 흔히 사용합니다.
+속성 이름과 실제 데이터베이스 컬럼 이름을 다르게 하려면 `name` 옵션을 씁니다. TypeScript에서는 camelCase를 쓰고 데이터베이스에서는 snake_case를 쓸 때 흔히 사용합니다.
 
 ```typescript
 @Column({ name: "unit_price", type: "float" })
@@ -194,7 +194,7 @@ price!: number;
 // TypeScript: product.price / DB column: unit_price
 ```
 
-DDL에서 컬럼 이름은 `unit_price`가 됩니다. Stingerloom은 SELECT 쿼리를 만들 때 `unit_price` 컬럼을 TypeScript 객체의 `price` 프로퍼티에 매핑합니다.
+DDL에서 컬럼 이름은 `unit_price`가 됩니다. Stingerloom은 SELECT 쿼리를 만들 때 `unit_price` 컬럼을 TypeScript 객체의 `price` 속성에 매핑합니다.
 
 ### 기본값
 
@@ -234,7 +234,7 @@ createdAt!: Date;
 `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ```
 
-`"(CURRENT_TIMESTAMP)"`처럼 값을 괄호로 감싸면 Stingerloom은 그 값을 따옴표로 감싼 문자열 리터럴이 아니라 원시 SQL `DEFAULT` 표현식으로 DDL에 출력합니다. 괄호가 없으면 `"CURRENT_TIMESTAMP"`는 SQL 함수가 아니라 리터럴 문자열 `'CURRENT_TIMESTAMP'`로 처리됩니다.
+`"(CURRENT_TIMESTAMP)"`처럼 값을 괄호로 감싸면 Stingerloom은 그 값을 따옴표로 감싼 문자열 리터럴이 아니라 raw SQL `DEFAULT` 표현식으로 DDL에 출력합니다. 괄호가 없으면 `"CURRENT_TIMESTAMP"`는 SQL 함수가 아니라 리터럴 문자열 `'CURRENT_TIMESTAMP'`로 처리됩니다.
 
 ### JSON 컬럼
 
@@ -330,12 +330,12 @@ ssn: string;
 
 데이터베이스에는 암호문이 저장됩니다. 애플리케이션 코드는 평문을 다룹니다. 나머지 코드는 이 변환을 의식하지 않아도 됩니다.
 
-필터와 집계는 하이드레이션된 프로퍼티와 같은 표현을 씁니다. 그래서 저장된 값이 아니라 코드가 가진 값으로 비교하고 합산하면 됩니다. 경로별로 트랜스포머가 적용되는 방식은 아래 표와 같습니다.
+필터와 집계는 하이드레이트된 속성과 같은 표현을 씁니다. 그래서 저장된 값이 아니라 코드가 가진 값으로 비교하고 합산하면 됩니다. 경로별로 트랜스포머가 적용되는 방식은 아래 표와 같습니다.
 
 | 경로 | 동작 |
 |------|------|
 | `save` / `insertMany` / `upsert` 계열 / `updateMany` data | `to` |
-| 하이드레이션 (`find`, `findOne`, `pluck`, 쿼리 빌더 `getMany`) | `from` |
+| 하이드레이트 (`find`, `findOne`, `pluck`, 쿼리 빌더 `getMany`) | `from` |
 | where: 동등 비교, `eq` / `ne` / `not`, `gt` / `gte` / `lt` / `lte`, `in` / `notIn`, 배열 축약형, `between` | 원소마다 `to` |
 | where: `like` / `notLike` / `ilike` / `contains` / `startsWith` / `endsWith` / `search` | 적용하지 않습니다. 패턴은 저장 표현으로 작성하세요 |
 | where: `null`, `isNull`, raw `sql` 조각, QueryDSL(`qAlias`) 조건 | 적용하지 않습니다 |
@@ -526,7 +526,7 @@ CREATE INDEX "idx_order_tenantId_status" ON "order" ("tenantId", "status");
 @Index(["tenantId", "status"], "idx_custom_name")
 ```
 
-> 힌트: 프로퍼티 수준 `@Index()`는 단일 컬럼 인덱스를 생성합니다. 클래스 수준 `@Index(columns)`는 복합 인덱스를 생성합니다. 한 엔티티에 두 방식을 함께 써도 됩니다.
+> 힌트: 속성 수준 `@Index()`는 단일 컬럼 인덱스를 생성합니다. 클래스 수준 `@Index(columns)`는 복합 인덱스를 생성합니다. 한 엔티티에 두 방식을 함께 써도 됩니다.
 
 ### 복합 고유 인덱스 (@UniqueIndex)
 
@@ -582,7 +582,7 @@ CREATE UNIQUE INDEX "UQ_post_categoryId_slug" ON "post" ("categoryId", "slug");
 @UniqueIndex(["categoryId", "slug"], "uq_post_category_slug")
 ```
 
-> 힌트: `@UniqueIndex`와 `@Index(columns)`는 둘 다 클래스 수준 데코레이터입니다. 인자 없는 프로퍼티 수준 `@Index()`는 개별 프로퍼티에 붙입니다.
+> 힌트: `@UniqueIndex`와 `@Index(columns)`는 둘 다 클래스 수준 데코레이터입니다. 인자 없는 속성 수준 `@Index()`는 개별 속성에 붙입니다.
 
 ### 고급 인덱스 옵션
 
@@ -746,7 +746,7 @@ CREATE INDEX "idx_active_user_email" ON "user" ("email") INCLUDE ("name") WHERE 
 
 인덱스가 없는 `jsonb` 컬럼은 모든 쿼리에서 순차 스캔을 합니다. 행이 100만 개인 테이블에서 `WHERE data @> '{"tags":["typescript"]}'`를 실행해도 마찬가지입니다. PostgreSQL은 `CREATE INDEX ... USING GIN ((data->'tags') jsonb_path_ops)`처럼 JSON 경로에 거는 표현식 인덱스를 지원합니다. 하지만 이 인덱스를 직접 작성하면 마이그레이션 SQL이 특정 경로와 opclass에 묶입니다. 그러면 엔티티가 바뀌어도 마이그레이션 SQL은 그대로 남아 엔티티와 어긋납니다.
 
-`@JsonIndex`는 이 인덱스를 프로퍼티에 선언합니다. 그러면 스키마 생성기가 올바른 DDL을 생성합니다. 그리고 `u.profile.tags.contains(...)` 같은 QueryDSL 경로 연산이 데이터베이스가 실제로 쓰는 인덱스 경로와 일치합니다.
+`@JsonIndex`는 이 인덱스를 속성에 선언합니다. 그러면 스키마 생성기가 올바른 DDL을 생성합니다. 그리고 `u.profile.tags.contains(...)` 같은 QueryDSL 경로 연산이 데이터베이스가 실제로 쓰는 인덱스 경로와 일치합니다.
 
 ### 동작 방식
 
@@ -1259,7 +1259,7 @@ total!: number;
 | `JOINED` | 루트 테이블 | 자식 테이블 |
 | `TABLE_PER_CLASS` | 모든 구체 테이블 | 자식 테이블 |
 
-그래서 `JOINED`에서 자식의 표현식은 자식이 선언한 컬럼만 읽을 수 있습니다. 상속받은 컬럼은 루트 테이블에 있기 때문입니다. 어떤 읽기에서든 값은 그 컬럼을 선언한 클래스에만 담깁니다. 다형 `find(Item)`은 각 `Book`에 `doubled`를 채웁니다. 반면 형제 클래스인 `Pen`의 인스턴스에는 이 프로퍼티를 두지 않습니다.
+그래서 `JOINED`에서 자식의 표현식은 자식이 선언한 컬럼만 읽을 수 있습니다. 상속받은 컬럼은 루트 테이블에 있기 때문입니다. 어떤 읽기에서든 값은 그 컬럼을 선언한 클래스에만 담깁니다. 다형 `find(Item)`은 각 `Book`에 `doubled`를 채웁니다. 반면 형제 클래스인 `Pen`의 인스턴스에는 이 속성을 두지 않습니다.
 
 #### 다이얼렉트 독립 표현식 (빌더 형식)
 
@@ -1324,9 +1324,9 @@ cycleTimeHours?: number;
 
 ### 라이프사이클 훅이 존재하는 이유
 
-엔티티 라이프사이클의 특정 순간에 커스텀 로직을 실행해야 할 때가 있습니다. 삽입 전, 갱신 후, 삭제 전 같은 순간입니다. 예를 들어 저장하기 전에 제목으로 URL 슬러그를 만들거나 엔티티를 생성한 뒤 알림을 보내는 경우입니다.
+엔티티 생명주기의 특정 순간에 커스텀 로직을 실행해야 할 때가 있습니다. 삽입 전, 갱신 후, 삭제 전 같은 순간입니다. 예를 들어 저장하기 전에 제목으로 URL 슬러그를 만들거나 엔티티를 생성한 뒤 알림을 보내는 경우입니다.
 
-라이프사이클 훅을 쓰면 이 로직을 엔티티 클래스에 직접 정의합니다. 정의한 로직은 해당 라이프사이클 이벤트가 일어날 때마다 자동으로 실행됩니다.
+생명주기 훅을 쓰면 이 로직을 엔티티 클래스에 직접 정의합니다. 정의한 로직은 해당 생명주기 이벤트가 일어날 때마다 자동으로 실행됩니다.
 
 ### 동작 방식
 
@@ -1366,7 +1366,7 @@ export class Article {
 INSERT INTO "article" ("title", "slug") VALUES ('Hello World', 'hello-world');
 ```
 
-라이프사이클 훅은 모두 6개입니다.
+생명주기 훅은 모두 6개입니다.
 
 | 데코레이터        | 실행 시점            | 사용 시기                               |
 | ----------------- | -------------------- | --------------------------------------- |
@@ -1579,16 +1579,16 @@ SELECT * FROM "user" WHERE "deletedAt" IS NULL;
 | `Object`        | text       | 0         | true     |
 | 기타            | text       | 0         | true     |
 
-배열 프로퍼티는 JSON으로 저장합니다. `@Column() tags!: string[]`는 `json` 컬럼이 됩니다. 이 컬럼은 MySQL과 PostgreSQL에서 `JSON`으로 생성되고 SQLite에서 `TEXT`로 생성됩니다. 값은 실제 배열 그대로 저장되고 조회됩니다. tsc는 배열과 튜플 타입에만 `Array`를 내보냅니다. 그래서 배열이 아닌 타입이 `json`으로 추론되는 일은 없습니다.
+배열 속성은 JSON으로 저장합니다. `@Column() tags!: string[]`는 `json` 컬럼이 됩니다. 이 컬럼은 MySQL과 PostgreSQL에서 `JSON`으로 생성되고 SQLite에서 `TEXT`로 생성됩니다. 값은 실제 배열 그대로 저장되고 조회됩니다. tsc는 배열과 튜플 타입에만 `Array`를 내보냅니다. 그래서 배열이 아닌 타입이 `json`으로 추론되는 일은 없습니다.
 
-예외는 `transformer`에 `to()`가 있는 배열 프로퍼티뿐입니다. 이때는 `["a", "b"]` -> `"a,b"`처럼 쓰기 트랜스포머가 저장 형태를 결정합니다. 그래서 컬럼은 `text`로 남고 데코레이터가 `type`을 명시하라는 경고를 남깁니다. 반면 읽기 전용 변환은 저장 형태를 결정하지 않습니다. `transformer.from`만 있거나 deprecated인 `transform`을 쓴 경우가 여기에 해당합니다. 이 경우에는 다른 배열 프로퍼티와 똑같이 `json` 컬럼이 됩니다. 쓸 때는 ORM이 배열을 직렬화하고 읽을 때는 `from`이 그 JSON 텍스트를 받습니다. 예전 저장 형태가 필요하다면 `@Column({ type: "text" })`를 명시하세요.
+예외는 `transformer`에 `to()`가 있는 배열 속성뿐입니다. 이때는 `["a", "b"]` -> `"a,b"`처럼 쓰기 트랜스포머가 저장 형태를 결정합니다. 그래서 컬럼은 `text`로 남고 데코레이터가 `type`을 명시하라는 경고를 남깁니다. 반면 읽기 전용 변환은 저장 형태를 결정하지 않습니다. `transformer.from`만 있거나 deprecated인 `transform`을 쓴 경우가 여기에 해당합니다. 이 경우에는 다른 배열 속성과 똑같이 `json` 컬럼이 됩니다. 쓸 때는 ORM이 배열을 직렬화하고 읽을 때는 `from`이 그 JSON 텍스트를 받습니다. 예전 저장 형태가 필요하다면 `@Column({ type: "text" })`를 명시하세요.
 
 `Object`는 정반대입니다. `Object`는 "이 값이 객체다"가 아니라 "tsc가 타입을 알려 주지 못했다"는 뜻입니다. `strictNullChecks`가 켜져 있으면 `string | null`, `Date | null`, `number | undefined` 같은 유니온이 모두 `Object`로 지워집니다. 트랜스파일 전용 빌드에서는 다른 모듈에서 import한 enum도 `Object`가 됩니다. 그래서 이 경우에는 `text` 폴백과 경고가 그대로 유지됩니다. 이럴 때는 `type`을 직접 적어 주세요. 객체 값이라면 `@Column({ type: "json" })`을 쓰고 nullable 스칼라라면 `@Column({ type: "varchar" })` / `"int"` / `"datetime"`을 쓰면 됩니다.
 
 ::: warning 업그레이드 시 DDL 드리프트
 MySQL이나 PostgreSQL에서 이미 운영 중인 `@Column() tags!: string[]`는 데이터베이스에 `TEXT` 컬럼으로 있습니다. 하지만 이제는 `json`과 비교되어 diff가 잡힙니다. `synchronize: true`는 `ALTER ... TYPE JSON`을 시도합니다. PostgreSQL은 `USING` 절 없이는 이 변경을 거부합니다. MySQL은 JSON이 아닌 텍스트 행이 하나라도 있으면 실패합니다. 현재 컬럼을 유지하려면 `@Column({ type: "text" })`를 붙이세요. 아니면 데이터와 컬럼 타입을 계획해서 함께 마이그레이션하세요. SQLite는 두 타입 모두 `TEXT`이므로 영향이 없습니다.
 
-인덱스도 컬럼을 따라갑니다. 타입을 지정하지 않은 배열 프로퍼티에 붙인 `@Index()`나 `@UniqueIndex(["tags"])`는 이제 `json` 컬럼을 대상으로 합니다. 그런데 PostgreSQL에는 `json`용 기본 btree 연산자 클래스가 없습니다. 그래서 `CREATE INDEX ... ON "post" ("tags")`가 `data type json has no default operator class for access method "btree"` 에러로 실패합니다. 업그레이드한 데이터베이스뿐 아니라 새로 만든 데이터베이스에서도 마찬가지입니다. 기본값인 `continueOnError: true`에서는 synchronize가 경고로 보고하고 인덱스를 생성하지 않습니다. `continueOnError: false`에서는 부팅이 멈춥니다. 인덱스를 건 배열 프로퍼티에는 `@Column({ type: "text" })`를 명시하거나 표현식 인덱스를 쓰세요.
+인덱스도 컬럼을 따라갑니다. 타입을 지정하지 않은 배열 속성에 붙인 `@Index()`나 `@UniqueIndex(["tags"])`는 이제 `json` 컬럼을 대상으로 합니다. 그런데 PostgreSQL에는 `json`용 기본 btree 연산자 클래스가 없습니다. 그래서 `CREATE INDEX ... ON "post" ("tags")`가 `data type json has no default operator class for access method "btree"` 에러로 실패합니다. 업그레이드한 데이터베이스뿐 아니라 새로 만든 데이터베이스에서도 마찬가지입니다. 기본값인 `continueOnError: true`에서는 synchronize가 경고로 보고하고 인덱스를 생성하지 않습니다. `continueOnError: false`에서는 부팅이 멈춥니다. 인덱스를 건 배열 속성에는 `@Column({ type: "text" })`를 명시하거나 표현식 인덱스를 쓰세요.
 :::
 
 ### ColumnType별 DB 매핑
@@ -1645,9 +1645,9 @@ MySQL이나 SQLite에 이전 버전이 기록한 행이 남아 있다면 그 값
 
 `precision`과 `scale`은 `decimal`에만 적용됩니다. `double`에 선언하면 `register()`(그리고 `migrate:generate`)에서 `INVALID_CONFIG`로 실패합니다.
 
-PostgreSQL과 mysql2는 `decimal`을 문자열로 반환하고 SQLite는 number로 반환합니다. 엔티티 프로퍼티에 담을 타입은 `decimalMode`로 결정합니다. 어느 드라이버에서나 같은 타입이 나옵니다.
+PostgreSQL과 mysql2는 `decimal`을 문자열로 반환하고 SQLite는 number로 반환합니다. 엔티티 속성에 담을 타입은 `decimalMode`로 결정합니다. 어느 드라이버에서나 같은 타입이 나옵니다.
 
-| `decimalMode` | 프로퍼티 타입 | JS number가 정확히 담지 못하는 값 |
+| `decimalMode` | 속성 타입 | JS number가 정확히 담지 못하는 값 |
 |---------------|---------------|-----------------------------------|
 | `"number"` (기본값) | `number` | 반올림하지 않고 `DECIMAL_PRECISION_LOSS` 코드의 `OrmError`를 던짐 |
 | `"string"` | `string` (10진수 문자열) | 정확함 |
@@ -1679,9 +1679,9 @@ SQLite에는 정확한 십진수 저장 방식이 없습니다. `decimal` 컬럼
 
 ### bigint 컬럼과 `bigintMode`
 
-JS `number`는 2^53(`Number.MAX_SAFE_INTEGER`, 약 9.007e15)까지만 정수를 정확히 담습니다. 반면 데이터베이스 `BIGINT`는 2^63까지 담습니다. 드라이버는 bigint 값을 손실 없이 반환합니다. `pg`는 문자열로 반환합니다. `mysql2` / `better-sqlite3`는 값이 범위 안이면 number로 반환하고 범위를 넘으면 10진수 문자열로 반환합니다. 엔티티 프로퍼티에 담을 타입은 `bigintMode`로 결정합니다. 어느 드라이버에서나 같은 타입이 나옵니다.
+JS `number`는 2^53(`Number.MAX_SAFE_INTEGER`, 약 9.007e15)까지만 정수를 정확히 담습니다. 반면 데이터베이스 `BIGINT`는 2^63까지 담습니다. 드라이버는 bigint 값을 손실 없이 반환합니다. `pg`는 문자열로 반환합니다. `mysql2` / `better-sqlite3`는 값이 범위 안이면 number로 반환하고 범위를 넘으면 10진수 문자열로 반환합니다. 엔티티 속성에 담을 타입은 `bigintMode`로 결정합니다. 어느 드라이버에서나 같은 타입이 나옵니다.
 
-| `bigintMode` | 프로퍼티 타입 | ±2^53 초과 시 |
+| `bigintMode` | 속성 타입 | ±2^53 초과 시 |
 |--------------|---------------|---------------|
 | `"number"` (기본값) | `number` | 반올림하지 않고 `BIGINT_PRECISION_LOSS` 코드의 `OrmError`를 던짐 |
 | `"string"` | `string` (10진수 문자열) | 무손실, JSON 직렬화 안전 |
@@ -1700,7 +1700,7 @@ export class Account {
   snowflakeId!: bigint; // 9007199254740993n
 
   @Column()
-  version!: bigint; // 프로퍼티 타입이 `bigint`면 type: "bigint" + bigintMode: "bigint"로 추론
+  version!: bigint; // 속성 타입이 `bigint`면 type: "bigint" + bigintMode: "bigint"로 추론
 }
 ```
 
@@ -1714,13 +1714,13 @@ SQLite에서는 bigint 컬럼을 `BIGINT`로 선언합니다. 커넥터가 어�
 
 | 옵션            | 타입           | 설명                                           |
 | --------------- | -------------- | ---------------------------------------------- |
-| `name`          | `string`       | DB 컬럼 이름 (기본값: 프로퍼티 이름)           |
+| `name`          | `string`       | DB 컬럼 이름 (기본값: 속성 이름)           |
 | `type`          | `ColumnType`   | 컬럼 타입 (생략 시 자동 추론)                  |
 | `length`        | `number`       | 컬럼 길이                                      |
 | `nullable`      | `boolean`      | NULL 허용 (기본값: false)                      |
 | `primary`       | `boolean`      | 기본 키 여부                                   |
 | `autoIncrement` | `boolean`      | AUTO_INCREMENT 적용 여부                       |
-| `default`       | `unknown`      | 컬럼 기본값 (리터럴 또는 괄호로 감싼 원시 SQL) |
+| `default`       | `unknown`      | 컬럼 기본값 (리터럴 또는 괄호로 감싼 raw SQL) |
 | `transform`     | `(raw) => any` | (deprecated) 읽기 전용 값 변환 함수            |
 | `transformer`   | `{ to, from }` | 양방향 값 트랜스포머 (쓰기와 읽기)             |
 | `precision`     | `number`       | `type: "decimal"` 컬럼의 전체 자릿수 (기본값 10) |
@@ -1936,7 +1936,7 @@ class BankTransferPayment extends Payment {
   bankCode!: string;
 }
 
-// 루트 엔티티: 전략 + discriminator 컬럼 정의
+// 루트 엔티티: 전략 + 구분 컬럼(discriminator column) 정의
 new EntitySchema<Payment>({
   target: Payment,
   inheritance: { strategy: "SINGLE_TABLE" },
@@ -1947,7 +1947,7 @@ new EntitySchema<Payment>({
   },
 });
 
-// 자식 엔티티: 고유 컬럼 + discriminator 값만 정의
+// 자식 엔티티: 자체 컬럼 + 구분 값만 정의
 new EntitySchema<CreditCardPayment>({
   target: CreditCardPayment,
   discriminatorValue: "credit_card",
