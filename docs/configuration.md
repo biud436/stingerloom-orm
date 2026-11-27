@@ -98,7 +98,7 @@ When you add a new `@Column()` to an entity or create a brand new entity class, 
 | Value | Behavior | When to use |
 |-------|----------|-------------|
 | `false` | **No sync** (default) -- schema is never modified | Production. You control the schema through migrations. |
-| `true` | **Full sync** -- creates, alters, and drops tables/columns to match entities | Development only. If you remove a column from an entity, the database column and all its data are dropped. |
+| `true` | **Full sync** -- creates tables, and adds, alters and drops columns to match entities | Development only. If you remove a column from an entity, the database column and all its data are dropped. |
 | `"safe"` | **Safe sync** -- creates new tables and adds new columns; never alters, drops, or renames | Staging. New things appear, old things are left alone. No data loss. |
 | `"dry-run"` | **Dry run** -- logs the DDL that would be executed, without running it | Pre-deployment review. You see exactly what SQL would change your schema. |
 
