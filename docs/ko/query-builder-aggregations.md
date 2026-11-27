@@ -1,10 +1,10 @@
 # Query Builder — 집계 & 서브쿼리
 
-GROUP BY, HAVING, 서브쿼리, DISTINCT는 `find()`가 표현력을 잃기 시작하는 지점입니다. 쿼리 빌더가 힘을 발휘하는 구간이죠. 이 페이지는 그 전부를 MySQL / PostgreSQL / SQLite에서 똑같이 동작하는 예제로 풀어봅니다.
+GROUP BY, HAVING, 서브쿼리, DISTINCT부터는 `find()`로 표현하기 어렵습니다. 이런 쿼리에서 쿼리 빌더가 힘을 발휘합니다. 아래 예제는 모두 MySQL / PostgreSQL / SQLite에서 똑같이 동작합니다.
 
 ## GROUP BY와 집계
 
-카테고리별 게시글 수를 세고, **게시글이 5개 이상인 카테고리만 남긴다**고 해 봅시다. 요구 하나에 GROUP BY와 집계 함수와 HAVING이 전부 들어와요. 여기서 `qAlias()`가 특히 빛을 발합니다 — 같은 집계 표현식을 SELECT와 HAVING에 한 번씩만 적으면 되거든요.
+카테고리별 게시글 수를 세고 게시글이 5개 이상인 카테고리만 남긴다고 해 봅시다. 이 요구 하나에 GROUP BY, 집계 함수, HAVING이 모두 들어갑니다. 여기서 `qAlias()`가 특히 유용합니다. 집계 표현식을 한 번만 정의하면 SELECT와 HAVING에서 다시 쓸 수 있기 때문입니다.
 
 ```typescript
 import { qAlias } from "@stingerloom/orm";
@@ -23,7 +23,7 @@ const stats = await em
 // [{ category: "tech", postCount: 42 }, { category: "life", postCount: 17 }, ...]
 ```
 
-같은 쿼리를 raw `sql` 템플릿으로 쓴다면 어떨까요? `COUNT(*)`를 세 번 적게 됩니다.
+같은 쿼리를 raw `sql` 템플릿으로 쓰면 `COUNT(*)`를 세 번 적어야 합니다.
 
 ```typescript
 import sql from "sql-template-tag";
@@ -37,17 +37,17 @@ await em.createQueryBuilder(Post, "p")
   .getRawMany();
 ```
 
-`addOrderBy("postCount", "DESC")`는 키를 FROM 별칭으로 한정해서 `"p"."postCount"`가 됩니다. SELECT 리스트에만 존재하는 별칭이라 DB가 거부하죠. SELECT 별칭으로 정렬하려면 `appendSql(sql\`ORDER BY "alias" ...\`)`로 한 단계 내려갑니다 — 별칭이 그대로 살아남습니다.
+`addOrderBy("postCount", "DESC")`는 키를 FROM 별칭으로 한정합니다. 그래서 `"p"."postCount"`가 됩니다. `postCount`는 SELECT 목록에만 있는 별칭이므로 데이터베이스가 이 참조를 거부합니다. SELECT 별칭으로 정렬하려면 한 단계 낮은 `appendSql(sql\`ORDER BY "alias" ...\`)`를 쓰세요. 이때는 한정하지 않으므로 별칭이 그대로 남습니다.
 
-둘 다 지원하긴 합니다. 다만 동일한 집계를 여러 자리에서 쓴다면 `qAlias()` 쪽이 유리해요. 기준을 바꿀 때 한 군데만 고치면 되니까요. `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.countDistinct()` 전부 같은 방식으로 쓰고, 전체 연산자는 [QueryDSL 집계](./query-builder-querydsl.md#집계-—-count-sum-avg-min-max)에 정리돼 있습니다.
+두 방식을 모두 지원합니다. 다만 같은 집계를 여러 자리에서 쓴다면 `qAlias()` 쪽이 유리합니다. 기준을 바꿀 때 한 군데만 고치면 되기 때문입니다. `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.countDistinct()`는 모두 같은 방식으로 씁니다. 전체 연산자는 [QueryDSL 집계](./query-builder-querydsl.md#집계-—-count-sum-avg-min-max)에 있습니다.
 
 ### 그룹 수 세기
 
-그룹화된 빌더에서 `getCount()`는 `HAVING`을 통과한 **그룹의 개수**를 돌려줍니다. 어느 한 그룹의 크기가 아니에요. `paginate()`와 `getManyAndCount()`의 `total`이 그룹 행과 맞아떨어지는 것도 이 규칙 덕분입니다. 그룹별 크기는 위처럼 집계를 투영한 뒤 `getRawMany()`로 읽으세요. 자세한 내용은 [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-는-그룹-수를-셉니다)를 참고하세요.
+그룹화된 빌더에서 `getCount()`는 `HAVING`을 통과한 그룹의 개수를 반환합니다. 어느 한 그룹의 크기가 아닙니다. `paginate()`와 `getManyAndCount()`의 `total`이 그룹 행 수와 맞는 것도 이 규칙 덕분입니다. 그룹별 크기는 위처럼 집계를 투영한 뒤 `getRawMany()`로 조회하세요. 자세한 내용은 [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-는-그룹-수를-셉니다)를 참고하세요.
 
 ### 표현식으로 그룹화하기
 
-`groupBy()`의 문자열 항목은 컬럼 참조 아니면 표현식으로 해석됩니다. `prop`이나 `alias.prop` 형태의 맨 이름은 컬럼 참조예요. NamingStrategy와 `@Column({ name })`을 거쳐 실제 컬럼명으로 바뀌고 별칭과 함께 인용됩니다. 그 별칭의 컬럼명이나 속성명과 정확히 같은 문자열도 어떤 문자가 들어 있든 컬럼 참조로 봅니다. `groupBy(["first-name"])`은 `first - name`이 아니라 `"p"."first-name"`이 됩니다. 그 밖에 함수 호출, 연산자, 공백처럼 SQL 문법이 섞여 있으면 표현식으로 보고 그대로 내보냅니다.
+`groupBy()`의 문자열 항목은 컬럼 참조나 표현식으로 해석됩니다. `prop`이나 `alias.prop` 형태의 맨 이름은 컬럼 참조입니다. 컬럼 참조는 NamingStrategy와 `@Column({ name })`에 따라 실제 컬럼 이름으로 바뀌고 별칭과 함께 인용됩니다. 그 별칭의 컬럼 이름이나 속성 이름과 정확히 같은 문자열도 어떤 문자가 들어 있든 컬럼 참조로 봅니다. 그래서 `groupBy(["first-name"])`은 `first - name`이 아니라 `"p"."first-name"`이 됩니다. 그 밖에 함수 호출, 연산자, 공백처럼 SQL 문법이 섞여 있으면 표현식으로 보고 그대로 렌더링합니다.
 
 ```typescript
 const byCategory = await em
@@ -59,9 +59,9 @@ const byCategory = await em
 // [{ category: "LIFE", postCount: 17 }, { category: "TECH", postCount: 42 }, ...]
 ```
 
-이 규칙은 빌더의 문자열 자리 전부에 똑같이 적용됩니다 — `selectRaw()`, `addSelect()`, `groupBy()`, `addOrderBy()`, 그리고 윈도우 `partitionBy()`까지. 같은 토큰은 어디에 두든 같은 SQL이 되죠. "그대로 내보낸다"에는 두 가지 함의가 있습니다.
+이 규칙은 `selectRaw()`, `addSelect()`, `groupBy()`, `addOrderBy()`, 윈도 함수의 `partitionBy()`까지 빌더에서 문자열을 받는 모든 자리에 똑같이 적용됩니다. 그래서 같은 토큰은 어디에 두든 같은 SQL이 됩니다. 표현식을 그대로 렌더링하면 두 가지 결과가 따릅니다.
 
-- **표현식 문자열은 DB 컬럼명을 씁니다.** 위의 `category`는 컬럼명이지 속성명이 아니에요. 표현식 안쪽은 아무것도 매핑하거나 인용하지 않고, 방언에도 묶입니다. 속성명을 인식하면서 방언까지 넘나드는 형태가 필요하면 QueryDSL을 쓰세요. `p.category.toUpperCase()`, `Expressions.dateTrunc(p.createdAt, "month")`처럼 속성을 해석하고, 파라미터를 바인딩하고, 방언별로 렌더링합니다.
+- **표현식 문자열은 데이터베이스 컬럼 이름을 씁니다.** 위의 `category`는 속성 이름이 아니라 컬럼 이름입니다. 표현식 안쪽은 아무것도 매핑되거나 인용되지 않습니다. 그리고 표현식은 특정 다이얼렉트에 묶입니다. 속성 이름을 인식하고 다이얼렉트에 상관없이 동작하는 형태가 필요하면 `p.category.toUpperCase()`, `Expressions.dateTrunc(p.createdAt, "month")` 같은 QueryDSL을 쓰세요. QueryDSL은 속성을 해석하고 파라미터를 바인딩합니다. 그리고 다이얼렉트별로 SQL을 렌더링합니다.
 
   ```typescript
   const p = qAlias(Post, "p");
@@ -75,13 +75,13 @@ const byCategory = await em
     .getRawMany();
   ```
 
-- **표현식 문자열은 raw SQL입니다.** 코드에 리터럴로 적으세요. 요청 입력으로 조립하면 안 됩니다. 값은 바인딩 파라미터로 넘깁니다: `groupBy([sql\`ROUND(price / ${100})\`])`. 어떤 컬럼도 가리키지 않는 문자열은 SQL로 나가므로, 요청에서 받은 정렬·그룹 키를 그대로 `addOrderBy()` / `groupBy()`에 넘기면 안 됩니다. 허용한 컬럼 목록과 대조하거나, 키를 항상 컬럼으로 인용하는 `orderBy({ [key]: dir })`를 쓰세요.
+- **표현식 문자열은 raw SQL입니다.** 코드에 리터럴로 적으세요. 요청 입력으로 조립하면 안 됩니다. 값은 `groupBy([sql\`ROUND(price / ${100})\`])`처럼 바인딩 파라미터로 넘깁니다. 어떤 컬럼도 가리키지 않는 문자열은 SQL에 그대로 들어갑니다. 그래서 요청에서 받은 정렬 키나 그룹 키를 그대로 `addOrderBy()` / `groupBy()`에 넘기면 안 됩니다. 허용한 컬럼 목록과 대조하거나 키를 항상 컬럼으로 인용하는 `orderBy({ [key]: dir })`를 쓰세요.
 
-맨 이름은 언제나 컬럼 참조입니다. `selectRaw(["... AS month"])` 뒤에 `groupBy(["month"])`를 쓰면 `"p"."month"`가 되어 DB가 거부해요. SELECT 별칭으로 그룹화하려면 `sql` 조각을 넘기세요 — `groupBy([sql\`month\`])`. 위 `addOrderBy("postCount", ...)` 설명과 같은 이치입니다. 빈 문자열 항목은 SQL을 만들기 전에 `INVALID_QUERY`로 거부됩니다.
+맨 이름은 언제나 컬럼 참조입니다. 그래서 `selectRaw(["... AS month"])` 뒤에 `groupBy(["month"])`를 쓰면 `"p"."month"`가 되고 데이터베이스가 거부합니다. SELECT 별칭으로 그룹화하려면 `groupBy([sql\`month\`])`처럼 `sql` 조각을 넘기세요. 위 `addOrderBy("postCount", ...)` 설명과 같은 이치입니다. 빈 문자열 항목을 넘기면 SQL을 만들기 전에 `INVALID_QUERY` 에러를 던집니다.
 
 ### SELECT에서 집계 함수 바로 쓰기
 
-`addSelect()`에 `sql` 템플릿 리터럴을 넘기면 집계 컬럼을 추가할 수 있습니다. 두 번째 인자 별칭이 결과 객체의 키가 돼요.
+`addSelect()`에 `sql` 템플릿 리터럴을 넘기면 집계 컬럼을 추가할 수 있습니다. 두 번째 인자로 넘긴 별칭이 결과 객체의 키가 됩니다.
 
 ```typescript
 import sql from "sql-template-tag";
@@ -112,7 +112,7 @@ const salesByCategory = await em
 // [{ category: "electronics", avgPrice: 299.99, productCount: 15 }, ...]
 ```
 
-엔티티 인식 조인까지 얹으면 테이블을 넘나드는 집계도 자연스럽게 됩니다.
+엔티티 인식 조인을 함께 쓰면 여러 테이블에 걸쳐 집계할 수 있습니다.
 
 ```typescript
 const p = qAlias(Post, "p");
@@ -135,10 +135,10 @@ const authorStats = await em
 
 ### 표현식 빌더 addSelect()
 
-`addSelect()`는 콜백도 받습니다. 콜백은 `@ComputedColumn({ expression })`과 동일한, 다이얼렉트 이식성이 보장되는 `e` 컨텍스트를 받아요 — `e.col("alias.prop")`, `e.iff(...)`, `e.count()` / `e.sum()` / `e.avg()` / `e.min()` / `e.max()`, 그리고 `ScalarExpression`의 전체 산술 체인(`add` / `sub` / `mul` / `div` / `floor` / …)까지. raw SQL 없이도 어느 다이얼렉트에서든 올바른 SQL이 렌더링됩니다.
+`addSelect()`는 콜백도 받습니다. 콜백은 `@ComputedColumn({ expression })`과 같은 `e` 컨텍스트를 받습니다. 이 컨텍스트는 어느 다이얼렉트에서든 동작합니다. `e.col("alias.prop")`, `e.iff(...)`, `e.count()` / `e.sum()` / `e.avg()` / `e.min()` / `e.max()`를 쓸 수 있습니다. `ScalarExpression`의 전체 산술 체인(`add` / `sub` / `mul` / `div` / `floor` / …)도 쓸 수 있습니다. raw SQL 없이도 어느 다이얼렉트에서든 올바른 SQL이 렌더링됩니다.
 
 ```typescript
-// COUNT(node.name) - 1 AS depth — raw SQL 없는 중첩 집합 깊이 계산
+// COUNT(node.name) - 1 AS depth: raw SQL 없는 중첩 집합 깊이 계산
 qb.addSelect((e) => e.count("node.name").sub(1), "depth");
 
 // (c.rgt - (c.lft + 1)) / 2 AS children
@@ -148,17 +148,17 @@ qb.addSelect(
 );
 ```
 
-스칼라 결과는 별칭 인자가 **필수**입니다 — `addSelect((e) => ..., "alias")` — 없으면 `INVALID_QUERY`를 던져요. 집계는 별칭 인자를 쓰거나 `.as("alias")`로 마무리하면 됩니다.
+스칼라 결과에는 `addSelect((e) => ..., "alias")`처럼 별칭 인자가 반드시 필요합니다. 별칭이 없으면 `INVALID_QUERY`를 던집니다. 집계는 별칭 인자를 쓰거나 `.as("alias")`로 마무리하면 됩니다.
 
-이 조합이 가능한 건 `AggregateExpression`이 산술을 직접 지원하게 됐기 때문입니다. `.toScalar()`가 집계를 `ScalarExpression`으로 이어 주고, `.add()` / `.sub()` / `.mul()` / `.div()`는 `.toScalar().add(...)`의 단축형이에요. 같은 표면이 `qAlias()` 집계에도 열려 있으니 `p.id.count().sub(1)`도 그대로 동작합니다.
+이렇게 조합할 수 있는 이유는 `AggregateExpression`이 산술을 직접 지원하기 때문입니다. `.toScalar()`는 집계를 `ScalarExpression`으로 바꿉니다. 그리고 `.add()` / `.sub()` / `.mul()` / `.div()`는 `.toScalar().add(...)` 같은 호출의 단축형입니다. `qAlias()` 집계에도 같은 메서드가 있습니다. 그래서 `p.id.count().sub(1)`도 그대로 동작합니다.
 
 ## 서브쿼리
 
-쿼리 빌더는 WHERE, SELECT, FROM 어느 자리에든 서브쿼리를 넣을 수 있습니다. `find()`로는 불가능한 영역이지만, 빌더에서는 간단해요.
+쿼리 빌더에서는 WHERE, SELECT, FROM 어느 자리에든 서브쿼리를 넣을 수 있습니다. `find()`로는 서브쿼리를 표현할 수 없습니다. 하지만 쿼리 빌더에서는 간단합니다.
 
 ### WHERE IN 서브쿼리
 
-타입드 단축은 `whereInSubquery(column, subBuilder)`입니다 — [패턴 & 생산성](./query-builder-patterns.md#whereinsubquery-wherenotinsubquery)에서 사용 예제를 확인하세요. 서브쿼리가 `SelectQueryBuilder`로 표현되지 않을 때(예: raw 소스에서 이미 `Sql` 조각을 받은 경우)에만 `Conditions.inSubquery()`로 내려갑니다.
+타입 있는 단축 메서드는 `whereInSubquery(column, subBuilder)`입니다. 사용 예제는 [패턴 & 생산성](./query-builder-patterns.md#whereinsubquery-wherenotinsubquery)에 있습니다. `Conditions.inSubquery()`는 서브쿼리를 `SelectQueryBuilder`로 표현할 수 없을 때만 쓰세요. raw 소스에서 이미 `Sql` 조각을 받은 경우가 그 예입니다.
 
 ```typescript
 import sql from "sql-template-tag";
@@ -191,7 +191,7 @@ const authors = await em
 
 ### SELECT 절의 스칼라 서브쿼리
 
-`addSelect()`로 계산 컬럼처럼 스칼라 서브쿼리를 얹을 수 있습니다.
+`addSelect()`로 스칼라 서브쿼리를 계산 컬럼처럼 추가할 수 있습니다.
 
 ```typescript
 const authors = await em
@@ -207,7 +207,7 @@ const authors = await em
 
 ### FROM 서브쿼리 (파생 테이블)
 
-`asSubquery()`로 `SelectQueryBuilder`를 파생 테이블로 바꾸고, `RawQueryBuilder`에서 이 파생 테이블을 쿼리합니다.
+`asSubquery()`로 `SelectQueryBuilder`를 파생 테이블로 바꿉니다. 그리고 `RawQueryBuilder`에서 이 파생 테이블을 쿼리합니다.
 
 ```typescript
 // 1단계: 안쪽 쿼리
@@ -251,21 +251,21 @@ const results = await em.query(
 );
 ```
 
-재귀 CTE — 댓글 스레드나 조직도 같은 계층 데이터 — 가 필요하면 [Raw SQL & CTE](./raw-sql.md)를 참고하세요.
+댓글 스레드나 조직도 같은 계층 데이터에 재귀 CTE가 필요하면 [Raw SQL & CTE](./raw-sql.md)를 참고하세요.
 
 ### `SelectQueryBuilder`를 안는 상위 헬퍼
 
-서브쿼리 자체가 `SelectQueryBuilder`라면 타입드 헬퍼 쪽이 편합니다. 파라미터 바인딩이 그대로 유지되고, 안쪽 쿼리에도 자동완성이 돼요.
+서브쿼리 자체가 `SelectQueryBuilder`라면 타입 있는 헬퍼를 쓰는 편이 낫습니다. 파라미터 바인딩이 그대로 유지되고 안쪽 쿼리에서도 자동완성이 됩니다.
 
 - `whereInSubquery(column, subQb)` / `whereNotInSubquery(...)`
 - `whereExistsSubquery(subQb)` / `whereNotExistsSubquery(...)`
 - `addSelectSubquery(subQb, alias)`
 
-전체 세트는 [편의 패턴](./query-builder-patterns.md#서브쿼리-통합)에서 다룹니다.
+전체 목록은 [편의 패턴](./query-builder-patterns.md#서브쿼리-통합)에 있습니다.
 
 ## 스칼라 집계 터미널
 
-쿼리의 WHERE / JOIN 범위 안에서 단일 집계 값이 필요할 때, `getSum()`, `getAvg()`, `getMin()`, `getMax()` 터미널 메서드를 쓰면 `addSelect(sql\`SUM(...)\`, "s").getRawOne()` 블록을 직접 작성하지 않아도 됩니다. 빌더의 FROM / JOIN / WHERE / soft-delete / 테넌트 범위를 그대로 재사용하며, 이미 설정된 LIMIT / OFFSET / ORDER BY는 무시합니다.
+쿼리의 WHERE / JOIN 범위 안에서 집계 값 하나가 필요할 때는 `getSum()`, `getAvg()`, `getMin()`, `getMax()` 터미널 메서드를 쓰세요. 그러면 `addSelect(sql\`SUM(...)\`, "s").getRawOne()` 블록을 직접 작성하지 않아도 됩니다. 이 메서드들은 빌더의 FROM / JOIN / WHERE / 소프트 삭제 / 테넌트 범위를 그대로 재사용합니다. 그리고 이미 설정된 LIMIT / OFFSET / ORDER BY는 무시합니다.
 
 ```typescript
 const qb = em
@@ -280,22 +280,22 @@ const lowest  = await qb.getMin("amount");   // MIN(o.amount)
 const highest = await qb.getMax("amount");   // MAX(o.amount)
 ```
 
-네 메서드 모두 `Promise<number>`를 반환합니다. 매칭 행이 없거나 해당 컬럼이 모두 `NULL`인 경우 결과는 `0`으로 변환됩니다. `EntityManager.sum()` / `avg()` / `min()` / `max()`와 동일한 동작이에요.
+네 메서드는 모두 `Promise<number>`를 반환합니다. 매칭되는 행이 없거나 매칭된 행의 컬럼 값이 모두 `NULL`이면 결과는 `0`으로 변환됩니다. `EntityManager.sum()` / `avg()` / `min()` / `max()`와 같은 동작입니다.
 
-`column` 인자는 루트 엔티티의 camelCase 프로퍼티 이름으로 제한된 `ColumnOf<T>` 타입이라 오타는 컴파일 에러로 잡힙니다.
+`column` 인자의 타입은 `ColumnOf<T>`입니다. 이 타입은 루트 엔티티의 camelCase 속성 이름으로 제한됩니다. 그래서 오타는 컴파일할 때 에러로 잡힙니다.
 
 | 메서드 | SQL | 반환 |
 |--------|-----|------|
-| `getSum(column)` | `SELECT SUM(col) FROM ...` | `Promise<number>` — 빈 결과 시 0 |
-| `getAvg(column)` | `SELECT AVG(col) FROM ...` | `Promise<number>` — 빈 결과 시 0 |
-| `getMin(column)` | `SELECT MIN(col) FROM ...` | `Promise<number>` — 빈 결과 시 0 |
-| `getMax(column)` | `SELECT MAX(col) FROM ...` | `Promise<number>` — 빈 결과 시 0 |
+| `getSum(column)` | `SELECT SUM(col) FROM ...` | `Promise<number>`, 빈 결과면 0 |
+| `getAvg(column)` | `SELECT AVG(col) FROM ...` | `Promise<number>`, 빈 결과면 0 |
+| `getMin(column)` | `SELECT MIN(col) FROM ...` | `Promise<number>`, 빈 결과면 0 |
+| `getMax(column)` | `SELECT MAX(col) FROM ...` | `Promise<number>`, 빈 결과면 0 |
 
-추가 GROUP BY 없이 동일 범위에서 여러 집계 스칼라가 필요할 때 `getCount()`와 함께 자연스럽게 조합할 수 있습니다.
+GROUP BY를 따로 쓰지 않고 같은 범위에서 집계 값이 여러 개 필요하면 `getCount()`와 함께 쓰세요.
 
 ## DISTINCT
 
-중복 없는 행만 받고 싶을 때는 DISTINCT를 활성화합니다.
+중복 없는 행만 받으려면 DISTINCT를 켭니다.
 
 ```typescript
 const uniqueCities = await em
@@ -306,15 +306,15 @@ const uniqueCities = await em
 // SELECT DISTINCT "u"."city" FROM "user" AS "u"
 ```
 
-결과 집합에서 중복 행을 제거합니다. 선택한 컬럼의 조합이 겹치는 행이 많을 때 유용해요.
+DISTINCT는 결과 집합에서 중복 행을 제거합니다. 선택한 컬럼의 값 조합이 같은 행이 많을 때 유용합니다.
 
-집계 **내부** DISTINCT — `COUNT(DISTINCT col)` — 가 필요하면 `.count()` 대신 `.countDistinct()`를 씁니다. 두 DISTINCT는 의미가 다릅니다. 행 수준 DISTINCT는 결과 행 수 자체를 줄이고, 집계 내부 DISTINCT는 집계 대상 값의 중복만 제거합니다.
+`COUNT(DISTINCT col)`처럼 집계 안에서 DISTINCT가 필요하면 `.count()` 대신 `.countDistinct()`를 씁니다. 행 수준 DISTINCT와 집계 안의 DISTINCT는 의미가 다릅니다. 행 수준 DISTINCT는 결과 행 수 자체를 줄입니다. 반면 집계 안의 DISTINCT는 집계 대상 값의 중복만 제거합니다.
 
-`DISTINCT ON` (PostgreSQL 전용)은 [Raw SQL & CTE](./raw-sql.md)에서 다룹니다.
+PostgreSQL 전용인 `DISTINCT ON`은 [Raw SQL & CTE](./raw-sql.md)를 참고하세요.
 
 ## GROUP BY로는 부족할 때 — 윈도우 집계
 
-GROUP BY는 그룹마다 행을 하나로 눌러 버립니다. "개별 행은 그대로 두면서 팀별 누적 합계를 같이 보여달라"처럼 **원본 행을 유지한 채 집계만 얹어야 하는 경우**에는 GROUP BY가 답이 되지 못해요. 이럴 때 등장하는 게 윈도우 함수입니다.
+GROUP BY는 그룹마다 행을 하나로 합칩니다. 하지만 "개별 행은 그대로 두고 팀별 누적 합계를 함께 보여 달라"처럼 원본 행을 유지한 채 집계만 더해야 할 때가 있습니다. 이런 경우에는 GROUP BY 대신 윈도 함수를 씁니다.
 
 ```typescript
 const e = qAlias(Event, "e");
@@ -330,11 +330,11 @@ qb.select(["id", "teamId", "score"])
   .getRawMany();
 ```
 
-표현식을 `.toScalar()`로 마무리하면 WHERE / HAVING 안에 서브쿼리처럼 꽂을 수도 있습니다. API 전체와 리더보드 실전 예제는 [QueryDSL → 윈도우 함수](./query-builder-querydsl.md#윈도우-함수-—-aggregate-over-windowbuilder)에서 이어서 볼 수 있어요.
+표현식을 `.toScalar()`로 마무리하면 WHERE / HAVING 안에 서브쿼리처럼 넣을 수도 있습니다. 전체 API와 리더보드 실전 예제는 [QueryDSL → 윈도 함수](./query-builder-querydsl.md#윈도우-함수-—-aggregate-over-windowbuilder)에 있습니다.
 
 ## 다음 단계
 
-- [QueryDSL 표현식](./query-builder-querydsl.md) — 타입드 집계 / 윈도우 / CASE / 날짜 컴포넌트
-- [편의 패턴 → 서브쿼리 통합](./query-builder-patterns.md#서브쿼리-통합) — 타입드 `whereInSubquery` / `whereExistsSubquery` / `addSelectSubquery`, `whereHas` / `withCount`
-- [Raw SQL & CTE](./raw-sql.md) — UNION, 재귀 CTE
-- [Query Builder 개요](./query-builder.md) — 기본 사용법과 전체 지도
+- [QueryDSL 표현식](./query-builder-querydsl.md): 타입 있는 집계 / 윈도 함수 / CASE / 날짜 컴포넌트
+- [편의 패턴 → 서브쿼리 통합](./query-builder-patterns.md#서브쿼리-통합): 타입 있는 `whereInSubquery` / `whereExistsSubquery` / `addSelectSubquery`, `whereHas` / `withCount`
+- [Raw SQL & CTE](./raw-sql.md): UNION, 재귀 CTE
+- [Query Builder 개요](./query-builder.md): 기본 사용법과 전체 지도

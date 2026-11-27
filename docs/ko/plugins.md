@@ -2,15 +2,15 @@
 
 ## 플러그인이 필요한 이유
 
-ORM은 CRUD, 스키마 동기화, 이벤트 시스템, Unit of Work, 감사 로깅, soft delete 등 많은 관심사를 다뤄요. 이걸 전부 코어에 넣으면 쓰지 않는 기능까지 번들 크기, 메모리, 버그 표면적을 키우게 돼요.
+ORM은 CRUD, 스키마 동기화, 이벤트 시스템, Unit of Work, 감사 로깅, 소프트 삭제 등 많은 관심사를 다룹니다. 이 기능을 전부 코어에 넣으면 쓰지 않는 기능 때문에 번들 크기와 메모리 사용량이 커집니다. 버그가 생길 수 있는 범위도 넓어집니다.
 
-플러그인은 코어를 작고 핵심적으로 유지하면서, 선택적 기능은 별도 모듈로 분리해서 필요할 때만 설치할 수 있게 해줘요.
+플러그인이 이 문제를 해결합니다. 코어는 작게 유지해서 모든 애플리케이션에 필요한 기능에만 집중합니다. 선택 기능은 별도 모듈로 분리해서 필요할 때만 설치합니다.
 
-브라우저 확장 프로그램과 비슷해요. 브라우저는 페이지 렌더링, 탭 관리, 북마크 같은 필수 기능만 제공하고, 광고 차단이나 비밀번호 관리는 확장 프로그램으로 설치하죠. 필요한 것만 설치하고, 하나를 제거해도 나머지는 영향받지 않아요.
+플러그인은 브라우저 확장 프로그램과 비슷합니다. 브라우저는 페이지 렌더링, 탭 관리, 북마크 같은 필수 기능만 제공합니다. 광고 차단이나 비밀번호 관리는 확장 프로그램으로 설치합니다. 필요한 것만 설치하고 하나를 제거해도 나머지는 영향을 받지 않습니다.
 
 ## 플러그인 동작 방식 -- Lifecycle
 
-플러그인은 명확한 lifecycle을 거쳐요:
+플러그인은 다음과 같은 생명주기를 거칩니다.
 
 ```
 1. INSTALL      em.extend(myPlugin)
@@ -32,11 +32,9 @@ ORM은 CRUD, 스키마 동기화, 이벤트 시스템, Unit of Work, 감사 로�
                   -- clean up timers, connections, caches
 ```
 
-각 단계를 하나씩 살펴볼게요.
-
 ### Step 1: Install
 
-`em.extend()`에 플러그인 객체를 전달해요. Stingerloom은 같은 이름의 플러그인이 이미 설치되어 있는지 확인하고, 이미 있으면 아무 동작도 하지 않아요. 멱등성(idempotent) 설계라서 여러 번 호출해도 안전해요.
+`em.extend()`에 플러그인 객체를 전달합니다. Stingerloom은 같은 이름의 플러그인이 이미 설치되어 있는지 확인합니다. 이미 있으면 아무 동작도 하지 않습니다. `extend()`는 멱등(idempotent)하게 설계되었습니다. 그래서 여러 번 호출해도 부수 효과 없이 안전합니다.
 
 ```typescript
 import { EntityManager } from "@stingerloom/orm";
@@ -45,7 +43,7 @@ const em = new EntityManager();
 em.extend(myPlugin());
 ```
 
-`register()`의 `plugins` 배열로도 전달할 수 있어요. DB 연결이 완료된 후 자동으로 설치돼요:
+`register()`의 `plugins` 배열로도 플러그인을 전달할 수 있습니다. 이 플러그인은 데이터베이스에 연결된 뒤 자동으로 설치됩니다.
 
 ```typescript
 await em.register({
@@ -63,29 +61,29 @@ await em.register({
 
 ### Step 2: Receive Context
 
-`install()`이 호출되면 `PluginContext` 객체를 받아요. EntityManager 내부를 직접 노출하는 게 아니라, 플러그인이 사용할 수 있도록 정제된 API 표면이에요. EntityManager 내부가 변경되어도 플러그인은 안정적으로 동작해요.
+`install()`은 호출될 때 `PluginContext` 객체를 받습니다. 이 객체는 EntityManager 내부를 그대로 노출하지 않습니다. 플러그인이 쓰도록 골라 둔 기능만 제공하는 API입니다. 그래서 EntityManager 내부가 바뀌어도 플러그인은 안정적으로 동작합니다.
 
 ### Step 3: Add Methods
 
-`install()` 함수가 객체를 반환하면, 그 객체의 모든 메서드가 EntityManager 인스턴스에 믹스인돼요. 설치 후에는 `em`에서 직접 호출할 수 있어요.
+`install()` 함수는 객체를 반환할 수 있습니다. 반환한 객체의 모든 메서드는 EntityManager 인스턴스에 믹스인됩니다. 설치한 뒤에는 이 메서드를 내장 메서드처럼 `em`에서 바로 호출합니다.
 
 ### Step 4: Active Operation
 
-플러그인이 EntityManager의 일부가 됐어요. 이벤트 리스너가 동작하고, 메서드를 호출할 수 있고, 네이티브 기능처럼 동작해요.
+이제 플러그인은 EntityManager의 일부입니다. 이벤트 리스너가 동작하고 메서드를 호출할 수 있습니다. 모든 기능이 내장 기능처럼 동작합니다.
 
 ### Step 5: Shutdown
 
-`em.propagateShutdown()`이 호출되면 (예: NestJS 앱 종료 시) 플러그인은 역순으로 `shutdown()`을 받아요. 마지막에 설치된 플러그인이 가장 먼저 종료돼요. interval 정리, 소켓 닫기, 버퍼 flush 등을 여기서 해요.
+NestJS 앱이 종료될 때처럼 `em.propagateShutdown()`이 호출되면 플러그인의 `shutdown()`이 설치의 역순으로 호출됩니다. 마지막에 설치된 플러그인이 가장 먼저 종료됩니다. interval 정리, 소켓 닫기, 버퍼 flush 같은 작업은 여기서 처리합니다.
 
 ---
 
 ## 커스텀 플러그인 작성하기
 
-플러그인은 `StingerloomPlugin` 인터페이스를 구현한 객체예요: `name`, `install()` 함수, 그리고 선택적인 `shutdown()` 함수로 구성돼요.
+플러그인은 `StingerloomPlugin` 인터페이스를 구현한 객체입니다. 이 객체는 `name`, `install()` 함수, 선택 항목인 `shutdown()` 함수로 이루어집니다.
 
 ### 전체 예제: Timestamp Logger
 
-엔티티가 INSERT 또는 DELETE될 때마다 타임스탬프와 함께 로그를 기록하는 플러그인이에요.
+이 플러그인은 엔티티가 삽입되거나 삭제될 때마다 타임스탬프가 붙은 로그를 기록합니다.
 
 ```typescript
 import { StingerloomPlugin, PluginContext } from "@stingerloom/orm";
@@ -121,49 +119,49 @@ em.getLog(); // typed as string[]
 
 ### 동작 과정 추적
 
-1. `em.extend(timestampLogger)`를 호출해요.
-2. Stingerloom이 `"timestamp-logger"` 이름의 플러그인이 이미 있는지 확인해요. 없으니 진행해요.
-3. `timestampLogger.install(ctx)`를 호출하면서 PluginContext를 전달해요.
-4. `install()` 내부에서 클로저 스코프에 빈 `log` 배열을 만들어요. 이 배열은 플러그인 전용이라 외부에서 직접 접근할 수 없어요.
-5. `ctx.events`에 `"afterInsert"`와 `"afterDelete"` 두 이벤트를 구독해요. EntityManager가 INSERT나 DELETE를 완료할 때마다 콜백이 실행되면서 `log` 배열에 문자열을 추가해요.
-6. `install()`이 `{ getLog: () => [...log] }`를 반환해요. spread 연산자 `[...log]`로 복사본을 만들기 때문에 호출자가 내부 배열을 변경할 수 없어요.
-7. Stingerloom이 반환값을 `em`에 믹스인해요. 이제 `em.getLog()`를 호출할 수 있고, TypeScript도 `string[]` 반환 타입을 알아요.
-8. 나중에 `em.save(User, { name: "Alice" })`를 호출하면, EntityManager가 `"afterInsert"` 이벤트를 발생시키고, 플러그인 콜백이 `"[2026-03-22T10:00:00.000Z] INSERT User"`를 로그에 추가해요.
-9. `em.getLog()`를 호출하면 `["[2026-03-22T10:00:00.000Z] INSERT User"]`를 받아요.
-10. 앱이 종료되고 `em.propagateShutdown()`이 호출되면, `timestampLogger.shutdown()`이 실행돼요.
+1. `em.extend(timestampLogger)`를 호출합니다.
+2. Stingerloom은 `"timestamp-logger"`라는 이름의 플러그인이 이미 있는지 확인합니다. 없으므로 다음 단계로 진행합니다.
+3. Stingerloom은 PluginContext를 넘기며 `timestampLogger.install(ctx)`를 호출합니다.
+4. 플러그인은 `install()` 안에서 클로저 스코프에 빈 `log` 배열을 만듭니다. 이 배열은 플러그인 전용입니다. 그래서 외부에서는 직접 접근하지 못합니다.
+5. 플러그인은 `ctx.events`에서 `"afterInsert"`와 `"afterDelete"` 이벤트를 구독합니다. EntityManager가 엔티티를 삽입하거나 삭제할 때마다 이 콜백이 실행되고 `log` 배열에 문자열을 추가합니다.
+6. `install()`은 `{ getLog: () => [...log] }`를 반환합니다. spread 연산자 `[...log]`가 복사본을 만들기 때문에 호출하는 쪽에서는 내부 배열을 변경하지 못합니다.
+7. Stingerloom은 반환값을 `em`에 믹스인합니다. 이제 `em.getLog()`를 호출할 수 있습니다. 반환 타입도 `string[]`로 추론됩니다.
+8. 나중에 `em.save(User, { name: "Alice" })`를 호출하면 EntityManager에서 `"afterInsert"` 이벤트가 발생합니다. 그러면 플러그인 콜백이 실행되어 `"[2026-03-22T10:00:00.000Z] INSERT User"`를 로그에 추가합니다.
+9. `em.getLog()`는 `["[2026-03-22T10:00:00.000Z] INSERT User"]`를 반환합니다.
+10. 앱이 종료되면서 `em.propagateShutdown()`이 호출되면 `timestampLogger.shutdown()`이 실행됩니다.
 
 ---
 
 ## PluginContext Reference
 
-`install()` 함수가 받는 `PluginContext`는 EntityManager 내부에 대한 제어된 접근을 제공해요. 각 속성과 메서드를 언제 사용하는지 정리했어요.
+`install()` 함수가 받는 `PluginContext`는 EntityManager 내부 기능 중 허용된 부분만 노출합니다.
 
-| Property / Method | 설명 | 언제 사용하나요? |
+| Property / Method | 설명 | 사용 시점 |
 |-------------------|------|-----------------|
-| `ctx.em` | EntityManager 인스턴스 | `find()`, `save()`, `delete()` 등 EntityManager 메서드를 호출할 때. hook과 이벤트가 정상 동작하려면 raw SQL 대신 `ctx.em`을 사용해야 해요. |
-| `ctx.driver` | 현재 SQL driver (`register()` 전에는 `undefined`) | raw SQL을 실행하거나 DB별 기능을 확인할 때. `register()` 호출 전에 설치하면 undefined예요. |
-| `ctx.events` | Entity event emitter (`on`, `off`, `emit`) | 엔티티 lifecycle 이벤트에 반응할 때: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`. 가장 흔한 플러그인 패턴이에요. |
-| `ctx.connectionName` | 연결 이름 (기본값: `"default"`) | multi-database 환경에서 연결별로 다르게 동작해야 할 때. 예: audit 플러그인이 `"primary"` 연결에서만 로그를 남기는 경우. |
-| `ctx.addSubscriber(sub)` | EntitySubscriber 등록 | 클래스 기반 EntitySubscriber를 제공할 때 (`listenTo()` 필터링이 가능한 이벤트 콜백 대안). |
+| `ctx.em` | EntityManager 인스턴스 | `find()`, `save()`, `delete()` 등 EntityManager 메서드를 호출할 때. 훅과 이벤트가 정상적으로 발생하려면 raw SQL 대신 항상 `ctx.em`을 사용해야 합니다. |
+| `ctx.driver` | 현재 SQL driver (`register()` 전에는 `undefined`) | raw SQL을 실행하거나 데이터베이스별 기능을 확인할 때. `register()` 호출 전에 설치하면 `undefined`입니다. |
+| `ctx.events` | Entity event emitter (`on`, `off`, `emit`) | 엔티티 생명주기 이벤트에 반응할 때: `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`. 가장 흔한 플러그인 패턴입니다. |
+| `ctx.connectionName` | 연결 이름 (기본값: `"default"`) | 멀티 데이터베이스 환경에서 연결마다 다르게 동작해야 할 때. 예: 감사 플러그인이 `"primary"` 연결에서만 로그를 남기는 경우. |
+| `ctx.addSubscriber(sub)` | EntitySubscriber 등록 | 클래스 기반 EntitySubscriber를 제공할 때. EntitySubscriber는 `listenTo()`로 필터링할 수 있는 이벤트 콜백 대안입니다. |
 | `ctx.removeSubscriber(sub)` | EntitySubscriber 제거 | 런타임에 동적으로 구독을 해제해야 할 때. |
 | `ctx.getEntities()` | 등록된 모든 엔티티 클래스 | 스키마를 분석해야 할 때. 예: 문서 생성, 엔티티 정의 검증. |
 | `ctx.getPlugin(name)` | 다른 플러그인의 API 접근 | 다른 플러그인에 의존해서 그 메서드를 호출해야 할 때. 아래 "Plugin Dependencies" 참고. |
-| `ctx.isMySqlFamily()` | MySQL/MariaDB 드라이버인지 확인 | SQL 생성 시 backtick vs double-quote 구분이 필요할 때. |
-| `ctx.isPostgres()` | PostgreSQL 드라이버인지 확인 | PostgreSQL 전용 기능(schema, JSONB 연산자, RETURNING 절)을 사용할 때. |
-| `ctx.isSqlite()` | SQLite 드라이버인지 확인 | SQLite가 지원하지 않는 기능(ALTER COLUMN, EXPLAIN 등)을 건너뛸 때. |
-| `ctx.wrap(identifier)` | 드라이버의 quoting 방식으로 식별자를 감싸기 | SQL 문자열을 만들 때 컬럼명이나 테이블명을 안전하게 quote해야 할 때. MySQL은 backtick, PostgreSQL/SQLite는 double quote를 사용해요. |
-| `ctx.wrapTable(tableName)` | 테이블명 quote (schema prefix 포함) | `wrap()`과 같지만 schema 한정 이름을 처리해요 (예: PostgreSQL의 `"public"."user"`). |
-| `ctx.tenantPredicate(entity, alias?)` | 엔티티에 `find()`가 붙이는 테넌트 조건, 또는 `null` | `tenantStrategy: "tenant_column"`에서 플러그인이 유저 엔티티에 SELECT·UPDATE·DELETE를 직접 만들 때. WHERE 절에 AND로 붙이면 현재 테넌트의 행만 건드립니다. `find()`가 조건을 붙이지 않는 경우(다른 전략, `@NonTenantEntity()`, `runUnscoped()`, `"public"` 컨텍스트)에는 `null`이에요. 테넌트 컨텍스트가 없으면 `tenantOnMissingContext`를 먼저 적용하므로 예외가 날 수 있습니다. |
-| `ctx.executeInTransaction(fn)` | 트랜잭션 안에서 콜백 실행 | 여러 SQL 문을 원자적으로 실행해야 할 때. 성공 시 commit, 에러 시 rollback돼요. |
-| `ctx.executeReadOnly(fn)` | 읽기 전용 트랜잭션에서 콜백 실행 | 읽기만 할 때 DB에 최적화 신호를 보내고 싶을 때 (read-replica 환경에서 replica를 사용해요). |
-| `ctx.getEntityMetadata(cls)` | 엔티티 클래스의 구조적 메타데이터 | 유저 엔티티의 컬럼, 관계, PK, 인덱스, 테이블명을 검사해야 할 때 — 예를 들어 엔티티별 감사 테이블을 발행하거나 스키마 문서를 생성할 때. 등록되지 않은 클래스는 `null`을 반환해요. |
-| `ctx.registerPlaceholder(name)` | 플러그인이 추가할 메서드 이름 사전 선언 | 메서드가 실제 설치되기 *전* 에 해결 가능해야 할 때 (순환 의존, 타입 플레이스홀더 API 등). 이름을 예약하면 다른 플러그인이 덮어쓰는 것도 막아요. |
+| `ctx.isMySqlFamily()` | MySQL/MariaDB 드라이버인지 확인 | SQL을 생성하면서 백틱과 큰따옴표 인용을 구분해야 할 때. |
+| `ctx.isPostgres()` | PostgreSQL 드라이버인지 확인 | 스키마, JSONB 연산자, RETURNING 절 같은 PostgreSQL 전용 기능을 사용할 때. |
+| `ctx.isSqlite()` | SQLite 드라이버인지 확인 | ALTER COLUMN, EXPLAIN처럼 SQLite가 지원하지 않는 기능을 건너뛸 때. |
+| `ctx.wrap(identifier)` | 드라이버의 인용 방식으로 식별자 감싸기 | SQL 문자열을 만들면서 컬럼 이름이나 테이블 이름을 안전하게 인용해야 할 때. MySQL은 백틱을 쓰고 PostgreSQL과 SQLite는 큰따옴표를 씁니다. |
+| `ctx.wrapTable(tableName)` | 테이블 이름 인용 (스키마 접두사 포함) | `wrap()`과 같지만 스키마 한정 이름도 처리합니다. 예: PostgreSQL의 `"public"."user"`. |
+| `ctx.tenantPredicate(entity, alias?)` | 엔티티에 `find()`가 붙이는 테넌트 조건, 또는 `null` | `tenantStrategy: "tenant_column"`에서 플러그인이 애플리케이션 엔티티를 대상으로 SELECT·UPDATE·DELETE를 직접 만들 때. 이 조건을 WHERE 절에 AND로 붙이면 SQL 문이 현재 테넌트의 행만 건드립니다. 다른 전략, `@NonTenantEntity()`, `runUnscoped()`, `"public"` 컨텍스트처럼 `find()`가 조건을 붙이지 않는 경우에는 `null`입니다. 테넌트 컨텍스트가 없으면 `tenantOnMissingContext`를 먼저 적용하므로 에러를 던질 수 있습니다. |
+| `ctx.executeInTransaction(fn)` | 트랜잭션 안에서 콜백 실행 | 여러 SQL 문을 원자적으로 실행해야 할 때. 성공하면 커밋하고 에러가 나면 롤백합니다. |
+| `ctx.executeReadOnly(fn)` | 읽기 전용 트랜잭션에서 콜백 실행 | 데이터를 읽기만 하고 이 사실을 데이터베이스에 알려 최적화하고 싶을 때. 읽기 레플리카 환경에서는 레플리카를 사용합니다. |
+| `ctx.getEntityMetadata(cls)` | 엔티티 클래스의 구조적 메타데이터 | 애플리케이션 엔티티의 컬럼, 관계, 기본 키, 인덱스, 테이블 이름을 검사해야 할 때. 예: 엔티티별 감사 테이블을 만들거나 스키마 문서를 생성할 때. 등록되지 않은 클래스에는 `null`을 반환합니다. |
+| `ctx.registerPlaceholder(name)` | 플러그인이 추가할 메서드 이름 사전 선언 | 메서드가 실제로 설치되기 *전*에 해석할 수 있어야 할 때. 예: 순환 의존, 타입 있는 플레이스홀더 API. 이름을 예약하면 다른 플러그인이 그 이름을 덮어쓰지 못합니다. |
 
 ---
 
 ## Plugin Dependencies
 
-플러그인이 다른 플러그인의 선행 설치를 요구할 수 있어요. 의존성이 누락되면 `extend()`가 명확한 에러 메시지와 함께 즉시 throw해요.
+플러그인은 다른 플러그인이 먼저 설치되어 있어야 한다고 선언할 수 있습니다. 의존하는 플러그인이 없으면 `extend()`는 명확한 에러 메시지와 함께 즉시 에러를 던집니다.
 
 ```typescript
 const derivedPlugin: StingerloomPlugin = {
@@ -184,15 +182,15 @@ em.extend(basePlugin());
 em.extend(derivedPlugin);
 ```
 
-서로 의존하는 플러그인 패밀리를 만들 때 유용해요. 예를 들어 "soft-delete-audit" 플러그인이 "soft-delete"와 "audit" 플러그인 둘 다에 의존하는 경우요.
+이 기능은 서로 의존하는 플러그인 묶음을 만들 때 유용합니다. 예를 들어 "soft-delete-audit" 플러그인이 "soft-delete" 플러그인과 "audit" 플러그인에 모두 의존하는 경우입니다.
 
 ---
 
 ## Method Name Conflicts
 
-플러그인이 EntityManager에 이미 존재하는 메서드(예: `find`, `save`)를 추가하려 하면 `PLUGIN_CONFLICT` 에러가 발생해요. 코어 메서드를 덮어쓰면 예측할 수 없는 방식으로 ORM이 깨지기 때문에 이런 안전 장치가 있어요.
+플러그인이 `find`, `save`처럼 EntityManager에 이미 있는 메서드를 추가하려 하면 `extend()`는 `PLUGIN_CONFLICT` 에러를 던집니다. 코어 메서드를 덮어쓰면 ORM이 예측할 수 없는 방식으로 깨집니다. 이 에러는 그런 일을 막는 안전장치입니다.
 
-플러그인 API 메서드 이름은 고유하고 설명적으로 지어야 해요. 플러그인 이름을 접두사로 붙이는 게 좋은 관례예요: `getLog()` 대신 `auditGetLog()` 같은 식이에요.
+플러그인 API 메서드에는 고유하고 뜻이 분명한 이름을 붙이세요. 플러그인 이름을 접두사로 붙이는 것이 좋은 관례입니다. 예를 들어 `getLog()` 대신 `auditGetLog()`로 짓습니다.
 
 ---
 
@@ -226,19 +224,19 @@ interface StingerloomPlugin<TApi = {}> {
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
-| `extend` | `<TApi>(plugin): this & TApi` | 플러그인을 설치하고 API를 EntityManager에 믹스인해요 |
-| `hasPlugin` | `(name: string): boolean` | 이름으로 플러그인 설치 여부를 확인해요 |
-| `getPluginApi` | `<T>(name: string): T \| undefined` | 이름으로 플러그인의 API 객체를 가져와요 |
+| `extend` | `<TApi>(plugin): this & TApi` | 플러그인을 설치하고 API를 EntityManager에 믹스인 |
+| `hasPlugin` | `(name: string): boolean` | 이름으로 플러그인 설치 여부 확인 |
+| `getPluginApi` | `<T>(name: string): T \| undefined` | 이름으로 플러그인의 API 객체 조회 |
 
 ---
 
 ## 쿼리 훅 -- beforeQuery / afterQuery
 
-플러그인은 EntityManager가 실행하는 모든 SQL 쿼리를 가로챌 수 있어요. 쿼리 로깅, 성능 모니터링, 쿼리 변환 같은 횡단 관심사를 구현할 때 유용해요.
+플러그인은 EntityManager가 실행하는 모든 SQL 쿼리를 가로챌 수 있습니다. 이 기능은 쿼리 로깅, 성능 모니터링, 쿼리 변환 같은 횡단 관심사를 구현할 때 유용합니다.
 
 ### beforeQuery
 
-모든 SQL 쿼리 실행 전에 호출돼요. 실행 전에 쿼리를 검사하거나 변환할 수 있어요.
+모든 SQL 쿼리를 실행하기 전에 호출됩니다. 이 훅에서 쿼리를 검사하거나 변환할 수 있습니다.
 
 ```typescript
 const queryLogger: StingerloomPlugin = {
@@ -246,7 +244,7 @@ const queryLogger: StingerloomPlugin = {
 
   beforeQuery(query) {
     console.log(`[SQL] ${query.operation}: ${query.sql}`);
-    // 선택적으로 수정된 QueryInfo를 반환해서 쿼리를 변환할 수 있어요
+    // 수정한 QueryInfo를 반환하면 쿼리를 변환할 수 있습니다
   },
 
   afterQuery(query, result, durationMs) {
@@ -256,7 +254,7 @@ const queryLogger: StingerloomPlugin = {
   },
 
   install(ctx) {
-    // 믹스인할 메서드 없음 -- 훅은 자동으로 감지돼요
+    // 믹스인할 메서드는 없고 훅은 자동으로 감지됩니다
   },
 };
 ```
@@ -271,11 +269,11 @@ interface QueryInfo {
 }
 ```
 
-`beforeQuery`에서 수정된 `QueryInfo`를 반환하면 쿼리를 변환할 수 있어요. `afterQuery`는 결과와 실행 시간(ms)을 받아서 슬로우 쿼리 경고나 메트릭 수집에 활용할 수 있어요.
+`beforeQuery`에서 수정한 `QueryInfo`를 반환하면 쿼리를 변환할 수 있습니다. `afterQuery`는 결과와 실행 시간(ms)을 받습니다. 그래서 슬로우 쿼리 경고나 메트릭 수집에 쓸 수 있습니다.
 
 ### 트랜잭션 훅 -- beforeTransaction / afterTransaction
 
-per-query 훅 외에도 플러그인은 트랜잭션 경계를 관찰할 수 있어요. 이 훅들은 EntityManager가 여는 트랜잭션(`em.transaction()`, `ctx.executeInTransaction()`, 쓰기마다 감싸는 암묵적 트랜잭션)당 한 번씩 발생하며, 내부 statement마다 발생하지는 **않습니다**. `@Transactional` 메서드가 여는 트랜잭션은 여기에 들지 않아요. 데코레이터는 EntityManager를 알지 못하므로 플러그인에 알리지 않습니다.
+플러그인은 쿼리마다 호출되는 훅 외에 트랜잭션 경계도 관찰할 수 있습니다. 트랜잭션 훅은 EntityManager가 여는 트랜잭션마다 한 번씩 발생합니다. `em.transaction()`, `ctx.executeInTransaction()`, 쓰기마다 감싸는 암묵적 트랜잭션이 여기에 해당합니다. 트랜잭션 안의 SQL 문마다 발생하지는 않습니다. `@Transactional` 메서드가 여는 트랜잭션은 여기에 포함되지 않습니다. 데코레이터에는 EntityManager가 없으므로 플러그인에 알림이 가지 않습니다.
 
 ```typescript
 const txAudit: StingerloomPlugin = {
@@ -292,36 +290,36 @@ const txAudit: StingerloomPlugin = {
 
 | 훅 | 시그니처 | 발생 시점 |
 |---|---|---|
-| `beforeTransaction` | `(isolationLevel?: string) => void` | `BEGIN`/`START TRANSACTION` 직전. `isolationLevel`은 트랜잭션 옵션에 전달한 격리 수준(`"READ COMMITTED"` 등)이며, 지정하지 않았다면 `undefined`. |
-| `afterTransaction` | `(committed: boolean) => void` | `COMMIT`(true) 또는 `ROLLBACK`(false) 반환 후. |
+| `beforeTransaction` | `(isolationLevel?: string) => void` | `BEGIN`/`START TRANSACTION` 직전. `isolationLevel`은 트랜잭션 옵션에 전달한 격리 수준(`"READ COMMITTED"` 등)입니다. 지정하지 않았다면 `undefined`입니다. |
+| `afterTransaction` | `(committed: boolean) => void` | `COMMIT`(true) 또는 `ROLLBACK`(false)이 반환된 뒤. |
 
 ### 훅 에러 처리
 
-- `beforeQuery`는 쿼리 경로에서 **동기적으로 await** 돼요. throw하면 쿼리가 중단되고 에러가 호출자로 전파돼요.
-- `afterQuery`, `beforeTransaction`, `afterTransaction`은 **관찰 전용** 이에요. 여기서 발생한 예외는 내부적으로 catch되어 `Logger.warn()`으로 로깅돼요. 오작동하는 감사 플러그인이 트랜잭션을 죽일 수 없어요.
-- `shutdown()`은 `propagateShutdown()` 중 **역순 설치 순서** 로 실행돼요. 여기서 발생한 에러는 캡처되어 리포트되지만 다른 플러그인의 정리를 막지는 않아요.
+- `beforeQuery`는 쿼리 경로에서 동기적으로 await됩니다. `beforeQuery`가 에러를 던지면 쿼리가 중단되고 에러는 호출한 쪽으로 전파됩니다.
+- `afterQuery`, `beforeTransaction`, `afterTransaction`은 관찰 전용입니다. 여기서 던진 에러는 내부에서 catch되어 `Logger.warn()`으로 로깅됩니다. 그래서 오작동하는 감사 플러그인이 트랜잭션을 중단시키지 못합니다.
+- `shutdown()`은 `propagateShutdown()` 중에 설치의 역순으로 실행됩니다. 여기서 발생한 에러는 수집되어 보고됩니다. 하지만 다른 플러그인의 정리 작업을 막지는 않습니다.
 
-각 훅은 idempotent하게, side-effect에 관대하게 설계하세요 — 재시도 쿼리(데드락 재시도)나 ORM 내부 쿼리(스키마 introspection, 테넌트 프로비저닝)에서도 발생할 수 있어요.
+각 훅은 멱등하게 설계하고 부수 효과가 생겨도 문제없게 만드세요. 훅은 데드락 재시도로 다시 실행되는 쿼리에서도 발생할 수 있습니다. 스키마 인트로스펙션이나 테넌트 프로비저닝처럼 ORM이 내부에서 실행하는 쿼리에서도 발생할 수 있습니다.
 
 ---
 
 ## Built-in Plugins
 
-Stingerloom에는 두 개의 기본 제공 플러그인이 있습니다:
+Stingerloom에는 기본 제공 플러그인이 두 개 있습니다.
 
 | Plugin | Import | 설명 |
 |--------|--------|------|
-| **Buffer (UoW)** | `bufferPlugin()` | Unit of Work -- 엔티티 변경사항을 메모리에 추적하고 단일 원자적 트랜잭션으로 flush합니다. Identity Map, dirty checking, cascade, pessimistic locking 등을 지원합니다. |
-| **Raw Pipeline** | `rawPipelinePlugin()` | 대규모 데이터 처리 시 Entity 변환을 우회합니다. 데이터베이스 드라이버에서 raw 행이나 바이너리 버퍼를 배치 페이지네이션과 변환 체이닝으로 직접 스트리밍합니다. 100K 행 기준 `em.find()`보다 4.4배 빠릅니다. |
+| **Buffer (UoW)** | `bufferPlugin()` | Unit of Work: 엔티티 변경 사항을 메모리에서 추적하고 원자적 트랜잭션 하나로 flush합니다. Identity Map, 변경 추적, cascade, 비관적 잠금 등을 지원합니다. |
+| **Raw Pipeline** | `rawPipelinePlugin()` | 대규모 데이터를 처리할 때 엔티티 변환을 우회합니다. 데이터베이스 드라이버에서 raw 행이나 바이너리 버퍼를 직접 스트리밍합니다. 배치 페이지네이션과 변환 체이닝을 지원합니다. 100K 행 기준으로 `em.find()`보다 4.4배 빠릅니다. |
 
-자세한 내용은 전용 가이드를 참고하세요:
-- **[WriteBuffer (Unit of Work)](./write-buffer.md)**
-- **[Raw Pipeline](./raw-pipeline.md)**
+자세한 내용은 전용 가이드를 참고하세요.
+- [WriteBuffer (Unit of Work)](./write-buffer.md)
+- [Raw Pipeline](./raw-pipeline.md)
 
 ## Next Steps
 
-- [WriteBuffer (Unit of Work)](./write-buffer.md) -- 기본 제공 UoW 플러그인
-- [Raw Pipeline](./raw-pipeline.md) -- Entity 오버헤드 없는 대용량 데이터 스트리밍
-- [EntityManager](./entity-manager.md) -- CRUD, pagination, events
-- [Transactions](./transactions.md) -- 수동 및 데코레이터 기반 트랜잭션
-- [API Reference](./api-reference.md) -- 전체 메서드 시그니처
+- [WriteBuffer (Unit of Work)](./write-buffer.md): 기본 제공 UoW 플러그인
+- [Raw Pipeline](./raw-pipeline.md): 엔티티 오버헤드 없는 대용량 데이터 스트리밍
+- [EntityManager](./entity-manager.md): CRUD, 페이지네이션, 이벤트
+- [Transactions](./transactions.md): 수동 트랜잭션과 데코레이터 기반 트랜잭션
+- [API Reference](./api-reference.md): 전체 메서드 시그니처

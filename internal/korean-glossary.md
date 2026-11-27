@@ -104,6 +104,21 @@
 | deep clone | 깊은 복사 | 딥 클론 | |
 | dirty tracking | 변경 추적 | 더티 트래킹 | |
 | set operation | 집합 연산 | | |
+| tracking table | 추적 테이블 | | 마이그레이션 실행 기록을 담는 테이블입니다. |
+| side effect | 부수 효과 | 부작용, 사이드 이펙트 | |
+| pessimistic locking, optimistic locking | 비관적 잠금, 낙관적 잠금 | 비관적 락 | |
+| connection name | 연결 이름 | 커넥션 이름 | |
+| cross-cutting concern | 횡단 관심사 | | 처음 나올 때 원어를 붙입니다. |
+| phantom read | 팬텀 리드 | 유령 읽기 | 처음 나올 때 원어를 붙입니다. |
+| infinite scroll | 무한 스크롤 | | |
+| offset, cursor | 오프셋, 커서 | | |
+| percentile | 백분위수 | 퍼센타일 | |
+| audit | 감사 | 오딧 | 감사 로그, 감사 구독자처럼 씁니다. |
+| slow query | 느린 쿼리 | 슬로우 쿼리 | 옵션 이름 `slowQueryMs`는 그대로 씁니다. |
+| concrete subclass | 구체 서브클래스 | | |
+| copy (`clone()`의 결과) | 복사본 | 복제본 | 복제본은 레플리카와 헷갈립니다. |
+| Git repository | Git 저장소 | Git 리포지토리 | 리포지토리 패턴과 구분하려고 항상 "Git"을 붙입니다. |
+| global listener | 전역 리스너 | global listener | |
 | created at | 생성 일시 | 생성 시각, 처음 넣은 시각 | |
 | updated at | 수정 일시 | 수정 시각, 갱신 시각 | |
 | deleted at | 삭제 일시 | 삭제 시각 | |
@@ -129,3 +144,4 @@
 | validate | 검증합니다 | |
 | load (relation) | 로드합니다 | 불러옵니다 |
 | skip | 건너뜁니다 | 스킵합니다 |
+| fire (event, hook) | 발생합니다 | 발화합니다, 트리거됩니다 |

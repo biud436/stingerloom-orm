@@ -176,7 +176,7 @@ synchronize: {
 @Entity()                    // ENTITY_TOKEN 심볼로 메타데이터 저장
 @Column(options)             // design:type 자동 추론, ColumnType 매핑
 @ComputedColumn(expr)        // 계산 컬럼
-@PrimaryGeneratedColumn()    // auto-increment 또는 "uuid" (UUIDv7)
+@PrimaryGeneratedColumn()    // auto-increment, "uuid" (UUIDv4) 또는 "uuid-v7" (UUIDv7)
 @PrimaryColumn()             // 복합 PK
 @ManyToOne(() => Entity, (e) => e.inverse, { joinColumn: "fk_column" })
 @OneToMany(() => Entity, { mappedBy: "owner" })
@@ -319,7 +319,7 @@ pnpm start          # NestJS 서버 시작
 - 멀티 DB 지원 (named connections)
 - propagateShutdown() — 리소스 정리 라이프사이클
 - NamingStrategy (SnakeNamingStrategy 내장)
-- UUID 컬럼 타입 + UUIDv7 지원
+- UUID 컬럼 타입 + UUIDv4("uuid") / UUIDv7("uuid-v7") 지원
 - 컬럼 트랜스포머 (@Column({ transformer }))
 - 계산 컬럼 (@ComputedColumn)
 - 플러그인 시스템 (em.extend(), WriteBuffer/UoW)

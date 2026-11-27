@@ -1,40 +1,40 @@
 # Pagination & Streaming
 
-Stingerloom은 대량 데이터를 다루기 위해 세 가지 전략을 제공해요: offset 기반 pagination, cursor 기반 pagination, 그리고 streaming이에요. 각각 용도가 다르기 때문에, 어떤 걸 만드느냐에 따라 적절한 전략을 골라야 해요.
+Stingerloom은 대량 데이터를 다루는 세 가지 전략을 제공합니다. 오프셋(offset) 기반 페이지네이션, 커서(cursor) 기반 페이지네이션, 스트리밍(streaming)입니다. 전략마다 용도가 다르므로 무엇을 만드는지에 따라 알맞은 전략을 골라야 합니다.
 
 ## Deep Page 문제 -- 왜 세 가지 전략이 필요한가요?
 
-API를 살펴보기 전에, 근본적인 문제를 이해하면 도움이 돼요.
+API를 살펴보기 전에 근본적인 문제를 먼저 이해하면 도움이 됩니다.
 
-사용자가 데이터셋의 "500페이지"를 요청하면, offset 기반 pagination은 이런 SQL을 생성해요:
+사용자가 데이터셋의 "500페이지"를 요청하면 오프셋 기반 페이지네이션은 다음 SQL을 생성합니다.
 
 ```sql
 SELECT * FROM "post" ORDER BY "id" ASC LIMIT 10 OFFSET 4990
 ```
 
-단순해 보이지만, 데이터베이스는 비용이 큰 작업을 수행해요: 5,000행을 읽고, 앞의 4,990행을 버리고, 마지막 10행만 반환하는 거예요. 페이지가 깊어질수록 읽고 버리는 행이 늘어나요. 10,000페이지에서는 10행을 반환하기 위해 100,000행을 스캔해요.
+단순해 보이지만 데이터베이스는 비용이 큰 작업을 합니다. 5,000행을 읽고 앞의 4,990행을 버린 뒤 마지막 10행만 반환합니다. 페이지가 깊어질수록 읽고 버리는 행이 늘어납니다. 10,000페이지에서는 10행을 반환하려고 100,000행을 스캔합니다.
 
-Cursor 기반 pagination은 WHERE 절을 사용해서 이 문제를 완전히 해결해요:
+커서 기반 페이지네이션은 WHERE 절을 사용해서 이 문제를 완전히 해결합니다.
 
 ```sql
 SELECT * FROM "post" WHERE "id" > 4990 ORDER BY "id" ASC LIMIT 11
 ```
 
-데이터베이스가 `id` 인덱스를 사용해서 바로 해당 위치로 점프해요. 1페이지든 10,000페이지든 성능이 동일해요.
+데이터베이스는 `id` 인덱스를 사용해서 바로 해당 위치로 이동합니다. 1페이지든 10,000페이지든 성능이 같습니다.
 
-그런데 테이블의 모든 행을 처리해야 하는 경우는 어떨까요? API 응답이 아니라 이메일 발송 같은 배치 작업이라면요. 두 pagination 전략 모두 적합하지 않아요. 이때는 streaming이 필요해요 -- 행을 배치 단위로 가져오고 하나씩 yield하는 방식이에요.
+그런데 API 응답이 아니라 이메일 발송 같은 배치 작업에서 테이블의 모든 행을 처리해야 한다면 어떨까요? 이때는 두 페이지네이션 전략 모두 적합하지 않습니다. 이런 작업에는 스트리밍이 필요합니다. 스트리밍은 행을 배치 단위로 조회하고 하나씩 yield합니다.
 
-요약하면 이래요:
+요약하면 다음과 같습니다.
 
 | Strategy | Best for | Trade-off |
 |----------|----------|-----------|
-| Offset (`skip`/`take`) | 소규모 데이터셋, "Page X of Y" UI | 높은 offset에서 느려져요 |
-| Cursor (`findWithCursor`) | 대규모 데이터셋, infinite scroll | 임의 페이지 접근 불가 |
-| Streaming (`stream()`) | 수백만 행 배치 처리 | API 응답에는 부적합해요 |
+| Offset (`skip`/`take`) | 소규모 데이터셋, "Page X of Y" UI | 오프셋이 크면 느려짐 |
+| Cursor (`findWithCursor`) | 대규모 데이터셋, 무한 스크롤 | 임의 페이지 접근 불가 |
+| Streaming (`stream()`) | 수백만 행 배치 처리 | API 응답에는 부적합 |
 
 ## Offset-Based Pagination
 
-전통적인 LIMIT/OFFSET pagination이에요. 사용자가 특정 페이지로 바로 이동해야 하는 중소규모 데이터셋에 적합해요.
+전통적인 LIMIT/OFFSET 페이지네이션입니다. 사용자가 특정 페이지로 바로 이동해야 하는 중소규모 데이터셋에 적합합니다.
 
 ```typescript
 // Method 1: skip + take (recommended)
@@ -51,7 +51,7 @@ const page2Alt = await em.find(Post, {
 });
 ```
 
-두 방법 모두 동일한 SQL을 생성해요:
+두 방법은 같은 SQL을 생성합니다.
 
 ```sql
 SELECT "id", "title", "content", "createdAt"
@@ -62,7 +62,7 @@ LIMIT 10 OFFSET 10
 
 ### findAndCount -- 한 번의 호출로 총 개수까지
 
-Paginated UI를 만들 때, 데이터와 총 개수가 동시에 필요한 경우가 많아요. `findAndCount()`는 동일한 연결 내에서 데이터 쿼리와 COUNT 쿼리를 실행해서 둘 다 반환해줘요.
+페이지가 있는 UI를 만들 때는 데이터와 총 개수가 함께 필요한 경우가 많습니다. `findAndCount()`는 같은 연결에서 데이터 쿼리와 COUNT 쿼리를 실행하고 두 결과를 한 번에 반환합니다.
 
 ```typescript
 const [posts, total] = await em.findAndCount(Post, {
@@ -75,7 +75,7 @@ console.log(posts.length); // 10
 console.log(total);        // Total number of posts (e.g., 235)
 ```
 
-ORM은 내부적으로 두 개의 쿼리를 실행해요:
+ORM은 내부에서 쿼리 두 개를 실행합니다.
 
 ```sql
 -- Data query
@@ -90,10 +90,10 @@ SELECT COUNT(*) FROM "post"
 
 ### paginate() -- 페이지 데이터와 메타데이터를 한 번에
 
-`findAndCount()`는 `[rows, total]` 튜플만 돌려줍니다. 총 개수에 더해 파생된 페이지
-메타데이터(`totalPages`, `hasNextPage` 등)까지 원할 때는, 쿼리 빌더의 `paginate()`가
-1-based `page`/`pageSize`로부터 envelope 전체를 돌려줘요. 쿼리를 (조인, `qAlias` 조건,
-서브쿼리 등) 빌더로 조립하는 경우에 특히 잘 맞습니다.
+`findAndCount()`는 `[rows, total]` 튜플만 반환합니다. 총 개수와 함께 `totalPages`, `hasNextPage` 같은
+파생 페이지 메타데이터도 필요하면 쿼리 빌더의 `paginate()`를 쓰세요. `paginate()`는
+1부터 시작하는 `page`/`pageSize`를 받아 결과 전체를 감싼 객체를 반환합니다. 조인, `qAlias` 조건,
+서브쿼리 등으로 쿼리를 빌더에서 조립할 때 특히 잘 맞습니다.
 
 ```typescript
 const result = await em
@@ -111,23 +111,23 @@ result.hasNextPage;     // true
 result.hasPreviousPage; // true
 ```
 
-`page`/`pageSize`는 `findWithPage()`와 동일하게 정규화됩니다. `page`가 1보다 작으면
-1페이지를 읽고 소수는 내림하며, `pageSize`가 1보다 작으면 기본값 20을 씁니다. 둘 다
-숫자여야 하고 `pageSize`는 정수여야 하니, 쿼리 스트링 값은 먼저 `Number(...)`로
-바꿔 주세요. `paginate()`는 빌더를 복제하므로 원본 인스턴스에는
-LIMIT/OFFSET이 남지 않아 다시 페이징할 수 있어요. 특정 컬럼만 뽑는 목록 화면
-(`select(["id", "title"])`)에서는 엔티티 인스턴스 대신 plain `Pick<T, K>` 객체를
-돌려주는 `paginatePartial()`을 쓰세요.
+`page`/`pageSize`는 `findWithPage()`와 같은 방식으로 정규화됩니다. `page`가 1보다 작으면
+1페이지를 조회하고 소수는 내림합니다. `pageSize`가 1보다 작으면 기본값 20을 씁니다. 두 값은 모두
+숫자여야 하고 `pageSize`는 정수여야 합니다. 그래서 쿼리 스트링 값은 먼저 `Number(...)`로
+바꿔 주세요. `paginate()`는 빌더를 복제합니다. 그래서 원본 인스턴스에는
+LIMIT/OFFSET이 남지 않고 원본으로 다시 페이지네이션할 수 있습니다. `select(["id", "title"])`처럼 특정 컬럼만 고르는 목록 화면에서는
+`paginatePartial()`을 쓰세요. `paginatePartial()`은 엔티티 인스턴스 대신 plain `Pick<T, K>` 객체를
+반환합니다.
 
-빌더에 `groupBy()`가 걸려 있으면 페이지의 각 행이 그룹이므로, `total`은 `HAVING`을
+빌더에 `groupBy()`가 있으면 페이지의 각 행이 그룹입니다. 그래서 `total`은 `HAVING`을
 통과한 그룹의 개수를 셉니다. `findWithPage()`가 `FindOption.groupBy`에 적용하는 규칙과
-같아요. [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-는-그룹-수를-셉니다)를 참고하세요.
+같습니다. [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-는-그룹-수를-셉니다)를 참고하세요.
 
-반환 형태는 `em.findWithPage()`와 동일하므로, `FindOption`에서 시작하느냐 빌더에서
-시작하느냐에 따라 둘을 바꿔 쓸 수 있습니다:
+반환 형태는 `em.findWithPage()`와 같습니다. 그래서 `FindOption`에서 시작하는지 빌더에서
+시작하는지에 따라 둘을 바꿔 쓸 수 있습니다.
 
 ```typescript
-// FindOption 기반 — 동일한 PagePaginationResult 형태
+// FindOption 기반: 같은 PagePaginationResult 형태
 const result = await em.findWithPage(Post, {
   where: { isPublished: true },
   orderBy: { createdAt: "DESC" },
@@ -139,20 +139,20 @@ const result = await em.findWithPage(Post, {
 ### Offset Pagination을 쓰면 좋은 경우
 
 - 사용자가 5페이지나 50페이지로 직접 이동해야 할 때
-- 총 행 수가 적을 때 (10만 건 이하)
+- 총 행 수가 10만 개 이하로 적을 때
 - "Page X of Y" UI가 필요할 때
 
-> **Warning** 대규모 데이터셋에서는 성능이 저하돼요. 데이터베이스가 결과를 반환하기 전에 `OFFSET`만큼의 행을 스캔하고 버려야 하거든요. 100만 행 테이블에서 5,000페이지를 요청하면 50,000행을 읽고 49,990행을 버리게 돼요.
+> 경고: 대규모 데이터셋에서는 성능이 떨어집니다. 데이터베이스가 결과를 반환하기 전에 `OFFSET`만큼의 행을 스캔하고 버려야 하기 때문입니다. 100만 행 테이블에서 5,000페이지를 요청하면 데이터베이스는 50,000행을 읽고 그중 49,990행을 버립니다.
 
 ## Cursor-Based Pagination
 
-대규모 데이터셋에서는 cursor 기반 pagination이 페이지 깊이에 관계없이 일정한 성능을 제공해요.
+대규모 데이터셋에서는 커서 기반 페이지네이션이 페이지 깊이에 관계없이 일정한 성능을 냅니다.
 
 ### 동작 원리
 
-데이터베이스에 "N행을 건너뛰어"라고 하는 대신, "이 특정 값 이후부터 시작해"라고 알려주는 방식이에요. 이 값은 Base64 cursor 문자열로 인코딩되어 클라이언트가 매 요청마다 전달해요.
+커서 기반 페이지네이션은 데이터베이스에 "N행을 건너뛰라"고 하는 대신 "이 값 다음부터 시작하라"고 알려 줍니다. 이 값은 Base64 커서 문자열로 인코딩됩니다. 클라이언트는 요청할 때마다 이 문자열을 다시 보냅니다.
 
-SQL 비교를 나란히 보면 이래요:
+두 방식의 SQL을 나란히 비교하면 다음과 같습니다.
 
 ```sql
 -- Offset at page 500 (skip = 4990): reads 5000 rows, discards 4990
@@ -171,7 +171,7 @@ LIMIT 11
 -- Parameters: [true, 4990]
 ```
 
-Cursor 방식은 `LIMIT 11`(페이지 크기 10보다 1개 더)을 요청해요. 11행이 돌아오면 다음 페이지가 있다는 뜻이고, 마지막으로 반환된 행의 값을 다음 cursor로 사용해요. 10행 이하가 돌아오면 마지막 페이지예요.
+커서 방식은 페이지 크기 10보다 하나 많은 `LIMIT 11`을 요청합니다. 11행이 반환되면 ORM은 다음 페이지가 있다고 판단합니다. 그리고 마지막으로 반환한 행의 값을 다음 커서로 사용합니다. 10행 이하가 반환되면 마지막 페이지입니다.
 
 ### 사용법
 
@@ -196,7 +196,7 @@ const page2 = await em.findWithCursor(Post, {
 });
 ```
 
-두 번째 페이지는 이런 SQL을 생성해요:
+두 번째 페이지는 다음 SQL을 생성합니다.
 
 ```sql
 SELECT "id", "title", "content", "createdAt"
@@ -230,16 +230,16 @@ async function getPosts(req: Request, res: Response) {
 
 ### Cursor Pagination을 쓰면 좋은 경우
 
-- Infinite scroll이나 "Load more" UI
-- 대규모 데이터셋 (10만 건 이상)
+- 무한 스크롤이나 "Load more" UI
+- 10만 행 이상의 대규모 데이터셋
 - 행이 계속 추가되는 실시간 피드
 - 페이지 깊이에 관계없이 성능이 일정해야 할 때
 
-> **Hint** Cursor pagination은 컬럼 하나로 정렬하고, 값이 같은 행은 기본 키(복합 키면 키 컬럼 전부)로 순서를 가립니다. 그래서 정렬 컬럼에 같은 값이 있어도 됩니다. 임의 페이지로 점프하는 건 지원하지 않아요 -- 클라이언트가 순차적으로 앞으로만 이동해야 해요.
+> 힌트: 커서 페이지네이션은 컬럼 하나로 정렬합니다. 그리고 값이 같은 행은 기본 키로 순서를 정합니다. 복합 키라면 키 컬럼을 모두 씁니다. 그래서 정렬 컬럼에 같은 값이 있어도 됩니다. 임의 페이지로 이동하는 것은 지원하지 않습니다. 클라이언트는 앞으로 한 페이지씩 차례로 이동해야 합니다.
 
-`findWithCursor()`는 `find()`와 동일한 필터를 적용합니다. `withDeleted: true`를 넘기지 않으면 soft-delete된 행은 제외되고, 단일 테이블 상속(STI) 자식 클래스를 페이징하면 discriminator 술어가 자동으로 붙어 해당 서브타입 행만 반환돼요.
+`findWithCursor()`는 `find()`와 같은 필터를 적용합니다. `withDeleted: true`를 넘기지 않으면 소프트 삭제된 행은 제외됩니다. 단일 테이블 상속(STI) 자식 클래스를 페이지네이션하면 구분 컬럼 조건이 자동으로 붙습니다. 그래서 해당 서브타입의 행만 반환됩니다.
 
-관계도 같은 규칙으로 로드합니다. `eager: true` 관계는 따로 요청하지 않아도 붙고, `relations: ["author", "comments"]`로 나열한 관계는 `@ManyToOne`, `@OneToMany`, `@ManyToMany`, `@OneToOne` 모두 로드돼요. 키셋 쿼리 자체는 JOIN하지 않으니(ORDER BY와 cursor가 루트 테이블에 묶여 있어요) 관계마다 페이지당 배치 쿼리 하나가 추가될 뿐, 행마다 쿼리가 나가지는 않습니다. `withDeleted: true`는 이 관계 로드의 soft-delete 필터도 함께 걷어냅니다. [중첩 관계](./relations.md#중첩-관계)(`"comments.author"` 또는 객체 형식)도 페이지마다 단계별·관계별 배치 쿼리 하나로 로드돼요.
+관계도 같은 규칙으로 로드합니다. `eager: true` 관계는 따로 요청하지 않아도 붙습니다. `relations: ["author", "comments"]`로 나열한 관계는 `@ManyToOne`, `@OneToMany`, `@ManyToMany`, `@OneToOne` 모두 로드됩니다. 키셋 쿼리 자체는 JOIN하지 않습니다. ORDER BY와 커서가 루트 테이블에 묶여 있기 때문입니다. 그래서 관계마다 페이지당 배치 쿼리가 하나씩 추가될 뿐이고 행마다 쿼리가 실행되지는 않습니다. `withDeleted: true`는 이 관계 로드의 소프트 삭제 필터도 함께 걷어냅니다. `"comments.author"`나 객체 형식으로 쓴 [중첩 관계](./relations.md#중첩-관계)도 페이지마다 로드됩니다. 이때 단계별·관계별로 배치 쿼리가 하나씩 실행됩니다.
 
 ```typescript
 const page = await em.findWithCursor(Post, {
@@ -251,15 +251,15 @@ const page = await em.findWithCursor(Post, {
 
 ## Streaming
 
-수백만 행을 처리할 때, 전부 메모리에 올리는 건 비현실적이에요. `stream()`은 설정 가능한 배치 크기로 행을 가져오는 `AsyncGenerator`를 반환해요 -- 전체 결과셋을 메모리에 들고 있지 않으면서 엔티티를 하나씩 처리할 수 있어요.
+수백만 행을 처리할 때 행을 한꺼번에 메모리에 올리는 것은 비현실적입니다. `stream()`은 설정한 배치 크기만큼 행을 조회하는 `AsyncGenerator`를 반환합니다. 그래서 전체 결과 집합을 메모리에 올리지 않고 엔티티를 하나씩 처리할 수 있습니다.
 
 ### find()를 루프에서 쓰면 안 되나요?
 
-`find()`와 수동 offset 추적으로 직접 배칭을 구현할 수도 있어요. 하지만 `stream()`이 이걸 대신 해주면서 세부 사항도 정확히 처리해줘요: 빈 배치 처리, 데이터 끝 감지, 엔티티 하나씩 yield까지 해주기 때문에 처리 코드가 깔끔해져요.
+`find()`로 오프셋을 직접 관리하며 배치 처리를 구현할 수도 있습니다. 하지만 `stream()`은 이 일을 대신하면서 세부 사항도 정확히 처리합니다. 빈 배치를 처리하고 데이터의 끝을 감지하며 엔티티를 하나씩 yield합니다. 그래서 처리 코드가 깔끔해집니다.
 
 ### Batching SQL
 
-내부적으로 `stream()`은 LIMIT/OFFSET을 사용해서 한 번에 하나의 배치를 가져와요. 배치 크기가 500이면:
+`stream()`은 내부에서 LIMIT/OFFSET으로 한 번에 배치 하나를 조회합니다. 배치 크기가 500이면 다음과 같습니다.
 
 ```sql
 -- Batch 1: rows 0-499
@@ -277,7 +277,7 @@ ORDER BY "id" ASC LIMIT 500 OFFSET 1000
 -- Continues until a batch returns fewer than 500 rows
 ```
 
-각 배치를 가져온 뒤, AsyncGenerator를 통해 엔티티를 하나씩 yield하고, 다음 배치를 가져오기 전에 이전 배치는 가비지 컬렉션돼요. 메모리 사용량은 총 사용자 수(200만)가 아니라 배치 크기(500)에 비례해요.
+배치를 조회하면 AsyncGenerator가 엔티티를 하나씩 yield합니다. 그리고 다음 배치를 조회하기 전에 이전 배치는 가비지 컬렉션됩니다. 그래서 메모리 사용량은 총 사용자 수 200만이 아니라 배치 크기 500에 비례합니다.
 
 ```typescript
 async *stream<T>(entity: Class<T>, options?: FindOption<T>, batchSize?: number): AsyncGenerator<T>
@@ -291,7 +291,7 @@ for await (const user of em.stream(User, { where: { isActive: true } })) {
 }
 ```
 
-세 번째 파라미터로 배치 크기를 조절할 수 있어요 (기본값: 1000). 배치에서 반환된 행 수가 배치 크기보다 적으면 끝에 도달한 것으로 판단하고 멈춰요.
+세 번째 파라미터로 배치 크기를 조절합니다. 기본값은 1000입니다. 배치에서 반환된 행 수가 배치 크기보다 적으면 제너레이터는 끝에 도달했다고 판단하고 멈춥니다.
 
 ```typescript
 // Fetch in batches of 500
@@ -302,7 +302,7 @@ for await (const post of em.stream(Post, { orderBy: { id: "ASC" } }, 500)) {
 
 ### 지원하는 옵션
 
-`stream()`은 모든 `FindOption` 속성을 지원해요 -- `where`, `orderBy`, `relations`, `select`, `withDeleted` 등이에요.
+`stream()`은 `where`, `orderBy`, `relations`, `select`, `withDeleted` 등 모든 `FindOption` 속성을 지원합니다.
 
 ```typescript
 // Stream with relations and filtered columns
@@ -318,7 +318,7 @@ for await (const post of em.stream(Post, {
 
 ### Streaming 전에 총 개수 확인하기
 
-처리 전에 총 개수가 필요하면, `count()`를 먼저 호출하면 돼요:
+처리하기 전에 총 개수가 필요하면 `count()`를 먼저 호출하세요.
 
 ```typescript
 const total = await em.count(User, { isActive: true });
@@ -336,24 +336,24 @@ for await (const user of em.stream(User, { where: { isActive: true } })) {
 
 | Scenario | Use |
 |----------|-----|
-| 페이지 단위로 결과를 반환하는 API 엔드포인트 | `find()` with pagination |
+| 페이지 단위로 결과를 반환하는 API 엔드포인트 | 페이지네이션을 적용한 `find()` |
 | 테이블의 모든 행 처리 (ETL, export, 배치 이메일) | `stream()` |
-| 대규모 데이터셋에서 집계 | `stream()` 또는 `em.query()`로 DB 측 aggregation |
+| 대규모 데이터셋에서 집계 | `stream()` 또는 `em.query()`로 데이터베이스에서 집계 |
 
-> **Hint** 대규모 변경 가능한 테이블에서 일관된 결과를 보장하려면, `REPEATABLE READ` 격리 수준의 트랜잭션 안에서 stream을 실행하는 걸 고려해보세요. 반복 중 phantom read를 방지할 수 있어요.
+> 힌트: 변경될 수 있는 대규모 테이블에서 일관된 결과가 필요하면 `REPEATABLE READ` 격리 수준의 트랜잭션 안에서 스트림을 실행하는 것을 고려하세요. 그러면 반복하는 동안 팬텀 리드(phantom read)를 막을 수 있습니다.
 
 ## 전략 선택 가이드
 
 | Question | Offset | Cursor | Stream |
 |----------|--------|--------|--------|
-| 사용자가 N페이지로 바로 이동 가능? | Yes | No | No |
-| 깊은 페이지에서의 성능? | 저하돼요 | 일정해요 | N/A |
-| 실시간 insert와 호환? | skip/중복 가능 | 안정적 | 격리 수준에 따라 다름 |
+| 사용자가 N페이지로 바로 이동 | Yes | No | No |
+| 깊은 페이지에서의 성능 | 떨어짐 | 일정함 | N/A |
+| 실시간 삽입과의 호환 | 누락/중복 가능 | 안정적 | 격리 수준에 따라 다름 |
 | 메모리 사용량 | 페이지 크기에 비례 | 페이지 크기에 비례 | 배치 크기에 비례 |
 | Use case | Admin dashboard | Infinite scroll | ETL / batch job |
 
 ## Next Steps
 
-- [EntityManager](./entity-manager.md) -- Full CRUD reference
-- [Query Builder](./query-builder.md) -- Complex queries with GROUP BY, JOIN, and aggregation
-- [Production Guide](./production-guide.md) -- Tuning for high-traffic workloads
+- [EntityManager](./entity-manager.md): 전체 CRUD 레퍼런스
+- [Query Builder](./query-builder.md): GROUP BY, JOIN, 집계를 쓰는 복잡한 쿼리
+- [Production Guide](./production-guide.md): 트래픽이 많은 환경을 위한 튜닝
