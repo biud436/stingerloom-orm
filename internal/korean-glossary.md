@@ -85,6 +85,25 @@
 | placeholder | 플레이스홀더 | 자리표시자 | |
 | circuit breaker | 서킷 브레이커 | 회로 차단기 | |
 | time window | 윈도 | 윈도우, 구간 | 시간 구간을 말합니다. |
+| runner | 러너 | 실행기 | `MigrationRunner` 같은 이름은 그대로 씁니다. |
+| query runner | 쿼리 러너 | | |
+| replication | 복제 | 레플리케이션 | 복제된 서버는 레플리카입니다. |
+| replication router | 복제 라우터 | 레플리케이션 라우터 | |
+| exclusive lock, shared lock | 배타 잠금, 공유 잠금 | 배타 락, 공유 락 | |
+| type narrowing | 타입 좁히기 | 타입 내로잉 | |
+| canonical type | 정규 타입 | 표준 타입 | |
+| seed data | 시드 데이터 | | |
+| alias | 별칭 | 앨리어스 | 코드의 `alias`는 그대로 씁니다. |
+| subclass | 서브클래스 | 하위 클래스 | |
+| concrete table | 구체 테이블 | 콘크리트 테이블 | TPC 전략의 테이블입니다. |
+| polymorphic query | 다형성 쿼리 | | 처음 나올 때 원어를 붙입니다. |
+| thunk | 썽크 | thunk | |
+| derived table | 파생 테이블 | | |
+| allowlist | 허용 목록 | 화이트리스트 | |
+| topological sort | 위상 정렬 | | |
+| deep clone | 깊은 복사 | 딥 클론 | |
+| dirty tracking | 변경 추적 | 더티 트래킹 | |
+| set operation | 집합 연산 | | |
 | created at | 생성 일시 | 생성 시각, 처음 넣은 시각 | |
 | updated at | 수정 일시 | 수정 시각, 갱신 시각 | |
 | deleted at | 삭제 일시 | 삭제 시각 | |
