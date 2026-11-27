@@ -1,4 +1,4 @@
-# Query Builder — 실행 & 결과
+# 쿼리 빌더: 실행 & 결과
 
 쿼리의 모양을 다 잡고 나면 실행과 결과 처리가 남습니다. 여기에 영향을 주는 것은 정렬, 페이지네이션, 비관적 잠금, 인덱스 힌트, 소프트 삭제 처리, 런타임 결과 검증입니다. 실행 메서드의 세 단계(`getMany` / `getPartialMany` / `getRawMany`)와 반복 쿼리의 컴파일도 여기에 속합니다.
 
@@ -32,7 +32,7 @@ console.log(users.length); // 최대 10
 console.log(total);        // 예: 235
 ```
 
-### `paginate()` — 페이지 데이터와 메타데이터를 한 번에
+### `paginate()`: 페이지 데이터와 메타데이터를 한 번에
 
 `getManyAndCount()`는 `[rows, total]` 튜플만 반환합니다. 그래서 `totalPages`나
 `hasNextPage` 같은 값은 엔드포인트마다 직접 계산해야 합니다. `paginate()`는
@@ -78,9 +78,9 @@ page.data; // Pick<Post, "id" | "title">[]: 엔티티가 아닌 plain object
 
 > 커서 기반 페이지네이션, 스트리밍, 전략 선택 가이드는 [페이지네이션 & 스트리밍](./pagination.md)에 있습니다.
 
-### `getCursor()` — 빌더에서 커서(키셋) 페이지네이션
+### `getCursor()`: 빌더의 커서(키셋) 페이지네이션
 
-`getCursor()`는 [`em.findWithCursor()`](./pagination.md#cursor-based-pagination)의 쿼리 빌더 버전입니다. 빌더에 이미 조립된 쿼리에 키셋 페이지네이션을 적용하고 `CursorPaginationResult`를 반환합니다. WHERE 절, JOIN, 소프트 삭제 필터, 테넌트 범위가 모두 그대로 적용됩니다.
+`getCursor()`는 [`em.findWithCursor()`](./pagination.md#커서-기반-페이지네이션)의 쿼리 빌더 버전입니다. 빌더에 이미 조립된 쿼리에 키셋 페이지네이션을 적용하고 `CursorPaginationResult`를 반환합니다. WHERE 절, JOIN, 소프트 삭제 필터, 테넌트 범위가 모두 그대로 적용됩니다.
 
 ```typescript
 interface CursorPaginationOption<T> {
@@ -265,7 +265,7 @@ const orders = await em
 `hint()`는 `pg_hint_plan` 확장이 설치되고 활성화된 PostgreSQL에서만 실제로 효과가 있습니다. 확장이 없으면 힌트는 그냥 주석으로 처리되어 옵티마이저가 보지 못합니다. SQLite는 쿼리 힌트를 전혀 지원하지 않습니다.
 :::
 
-## Soft Delete 처리
+## 소프트 삭제 처리
 
 엔티티에 `@DeletedAt` 컬럼이 있으면 쿼리 빌더가 소프트 삭제된 행을 자동으로 제외합니다. 같은 필터가 관계 조인의 대상 테이블에도 붙습니다. `leftJoinRelation*` / `innerJoinRelation*`에서는 이 필터가 ON 절에 들어갑니다. `whereHas()` / `whereNotHas()` / `withCount()` 서브쿼리 안에도 붙습니다. 다만 명시적인 `leftJoin(Entity, alias, on)`은 직접 쓴 ON 절을 그대로 씁니다. 소프트 삭제된 행을 모든 곳에서 포함하려면 다음과 같이 씁니다.
 
@@ -275,7 +275,7 @@ qb.withDeleted();
 
 관계 서브쿼리는 선언되는 시점의 소프트 삭제 설정을 따릅니다. 그래서 서브쿼리에서도 필터를 걷어내려면 `whereHas()`보다 먼저 `withDeleted()`를 호출하세요. 특정 관계에서만 걷어내려면 콜백에서 `whereHas("comments", (sub) => sub.withDeleted())`처럼 쓰면 됩니다.
 
-## 테넌트 스코프 우회 — `withoutTenantScope()`
+## 테넌트 범위 우회: `withoutTenantScope()`
 
 `tenant_column` 멀티테넌시 전략에서는 테넌트 범위 엔티티로 만든 모든 빌더 쿼리에 `tenant_id = <현재 테넌트>` 조건이 자동으로 붙습니다. 쿼리 단위로 우회하려면 다음과 같이 씁니다.
 
@@ -289,7 +289,7 @@ const allTenantUsers = await em
 
 관리자 대시보드, 백그라운드 재조정 잡, 데이터 마이그레이션처럼 여러 테넌트의 데이터를 봐야 하는 작업에 쓰는 정식 escape hatch입니다. 전략이 `tenant_column`이 아니거나 엔티티가 `@NonTenantEntity()`이면 아무 일도 하지 않습니다. 컨텍스트 전체에서 우회하려면 `MetadataContext.runUnscoped()`를 쓰세요.
 
-## Escape Hatch
+## 탈출구(escape hatch)
 
 타입 있는 API가 닿지 않는 곳이 있습니다. 이때 빌더를 떠나지 않고 raw SQL로 내려가는 메서드가 두 가지 있습니다.
 
@@ -303,7 +303,7 @@ qb
 - `appendSql(fragment)`: 조립된 쿼리 끝에 `Sql` 조각을 끼워 넣습니다. 타입 있는 API가 다루지 못하는 절에 유용합니다(예: SELECT 별칭으로 정렬, 커스텀 `WINDOW` 정의).
 - `asSubquery(alias)`: 빌더를 `Sql`로 바꿉니다. 이 `Sql`은 `RawQueryBuilder.from()`이나 `Conditions.exists()`에 넘길 수 있습니다. 파라미터 바인딩도 보존됩니다.
 
-## `getCount()` / `exists()` — 선택 상태는 무시됨
+## `getCount()` / `exists()`: 선택 상태는 무시됨
 
 이 두 메서드는 SELECT를 처음부터 다시 만듭니다(`SELECT COUNT(*) ...`, `SELECT 1 ... LIMIT 1`). `WHERE`, `JOIN`, `GROUP BY`, `HAVING`은 그대로 씁니다. 하지만 `addSelect()` / `withCount()` / `addSelectSubquery()`로 더한 것은 아무 표시 없이 버려집니다.
 
@@ -318,7 +318,7 @@ const total = await em
 
 의도한 동작입니다. 하지만 다른 곳에서 `addSelect`를 붙인 빌더에 `.getCount()`를 체이닝한다면 프로젝션이 카운트에 반영된다고 기대하지 마세요.
 
-### GROUP BY가 있는 `getCount()`는 그룹 수를 셉니다
+### GROUP BY가 있는 `getCount()`: 그룹 수 세기
 
 그룹화된 쿼리는 그룹마다 한 행을 반환합니다. 그래서 `getCount()`는 `HAVING`을 통과한 그룹의 개수를 반환합니다. `findAndCount()` / `findWithPage()`가 `FindOption.groupBy`에 적용하는 규칙과 같습니다. 덕분에 `getManyAndCount()`, `getPartialManyAndCount()`, `paginate()`, `paginatePartial()`의 `total`이 함께 반환되는 그룹 행과 어긋나지 않습니다.
 
@@ -345,7 +345,7 @@ const sizes = await em
 // [{ status: "paid", cnt: 5 }, { status: "pending", cnt: 1 }, ...]
 ```
 
-## 결과 검증 — `validate()`
+## 결과 검증: `validate()`
 
 컴파일 시점의 타입 좁히기는 많은 실수를 잡아 줍니다. 하지만 데이터베이스가 실제로 반환하는 값까지 확인하지는 못합니다. 문자열을 기대한 컬럼에 `null`이 올 수도 있습니다. 드라이버의 특성 때문에 숫자가 문자열로 올 수도 있습니다. 이 틈은 **validator**를 붙여 메웁니다. validator는 모든 행이 애플리케이션 코드에 닿기 전에 한 번 더 검사합니다.
 
@@ -422,7 +422,7 @@ const StrictUser = z.object({ id: z.number(), name: z.string() }).strict();
 
 `.parse(data)` 메서드가 있는 라이브러리라면 무엇이든 호환됩니다. zod 말고도 io-ts, superstruct 같은 라이브러리를 쓸 수 있습니다.
 
-### `validate()`와 `selectSchema()` — 뭘 쓸까
+### `validate()`와 `selectSchema()`: 선택 기준
 
 두 메서드는 비슷해 보이지만 역할이 다릅니다.
 
@@ -436,7 +436,7 @@ const StrictUser = z.object({ id: z.number(), name: z.string() }).strict();
 
 규칙은 간단합니다. 런타임 검증만 필요하면 `validate()`를 쓰고 타입 추론까지 스키마에 맡기려면 `selectSchema()`를 씁니다. `selectSchema`의 자세한 설명과 예제는 [QueryDSL 표현식](./query-builder-querydsl.md)의 "TypeScript 친화 이스케이프 해치" 절에 있습니다.
 
-### 배열 단위 검증 — `validateArray()`
+### 배열 단위 검증: `validateArray()`
 
 개별 행이 아니라 결과 집합 전체를 검사해야 할 때도 있습니다. 결과 수의 상한을 두거나 결과가 비어 있지 않은지 확인하는 경우입니다.
 
@@ -485,7 +485,7 @@ const users = await em
   .getPartialMany();
 ```
 
-### 언제 검증을 쓸까
+### 검증이 필요한 경우
 
 검증은 행마다 함수 호출이 더해지므로 공짜가 아닙니다. 비용보다 효과가 큰 상황은 다음과 같습니다.
 
@@ -557,7 +557,7 @@ const emails = await em
 
 결과에 엔티티에 없는 계산 컬럼이 섞일 때 씁니다(예: `addSelect(sql`COUNT(*)`, "cnt")`). 역직렬화는 하지 않습니다.
 
-#### 값 변환 — `coerce`
+#### 값 변환: `coerce`
 
 드라이버는 raw 결과를 다이얼렉트마다 다른 형태로 반환합니다. `mysql2`는 `DECIMAL`을 문자열로 반환하고 `SUM` / `AVG` 집계 결과도 문자열로 반환합니다. `pg`는 `NUMERIC` / `bigint`를 문자열로 반환합니다. 날짜는 드라이버 옵션에 따라 `Date`로 오거나 문자열로 옵니다. raw 경로에서 정수가 반올림되는 일은 없습니다. ±2^53을 넘는 `BIGINT`는 모든 드라이버에서 10진수 문자열로 도착합니다. `mysql2`와 `better-sqlite3`는 값이 범위 안이면 number를 반환합니다. `"bigint"` 태그는 이 문자열을 네이티브 `BigInt`로 바꿉니다. `coerce` 옵션은 컬럼마다 원하는 primitive 타입을 선언합니다. 그러면 ORM이 값을 정규화하므로 호출하는 곳에서 `Number(row.x)`를 손으로 적지 않아도 됩니다.
 
@@ -585,7 +585,7 @@ const rows = await qb
 | `getMax(column)` | `number` | 같은 범위에서 `MAX(column)`. 결과가 없으면 0 |
 | `explain()` | `ExplainResult` | 빌드된 SELECT의 실행 계획 (MySQL / PostgreSQL / SQLite 지원) |
 
-모든 집계 터미널(`getSum`, `getAvg`, `getMin`, `getMax`, `getCount`)은 SELECT 절을 처음부터 다시 작성합니다. 그래서 `addSelect()` 투영은 무시됩니다. WHERE / JOIN / 소프트 삭제 / 테넌트 범위만 유지됩니다. `getCount()`는 여기에 GROUP BY / HAVING까지 반영해서 그룹 수를 반환합니다([위 절](#group-by가-있는-getcount-는-그룹-수를-셉니다) 참고). 스칼라 집계인 `getSum`, `getAvg`, `getMin`, `getMax`는 값 하나를 반환하므로 GROUP BY / HAVING을 무시합니다.
+모든 집계 터미널(`getSum`, `getAvg`, `getMin`, `getMax`, `getCount`)은 SELECT 절을 처음부터 다시 작성합니다. 그래서 `addSelect()` 투영은 무시됩니다. WHERE / JOIN / 소프트 삭제 / 테넌트 범위만 유지됩니다. `getCount()`는 여기에 GROUP BY / HAVING까지 반영해서 그룹 수를 반환합니다([위 절](#group-by가-있는-getcount-그룹-수-세기) 참고). 스칼라 집계인 `getSum`, `getAvg`, `getMin`, `getMax`는 값 하나를 반환하므로 GROUP BY / HAVING을 무시합니다.
 
 `explain()`은 `EntityManager.explain()`과 같은 방식으로 동작합니다. 빌드된 SQL 앞에 드라이버의 `EXPLAIN` 문법을 붙이고 같은 `ExplainResult` 형태를 반환합니다(`rows`, `type`, `possibleKeys`, `key`, `cost`). 이 메서드는 MySQL, PostgreSQL, SQLite에서 동작하고 SQLite에서는 `EXPLAIN QUERY PLAN`을 씁니다. 그 밖의 드라이버에서 호출하면 `InvalidQueryError`를 던집니다.
 
@@ -663,9 +663,9 @@ await qb.select(["bio"]).getPartialMany();  // OK: plain object
 | 집계 / 계산 컬럼 | `getRawMany()` | `addSelect(sql`COUNT(*)`, "cnt")`는 `Pick`으로 타이핑 불가 |
 | 존재 여부 확인 | `exists()` | boolean만 반환. 데이터는 조회하지 않음 |
 
-`em.find()`에 `select` 옵션을 주면 반환 타입도 같은 방식으로 좁혀집니다([선택하지 않은 컬럼은 어떻게 되나요?](./entity-manager-querying.md#선택하지-않은-컬럼은-어떻게-되나요)). 그래서 타입 있는 투영에 쿼리 빌더가 꼭 필요하지는 않습니다.
+`em.find()`에 `select` 옵션을 주면 반환 타입도 같은 방식으로 좁혀집니다([선택하지 않은 컬럼은 어떻게 되나요?](./entity-manager-querying.md#선택하지-않은-컬럼)). 그래서 타입 있는 투영에 쿼리 빌더가 꼭 필요하지는 않습니다.
 
-## 같은 쿼리를 미리 만들어 두기 — `prepare()`
+## 같은 쿼리를 미리 만들어 두기: `prepare()`
 
 같은 모양의 쿼리가 값만 바뀌며 반복될 때는 SQL을 한 번만 만들어 두고 재사용할 수 있습니다. 배치 잡에서 ID 수백 개로 상세 쿼리를 실행하는 경우가 전형적인 예입니다.
 
@@ -688,9 +688,9 @@ for (const id of userIds) {
 
 > 주의: 쿼리 구조 자체가 달라지면 `prepare()`는 효과가 없습니다. 필터가 선택적으로 붙는 검색 엔드포인트처럼 SQL 골격이 매번 바뀌는 경우에는 `when()` / `pipe()`가 맞습니다.
 
-언제 효과가 있는지와 `WriteBuffer`나 배치 쓰기와 어떻게 다른지는 [쿼리 미리 만들어두기](./entity-manager-advanced.md#쿼리-미리-만들어두기-em-compile-qb-prepare)에 있습니다.
+언제 효과가 있는지와 `WriteBuffer`나 배치 쓰기와 어떻게 다른지는 [쿼리 미리 만들어두기](./entity-manager-advanced.md#쿼리-미리-만들어-두기-em-compile-qb-prepare)에 있습니다.
 
-## 실전 예제 — 필터 검색 + 페이지네이션
+## 실전 예제: 필터 검색 + 페이지네이션
 
 지금까지 본 내용을 합쳐 봅시다. 선택적인 필터를 받아 페이지네이션된 결과를 총 개수와 함께 반환하는 검색 엔드포인트입니다.
 

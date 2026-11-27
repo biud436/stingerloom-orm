@@ -1,4 +1,4 @@
-# EntityManager -- 조회 & 페이지네이션
+# EntityManager: 조회 & 페이지네이션
 
 EntityManager의 읽기 기능에는 컬럼 고르기, 정렬, 필터, 페이지네이션 전략, 집계, 쿼리 분석이 있습니다.
 
@@ -6,7 +6,7 @@ EntityManager의 읽기 기능에는 컬럼 고르기, 정렬, 필터, 페이지
 
 ---
 
-## 쿼리가 어떻게 돌아가는지부터
+## 쿼리 동작 방식
 
 `em.find()` 한 줄을 호출했을 때 내부에서 어떤 일이 벌어지는지 먼저 알아 두면 각 기능을 이해하기 쉽습니다.
 
@@ -36,7 +36,7 @@ User[] objects               into User class instances         [{ id: 1, name: '
 
 ---
 
-## SELECT 특정 컬럼
+## 특정 컬럼 선택 (SELECT)
 
 `find()`와 `findOne()`은 기본적으로 모든 컬럼을 조회합니다. `SELECT *`와 같습니다. 편하지만 몇 개만 필요할 때는 낭비입니다. `User`에 컬럼이 20개인데 API가 `id`와 `name`만 반환한다면 행마다 쓸모없는 컬럼 18개가 네트워크로 넘어옵니다.
 
@@ -70,7 +70,7 @@ const users = await em.find(User, {
 
 생성되는 SQL은 완전히 같습니다. 컬럼이 많을 때는 객체 방식이 더 읽기 편하다고 느끼는 사람도 있습니다. 쿼리는 같으므로 원하는 방식을 쓰면 됩니다.
 
-### 선택하지 않은 컬럼은 어떻게 되나요?
+### 선택하지 않은 컬럼
 
 결과 타입에는 고른 속성과 엔티티의 메서드만 남습니다. 객체는 여전히 `User` 인스턴스입니다. 하지만 고르지 않은 컬럼을 읽으려 하면 `undefined`를 받지 않고 컴파일 에러가 납니다.
 
@@ -146,7 +146,7 @@ await em.find(User, { select: ["name"], groupBy: ["id", "name"], relations: ["po
 
 ---
 
-## 정렬 -- orderBy
+## 정렬: orderBy
 
 `orderBy`가 없으면 데이터베이스는 결과 순서를 보장하지 않습니다. 대부분의 데이터베이스가 삽입 순서대로 반환하는 것처럼 보여서 순서가 안정적이라고 착각하기 쉽습니다. 하지만 테이블을 재구축하거나 병렬 쿼리가 한 번 실행되면 순서가 갑자기 바뀔 수 있습니다. 순서가 중요하다면 반드시 `orderBy`를 지정하세요.
 
@@ -180,7 +180,7 @@ ORDER BY "role" ASC, "name" ASC
 
 데이터베이스는 첫 번째 키로 먼저 정렬하고 값이 같으면 두 번째 키로 정렬합니다. 그래서 `"admin"` 사용자끼리 묶이고 그 안에서 이름의 알파벳순으로 정렬됩니다.
 
-### 왜 컬럼명이 아니라 엔티티 프로퍼티명을 사용하나요?
+### 컬럼 이름 대신 엔티티 속성 이름을 쓰는 이유
 
 실제 데이터베이스 컬럼이 `created_at`이어도 `orderBy: { createdAt: "DESC" }`로 씁니다. ORM은 엔티티 정의의 `@Column({ name: "created_at" })` 메타데이터로 속성 이름을 컬럼 이름에 자동으로 매핑합니다. 그래서 애플리케이션 코드가 데이터베이스 스키마에서 분리됩니다.
 
@@ -326,7 +326,7 @@ WHERE "age" > $1 AND "age" <= $2
 
 이것은 "나이가 18 초과이면서 65 이하"라는 범위 쿼리입니다. 연산자마다 조건을 하나씩 생성하고 AND로 연결합니다.
 
-### 집합 연산자 -- in, notIn, between
+### 집합 연산자: in, notIn, between
 
 값 목록이나 범위를 검사해야 할 때 씁니다.
 
@@ -400,7 +400,7 @@ WHERE "id" IN ($1, $2, $3)
 
 연산자 객체가 추가되기 전부터 있던 하위 호환 문법입니다.
 
-### 문자열 연산자 -- 텍스트 내 검색
+### 문자열 연산자: 텍스트 내 검색
 
 SQL의 `LIKE` 연산자는 문자열 안의 패턴을 매칭합니다. 와일드카드 `%`는 "임의의 문자열"을 뜻하고 `_`는 "임의의 문자 하나"를 뜻합니다. Stingerloom은 두 수준의 추상화를 제공합니다.
 
@@ -642,7 +642,7 @@ WHERE NOT ("age" > $1)
 -- parameters: [65]
 ```
 
-### 논리 결합자 -- OR, AND, NOT
+### 논리 결합자: OR, AND, NOT
 
 `where` 객체의 모든 필드는 기본적으로 AND로 결합됩니다. 하지만 OR 논리가 필요할 때가 있습니다. 관리자이거나 점수가 90 이상인 사용자를 찾는 경우가 그렇습니다.
 
@@ -729,7 +729,7 @@ WHERE "status" = $1 AND NOT ("role" = $2) AND (("age" >= $3) OR ("isVerified" = 
 -- parameters: ['active', 'banned', 18, true]
 ```
 
-### 배열 WHERE -- OR 축약형
+### 배열 WHERE: OR 축약형
 
 OR를 표현하는 방법이 하나 더 있습니다. 객체 하나 대신 where 객체의 배열을 넘기는 방법입니다.
 
@@ -752,7 +752,7 @@ WHERE ("name" = $1 AND "status" = $2) OR ("age" > $3 AND "role" = $4)
 
 기능은 `OR` 키를 쓰는 것과 같습니다. 다만 단순한 경우에는 배열 문법이 더 읽기 편할 수 있습니다.
 
-### 관련 행으로 거르기 -- some, none, every, is, isNot
+### 관련 행으로 거르기: some, none, every, is, isNot
 
 `where`에 관계 속성을 쓰면 관련 행을 기준으로 행을 거릅니다. 컬렉션 관계(`@OneToMany`, `@ManyToMany`)는 `some`, `none`, `every`를 받습니다. 단일 값 관계(`@ManyToOne`, `@OneToOne`)는 `is`, `isNot`을 받습니다. 각 필터는 관련 엔티티의 `where`를 받습니다. 여기에는 위의 연산자, `OR` / `AND` / `NOT`, OR를 뜻하는 배열, 그리고 그 엔티티의 관계 필터까지 모두 들어갑니다.
 
@@ -849,7 +849,7 @@ em.find(User, { where: { age: Conditions.gt("`age`", 18) } })
 - **PostgreSQL**은 `tsvector`(인덱싱된 문서)와 `tsquery`(검색 쿼리)를 GIN 인덱스와 함께 씁니다.
 - **MySQL**은 `FULLTEXT` 인덱스와 `MATCH ... AGAINST`를 씁니다.
 
-### Step 1: 엔티티에 인덱스 선언
+### 1단계: 엔티티에 인덱스 선언
 
 `@FullTextIndex` 데코레이터는 전문 검색 인덱스에 넣을 컬럼을 ORM에 알립니다. 엔티티 클래스의 `@Entity()` 앞에 붙입니다.
 
@@ -896,7 +896,7 @@ CREATE FULLTEXT INDEX `fts_post_title_content` ON `post` (`title`, `content`)
 
 **SQLite**: 전문 검색 인덱스를 지원하지 않습니다. 데코레이터는 무시됩니다.
 
-### Step 2: `search` 연산자로 쿼리
+### 2단계: `search` 연산자로 조회
 
 인덱스가 생성되면 `where` 절에서 `search` 연산자를 씁니다. `search`는 `contains`나 `startsWith` 같은 문자열 전용 필터입니다.
 
@@ -978,7 +978,7 @@ const results = await em.find(Post, {
 
 ---
 
-## Soft Delete된 레코드 포함하기
+## 소프트 삭제된 행 포함하기
 
 엔티티에 `@DeletedAt` 컬럼이 있으면 ORM이 모든 쿼리에 `WHERE "deletedAt" IS NULL` 필터를 자동으로 추가합니다. 그래서 "삭제된" 행은 기본적으로 보이지 않습니다. 데이터베이스에는 여전히 있지만 애플리케이션에서는 없는 것처럼 동작합니다.
 
@@ -1034,7 +1034,7 @@ const trashedByAlice = await em.find(Post, {
 
 ---
 
-## 비관적 잠금 (Pessimistic Locking) -- lock
+## 비관적 잠금 (Pessimistic Locking): lock
 
 ### 문제 상황
 
@@ -1313,7 +1313,7 @@ LIMIT 21
 | `nextCursor` | `string \| null` | 다음 페이지를 조회할 때 넘기는 불투명 토큰 |
 | `count` | `number` | 현재 페이지의 엔티티 수 |
 
-::: tip 어떤 걸 써야 할까요?
+::: tip 페이지네이션 방식 선택
 | 필요한 것 | 최선의 선택 |
 |-----------|-------------|
 | UI에 페이지 번호 (1, 2, 3...) | `findWithPage()` 또는 `findAndCount()` |
@@ -1324,7 +1324,7 @@ LIMIT 21
 
 ---
 
-## 스트리밍 -- stream()
+## 스트리밍: stream()
 
 위의 메서드는 모두 결과를 한 번에 메모리로 로드합니다. 게시물 20개짜리 페이지라면 괜찮습니다. 하지만 행이 백만 개인 테이블의 모든 행을 처리해야 한다면 어떨까요? CSV 내보내기, 데이터 마이그레이션, 전체 사용자에게 이메일 발송 같은 경우입니다.
 
@@ -1412,7 +1412,7 @@ for await (const user of em.stream(User, { where: { isActive: true } })) {
 }
 ```
 
-### stream() vs find() 언제 쓸까요?
+### stream()과 find()의 선택 기준
 
 | 시나리오 | 사용할 것 | 이유 |
 |----------|-----------|------|
@@ -1500,7 +1500,7 @@ const [total, avgAge, minAge, maxAge] = await Promise.all([
 
 쿼리 네 개를 데이터베이스에 동시에 보내므로 하나가 끝나기를 기다렸다가 다음을 시작하는 것보다 빠릅니다.
 
-### Soft-delete 인식
+### 소프트 삭제된 행 처리
 
 집계 함수 `count()`, `sum()`, `avg()`, `min()`, `max()`, `exists()`는 모두 마지막에 선택 파라미터 두 개를 받습니다. 이 파라미터는 `FindOption`의 소프트 삭제 플래그와 같습니다.
 
@@ -1520,11 +1520,11 @@ const hasTrashed = await em.exists(Post, { authorId: 42 }, false, true);
 | `withDeleted` | `boolean` | `false` | 살아 있는 행과 소프트 삭제된 행을 모두 집계에 포함 |
 | `onlyDeleted` | `boolean` | `false` | 소프트 삭제된 행만 대상으로 제한(`@DeletedAt IS NOT NULL`). `withDeleted`보다 우선 |
 
-`@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`가 아무 효과도 없습니다. `find()` 같은 읽기 API의 동작은 [Soft Delete](#soft-delete-인식) 절을 참고하세요.
+`@DeletedAt` 컬럼이 없는 엔티티에서는 `onlyDeleted`가 아무 효과도 없습니다. `find()` 같은 읽기 API의 동작은 [소프트 삭제된 행 포함하기](#소프트-삭제된-행-포함하기)를 참고하세요.
 
 ---
 
-## EXPLAIN -- 쿼리 분석
+## EXPLAIN: 쿼리 분석
 
 쿼리가 느릴 때는 왜 느린지 알아야 합니다. 데이터베이스가 테이블 전체를 스캔하는지, 올바른 인덱스를 쓰는지 확인해야 합니다. `EXPLAIN` 명령은 쿼리를 실제로 실행하지 않고 실행 계획을 설명하라고 데이터베이스에 요청합니다.
 
@@ -1567,7 +1567,7 @@ WHERE "email" = $1
 - `Seq Scan` = 순차 스캔 (전체 테이블 스캔), 대규모 테이블에서 느릴 수 있음
 - `cost` = 예상 상대 비용
 
-### EXPLAIN은 언제 사용하나요?
+### EXPLAIN 사용 시점
 
 개발 중에 다음을 확인할 때 씁니다.
 - WHERE 조건이 인덱스를 타는지 (전체 테이블 스캔이 아닌지)
@@ -1582,7 +1582,7 @@ WHERE "email" = $1
 
 ---
 
-## 빠른 참조 -- FindOption 전체 프로퍼티
+## 빠른 참조: FindOption 전체 속성
 
 `find()`가 받는 옵션은 다음과 같습니다.
 

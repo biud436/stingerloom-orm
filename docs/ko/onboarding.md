@@ -1,4 +1,4 @@
-# Contributor Onboarding Guide
+# 기여자 온보딩 가이드
 
 > 목적: Stingerloom ORM의 내부 아키텍처를 이해하고 코드를 고치거나 새 기능을 추가하도록 돕습니다. API 사용법이 필요하면 [Getting Started](./getting-started.md)를 먼저 읽으세요.
 
@@ -17,7 +17,7 @@
 | TypeScript | >=6.0 | `devDependencies`에 포함됨 |
 | Docker | Latest stable | 통합 테스트용 MySQL/PostgreSQL |
 
-### Clone & Build
+### 클론과 빌드
 
 ```bash
 git clone https://github.com/biud436/stingerloom-orm.git
@@ -148,7 +148,7 @@ src/
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Layered Metadata System
+### 레이어드 메타데이터 시스템
 
 Docker OverlayFS와 같은 개념으로 동작합니다.
 
@@ -178,7 +178,7 @@ Docker OverlayFS와 같은 개념으로 동작합니다.
 | `src/metadata/MetadataLayer.ts` | 개별 레이어 (key-value Map) |
 | `src/scanner/MetadataScanner.ts` | Scanner 기반 클래스 + `MetadataLayerRegistry` (데코레이터 시점의 기준 저장소) |
 
-### Driver Abstraction
+### 드라이버 추상화
 
 모든 DB 드라이버는 `src/dialects/SqlDriver.ts`의 `ISqlDriver` 인터페이스를 구현합니다.
 
@@ -201,7 +201,7 @@ DatabaseClient (singleton)
 
 ## 3. 주요 코드 흐름
 
-### Connection Flow
+### 연결 흐름
 
 ```
 EntityManager.register(options)
@@ -219,7 +219,7 @@ EntityManager.register(options)
 - `src/core/EntityManager.ts:146`: `connect()` 메서드
 - `src/DatabaseClient.ts:48`: `connect()` 메서드
 
-### Entity Registration Flow
+### 엔티티 등록 흐름
 
 데코레이터는 모듈이 로드되면서 클래스가 정의될 때 실행됩니다. 이때 실행 순서가 중요합니다.
 
@@ -245,7 +245,7 @@ EntityManager.register(options)
 - `src/decorators/Entity.ts:24`: `Entity()` 데코레이터
 - `src/scanner/MetadataScanner.ts:179`: Scanner 기반 클래스
 
-### CRUD Flow (save 예시)
+### CRUD 흐름 (save 예시)
 
 ```
 em.save(User, { name: "John Doe", email: "john@example.com" })
@@ -270,7 +270,7 @@ em.save(User, { name: "John Doe", email: "john@example.com" })
 - `src/dialects/TransactionSessionManager.ts`: 트랜잭션 관리
 - `src/core/EntityValidator.ts`: 검증
 
-### Relation Loading
+### 관계 로딩
 
 **즉시 로딩 (기본값):**
 
@@ -378,7 +378,7 @@ Step 3: Repository 패턴을 지원하도록 `src/core/BaseRepository.ts`에 래
 
 Step 4: 필요하면 `src/index.ts` -> `src/core/index.ts` 경로의 export를 확인합니다.
 
-### 새 Error 클래스 추가
+### 새 에러 클래스 추가
 
 **Step 1: `src/errors/OrmErrorCode.ts`에 새 에러 코드 추가**
 
@@ -411,7 +411,7 @@ Step 3: `src/errors/index.ts`에서 export합니다.
 
 ## 5. 코딩 컨벤션
 
-### SQL Injection 방지
+### SQL 인젝션 방지
 
 절대 규칙: 사용자 입력을 SQL 문자열에 직접 삽입하면 안 됩니다.
 
@@ -431,7 +431,7 @@ const query = `SELECT * FROM users WHERE id = ${userId}`;
 const tableName = driver.escapeIdentifier("users");
 ```
 
-### Metadata Isolation
+### 메타데이터 격리
 
 ```typescript
 // Correct approach — AsyncLocalStorage-based request scope
@@ -443,7 +443,7 @@ MetadataContext.run("tenant_1", async () => {
 store.setContext("tenant_1");  // deprecated!
 ```
 
-### TypeScript strict Mode
+### TypeScript strict 모드
 
 `tsconfig.json`에는 `strict: true`가 설정되어 있습니다. `any` 타입은 되도록 쓰지 않습니다. 다만 프레임워크 메타데이터를 처리하느라 피할 수 없을 때는 `eslint-disable` 주석을 씁니다.
 
@@ -503,7 +503,7 @@ const SKIP = !process.env.INTEGRATION_TEST;
 | Scanner class | `{Name}Scanner` | `ColumnScanner`, `EntityScanner` |
 | Error class | `{Desc}Error` | `EntityNotFound`, `InvalidQueryError` |
 
-### Commit Messages
+### 커밋 메시지
 
 ```
 feat: Add new feature
@@ -582,7 +582,7 @@ if (value) {
 }
 ```
 
-### MySQL Connection Pool 이중 해제
+### MySQL 연결 풀 이중 해제
 
 MySQL 드라이버에서 `commit()`이나 `rollback()` 뒤에 연결 참조를 `undefined`로 설정하지 않으면 같은 연결이 두 번 해제될 수 있습니다.
 
@@ -590,9 +590,9 @@ MySQL 드라이버에서 `commit()`이나 `rollback()` 뒤에 연결 참조를 `
 
 ---
 
-## 7. Contribution Workflow
+## 7. 기여 워크플로
 
-### Branch 전략
+### 브랜치 전략
 
 ```
 main (default branch)
@@ -603,7 +603,7 @@ main (default branch)
 
 main에서 브랜치를 만들고 작업을 마치면 PR을 생성합니다.
 
-### PR Checklist
+### PR 체크리스트
 
 PR을 열기 전에 다음을 확인합니다.
 

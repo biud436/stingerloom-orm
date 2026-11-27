@@ -1,6 +1,6 @@
-# Table Per Class Inheritance (TPC) -- 심층 가이드
+# Table Per Class Inheritance (TPC): 심층 가이드
 
-## 1. Table Per Class Inheritance란?
+## 1. Table Per Class Inheritance 개요
 
 **Table Per Class**는 계층 구조의 각 엔티티를 독립된 테이블 하나에 매핑하는 전략입니다. 이 테이블에는 상속받은 컬럼과 클래스 고유 컬럼이 모두 들어 있습니다. Concrete Table Inheritance라고도 부릅니다. 가족 구성원이 저마다 완전히 다른 집에 살면서 공용 가구도 한 벌씩 따로 가진 것과 비슷합니다. 함께 쓰는 공간은 전혀 없습니다. 부모 테이블과 자식 테이블을 잇는 외래 키가 없습니다. 구분 컬럼(discriminator column)도 물리적으로 저장하지 않습니다. 그리고 엔티티 하나만 조회하는 쿼리에는 JOIN이 필요 없습니다.
 
@@ -113,7 +113,7 @@ export class BankTransferPayment extends Payment {
 
 `@DiscriminatorColumn` 데코레이터는 TPC에서도 루트 엔티티에 붙입니다. 하지만 TPC에서는 구분 컬럼을 데이터베이스에 저장하지 않습니다. 이 설정은 ORM이 다형성 `UNION ALL` 쿼리에서 가상 컬럼을 만들 때만 사용합니다.
 
-## 4. INSERT -- 직접 삽입
+## 4. INSERT: 직접 삽입
 
 ```typescript
 const cc = await em.save(CreditCardPayment, {
@@ -158,7 +158,7 @@ const bt = await em.save(BankTransferPayment, {
 // BankTransferPayment { id: 1, amount: 200, bankCode: "SWIFT123" }
 ```
 
-## 5. SELECT -- 자식 엔티티 조회
+## 5. SELECT: 자식 엔티티 조회
 
 자식 엔티티를 조회하면 ORM은 그 엔티티의 테이블을 직접 쿼리합니다. JOIN도, 서브쿼리도, UNION도 없습니다.
 
@@ -193,7 +193,7 @@ FROM "credit_card_payment";
 
 세 가지 상속 전략 중 가장 빠른 SELECT입니다. JOIN 없이 테이블에 직접 접근하고 구분 값으로 거르는 조건도 없습니다. 데이터베이스는 다른 테이블을 전혀 건드리지 않습니다.
 
-## 6. SELECT -- 다형성 쿼리 (루트 엔티티) + UNION ALL
+## 6. SELECT: 다형성 쿼리 (루트 엔티티) + UNION ALL
 
 여기서부터 TPC가 흥미로워집니다. 루트 엔티티 `Payment`를 조회하면 ORM은 계층 구조의 모든 테이블에서 행을 모아야 합니다. 그래서 `UNION ALL` 쿼리를 사용하고 테이블에 없는 컬럼은 `NULL`로 채웁니다.
 
@@ -342,7 +342,7 @@ WHERE "_tpc"."store_id" = $1;
 - **루트 조회는 루트의 관계만 로드합니다.** 서브클래스가 선언한 관계를 루트의 `relations`에 넣으면 알 수 없는 관계로 보고 거부합니다. 다만 그 조인 컬럼 값은 해당 서브클래스 인스턴스에 그대로 담겨 옵니다. 관계 객체가 필요하면 `em.find(Subclass, { relations: [...] })`로 로드하세요.
 - **외래 키는 UNION을 참조할 수 없습니다.** 루트 자체를 대상으로 하는 `@ManyToOne`은 루트 테이블을 참조합니다. 그래서 루트 클래스의 인스턴스만 가리킬 수 있습니다. 다른 테이블에 저장된 `CreditCardPayment`는 가리키지 못합니다.
 
-## 7. SELECT -- findOne 사용
+## 7. SELECT: findOne 사용
 
 ```typescript
 const card = await em.findOne(CreditCardPayment, {
@@ -377,7 +377,7 @@ CreditCardPayment {
 
 상속을 쓰지 않는 `findOne`과 같습니다. TPC의 자식은 자기 테이블을 가지므로 추가 로직이 필요 없습니다.
 
-## 8. SELECT -- QueryBuilder 사용
+## 8. SELECT: QueryBuilder 사용
 
 `SelectQueryBuilder`는 다형성 쿼리를 포함해 TPC 상속을 모두 지원합니다.
 
@@ -456,7 +456,7 @@ QueryBuilder는 UNION ALL 서브쿼리를 자동으로 생성합니다. 이 서�
 `em.find()`의 다형성 쿼리에 있는 UNION ALL 성능 문제는 QueryBuilder에도 똑같이 적용됩니다. 데이터가 많을 때 느려질 수 있는 이유는 [6절](#_6-select-다형성-쿼리-루트-엔티티-union-all)을 참고하세요.
 :::
 
-## 9. SELECT -- WriteBuffer와 함께
+## 9. SELECT: WriteBuffer와 함께
 
 WriteBuffer(Unit of Work 플러그인)는 내부에서 `EntityManager`에 작업을 위임합니다. 그래서 상속 전략이 별도 설정 없이 그대로 동작합니다. Identity Map도 서브클래스 인스턴스를 올바르게 추적합니다.
 
@@ -513,7 +513,7 @@ WHERE "id" = 1;
 
 변경 추적(dirty tracking)이 바뀐 속성을 찾아냅니다. 그리고 알맞은 자식 테이블에 UPDATE를 flush합니다.
 
-## 10. UPDATE -- 직접 업데이트
+## 10. UPDATE: 직접 갱신
 
 ```typescript
 const cc = await em.findOne(CreditCardPayment, {
@@ -536,7 +536,7 @@ WHERE "id" = 1;
 
 자식 테이블에 UPDATE를 한 번 실행합니다. TPT는 부모 테이블과 자식 테이블을 모두 갱신해야 합니다. 반면 TPC는 모든 컬럼이 테이블 하나에 있으므로 테이블 하나만 건드립니다.
 
-## 11. DELETE -- 직접 삭제
+## 11. DELETE: 직접 삭제
 
 ```typescript
 await em.delete(CreditCardPayment, { id: 1 });

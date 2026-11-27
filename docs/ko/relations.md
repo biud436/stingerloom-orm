@@ -15,9 +15,9 @@ Stingerloom ORM은 네 가지 유형의 관계를 지원합니다.
 
 가장 흔한 관계는 Many-to-One입니다.
 
-## @ManyToOne -- "이 고양이의 주인은 누구인가?"
+## @ManyToOne: 고양이의 주인
 
-### 이 관계가 존재하는 이유
+### 이 관계가 필요한 이유
 
 고양이와 주인의 관계를 생각해 봅시다. 한 주인은 고양이를 여러 마리 키울 수 있습니다. 하지만 고양이마다 주인은 한 명뿐입니다. 모든 데이터를 테이블 하나에 저장하면 고양이마다 주인 정보가 중복됩니다.
 
@@ -155,9 +155,9 @@ WHERE "cat"."id" = 1;
 - `(owner) => owner.cats`: 역방향 속성입니다. 이 인자는 필수입니다. 대상에 역방향 속성이 없는 단방향 관계라면 `() => undefined`를 넘기세요.
 - 세 번째 인자는 선택입니다. 여기에 `eager`, `cascade`, `onDelete` 같은 옵션을 넘깁니다. 옵션은 아래에서 설명합니다.
 
-외래 키 컬럼은 같은 속성에 붙인 `@RelationColumn({ name: "owner_id" })`으로 선언합니다. `@RelationColumn`을 아예 생략해도 됩니다. 자세한 내용은 아래의 "@Column 기반 FK 자동 감지"를 참고하세요.
+외래 키 컬럼은 같은 속성에 붙인 `@RelationColumn({ name: "owner_id" })`으로 선언합니다. `@RelationColumn`을 아예 생략해도 됩니다. 자세한 내용은 아래의 [@Column 기반 외래 키 자동 감지](#column-기반-외래-키-자동-감지)를 참고하세요.
 
-### @Column 기반 FK 자동 감지
+### @Column 기반 외래 키 자동 감지
 
 관계마다 외래 키 컬럼 이름을 지정하는 일은 번거롭습니다. `@Column`에 적은 DB 컬럼 이름과 어긋날 위험도 있습니다. 그래서 Stingerloom은 같은 엔티티에 `{propertyName}Id` 패턴의 `@Column`이 있으면 그 `@Column`의 실제 DB 이름을 외래 키 컬럼으로 자동 사용합니다.
 
@@ -274,7 +274,7 @@ owner!: Owner;
 
 > 참고: 이 deprecation은 데코레이터 API에만 해당합니다. 코드 우선 API의 `joinColumn` 키는 별개의 계약이고 계속 지원하며 deprecated가 아닙니다. `defineEntity()`의 `t.manyToOne(() => Owner, { joinColumn: "owner_id" })`와 `EntitySchema`의 `relations` 블록이 여기에 해당합니다.
 
-### 커스텀 FK 프로퍼티 이름 (fkProperty)
+### 커스텀 외래 키 속성 이름 (fkProperty)
 
 Stingerloom의 `qAlias()`를 비롯해 속성 이름을 컬럼 이름으로 바꾸는 리졸버(resolver)는 한 가지 컨벤션을 따릅니다. 관계 `workspace`와 짝을 이루는 외래 키 속성의 이름이 `workspaceId`라는 컨벤션입니다. 다른 ORM에서 코드를 옮겨 올 때처럼 외래 키 속성 이름을 따로 정해야 하면 관계 데코레이터에 `fkProperty`를 넘기세요. 그러면 리졸버가 그 속성을 실제 조인 컬럼에 매핑합니다.
 
@@ -301,7 +301,7 @@ qb.where(m.wsId.eq(42));
 
 `@OneToOne`에도 `fkProperty` 옵션이 있습니다. 컨벤션 이름(`{relProp}Id`)과 명시적 `fkProperty`가 함께 있으면 둘 다 같은 조인 컬럼에 매핑됩니다.
 
-### PK가 아닌 컬럼 참조 (references)
+### 기본 키가 아닌 컬럼 참조 (references)
 
 외래 키는 기본적으로 대상 엔티티의 기본 키를 참조합니다. 기본 키가 아닌 컬럼을 참조하려면 `@RelationColumn`의 `referencedColumn` 옵션을 씁니다.
 
@@ -378,7 +378,7 @@ ALTER TABLE "cat"
 
 이 옵션은 `@ManyToOne`과 `@OneToOne` 모두에서 동작합니다. 목록에 없는 값을 쓰면 `synchronize`가 시작할 때 DDL을 실행하기 전에 에러를 던집니다. 액션 값은 SQL 문에 그대로 들어가기 때문입니다.
 
-액션은 제약 조건의 일부입니다. 그래서 제약 조건을 생성할 때 적용됩니다. `migrate:generate`가 만드는 CREATE TABLE, 그리고 `synchronize`가 테이블을 만들거나 관계를 추가할 때가 그렇습니다. 제약 조건이 이미 있는 관계에서 `onDelete`나 `onUpdate`를 바꿔도 데이터베이스에는 아무 변화가 없습니다. 자세한 내용은 [Schema Diff가 비교하지 않는 것](./migrations.md#schema-diff가-비교하지-않는-것)을 참고하세요. 이때는 마이그레이션에서 제약 조건을 다시 생성하세요.
+액션은 제약 조건의 일부입니다. 그래서 제약 조건을 생성할 때 적용됩니다. `migrate:generate`가 만드는 CREATE TABLE, 그리고 `synchronize`가 테이블을 만들거나 관계를 추가할 때가 그렇습니다. 제약 조건이 이미 있는 관계에서 `onDelete`나 `onUpdate`를 바꿔도 데이터베이스에는 아무 변화가 없습니다. 자세한 내용은 [Schema Diff가 비교하지 않는 것](./migrations.md#schema-diff가-비교하지-않는-항목)을 참고하세요. 이때는 마이그레이션에서 제약 조건을 다시 생성하세요.
 
 ```sql
 -- PostgreSQL (MySQL: DROP FOREIGN KEY `fk_cat_owner_id_a1b2c3d4`)
@@ -389,7 +389,7 @@ ALTER TABLE "cat" ADD CONSTRAINT "fk_cat_owner_id_a1b2c3d4"
 
 > 3.0 이전에는 PostgreSQL과 MySQL / MariaDB의 `synchronize`가 관계 선언과 관계없이 모든 관계 제약 조건을 `ON DELETE NO ACTION ON UPDATE NO ACTION`으로 만들었습니다. SQLite와 `migrate:generate`는 여기에 해당하지 않습니다. 그렇게 만든 제약 조건은 업그레이드한 뒤에도 그대로 남습니다. `information_schema.referential_constraints`로 확인하고 위처럼 다시 만드세요.
 
-### FK 제약 조건 건너뛰기 (createForeignKeyConstraints)
+### 외래 키 제약 조건 건너뛰기 (createForeignKeyConstraints)
 
 크로스 데이터베이스 참조나 성능이 중요한 테이블처럼 논리적 관계는 유지하면서 외래 키 제약 조건 생성만 건너뛰고 싶은 경우가 있습니다.
 
@@ -403,7 +403,7 @@ external!: ExternalEntity;
 
 컬럼은 여전히 생성합니다. 하지만 `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY`는 생성하지 않습니다. ORM은 관계 정보를 그대로 쓰므로 JOIN도 올바르게 생성합니다. 다만 데이터베이스에 두 테이블의 연결을 강제하라고 요청하지 않을 뿐입니다. 이 옵션은 `@OneToOne`에서도 동작합니다.
 
-### SQLite와 FK 제약 조건
+### SQLite와 외래 키 제약 조건
 
 SQLite는 `ALTER TABLE ... ADD FOREIGN KEY`를 지원하지 않습니다. 그래서 SQLite에서는 스키마 동기화가 외래 키 제약 조건을 `CREATE TABLE` 문에 직접 넣습니다. `@ManyToMany` 조인 테이블과 TPT 상속에서 자식 테이블이 루트 테이블을 가리키는 외래 키도 마찬가지입니다. 이 방식에는 두 가지 결과가 따릅니다.
 
@@ -435,7 +435,7 @@ export class Post {
 
 래퍼는 단일 값 관계(`@ManyToOne`, `@OneToOne`)에만 필요합니다. 컬렉션 속성(`Post[]`)은 원래 `Array`로 직렬화됩니다. 인트로스펙션 생성기는 `Relation<T>`를 자동으로 붙여 출력합니다. CJS 전용 프로젝트는 래퍼 없이도 동작하지만 래퍼가 있어도 해가 없습니다. 엔티티가 서로를 참조하고 코드가 ESM으로 실행될 가능성이 있으면 항상 래퍼를 쓰세요.
 
-## @OneToMany -- "이 주인의 고양이들은?"
+## @OneToMany: 주인의 고양이들
 
 ### 역방향(Inverse) 측인 이유
 
@@ -529,7 +529,7 @@ SELECT * FROM "owner" WHERE "id" = 50;        -- 쿼리 #51
 
 매번 `relations: ["owner"]`를 쓰기 번거롭다면 자동으로 로드하는 방법이 두 가지 있습니다.
 
-### 즉시 로딩(Eager Loading) -- 항상 함께 조회 (1개 쿼리, JOIN 포함)
+### 즉시 로딩(Eager Loading): 항상 함께 조회 (1개 쿼리, JOIN 포함)
 
 `eager: true`를 설정하면 `find()`나 `findOne()`을 호출할 때 LEFT JOIN을 자동으로 실행합니다.
 
@@ -565,7 +565,7 @@ WHERE "cat"."id" = 1;
 
 쿼리 하나가 한 번의 라운드 트립(round trip)으로 모든 데이터를 반환합니다. LEFT JOIN은 주인이 없는 고양이도 결과에 포함한다는 뜻입니다. 관련 데이터가 항상 필요할 때 유용합니다.
 
-### 지연 로딩(Lazy Loading) -- 접근 시 조회 (별도 쿼리)
+### 지연 로딩(Lazy Loading): 접근 시 조회 (별도 쿼리)
 
 `lazy: true`를 설정하면 Proxy 기반의 지연 로딩을 씁니다. 속성에 실제로 접근하는 시점에 데이터베이스 쿼리를 실행합니다.
 
@@ -615,9 +615,9 @@ SELECT * FROM "owner" WHERE "id" = 3;
 
 > 힌트: Stingerloom에는 런타임에 N+1 패턴을 감지해 경고 로그를 남기는 QueryTracker가 있습니다. 켜는 방법은 [EntityManager](./entity-manager.md) 문서를 참고하세요.
 
-## @OneToOne -- "사용자의 프로필"
+## @OneToOne: 사용자의 프로필
 
-### One-to-One이 존재하는 이유
+### One-to-One이 필요한 이유
 
 사용자 한 명에게 프로필은 하나입니다. 프로필 필드를 모두 User 테이블에 직접 넣어도 됩니다. 하지만 프로필을 따로 분리하는 이유가 있습니다.
 
@@ -627,7 +627,7 @@ SELECT * FROM "owner" WHERE "id" = 3;
 
 One-to-One 관계는 한쪽에 외래 키를 생성해 관련 행이 최대 하나임을 보장합니다. 외래 키가 있는 쪽이 소유 측입니다.
 
-### 단방향 (소유자 측만)
+### 단방향 (소유 측만)
 
 ```typescript
 // profile.entity.ts
@@ -700,7 +700,7 @@ WHERE "user"."id" = 1;
 
 > 힌트: `@OneToOne`도 `@ManyToOne`과 같은 순서로 외래 키 컬럼을 결정합니다. `@RelationColumn`이 먼저이고 그다음이 레거시 `joinColumn` 옵션입니다. 마지막은 `{propertyName}Id` 패턴의 `@Column`입니다. `@Column({ name: "profile_fk" }) profileId: number`가 그 예입니다.
 
-### 소유자 측 저장
+### 소유 측 저장
 
 소유 측의 키는 `@ManyToOne`과 같은 방식으로 기록됩니다. 관련 인스턴스를 넘겨도 되고 키 값을 그대로 넘겨도 됩니다. `${property}Id` 섀도 속성을 넘겨도 됩니다.
 
@@ -752,7 +752,7 @@ WHERE "profile_id" IN ($1);
 
 역방향 측에는 JOIN할 키가 없습니다. 그래서 `profile_id`가 일치하는 user 행을 찾는 두 번째 쿼리로 로드합니다. 이 쿼리는 프로필마다 실행하지 않고 조회한 프로필 전체를 대상으로 한 번만 실행합니다.
 
-## @ManyToMany -- "글에 태그 달기"
+## @ManyToMany: 글에 태그 달기
 
 ### Many-to-Many에 조인 테이블이 필요한 이유
 
@@ -923,9 +923,9 @@ await em.query("DELETE FROM post_tags WHERE post_id = $1 AND tag_id = $2", [1, 3
 
 > 힌트: `em.query()`의 자세한 내용은 [EntityManager](./entity-manager.md) 문서를 참고하세요.
 
-## Cascade -- 부모와 함께 저장/삭제
+## Cascade: 부모와 함께 저장/삭제
 
-### Cascade가 존재하는 이유
+### Cascade가 필요한 이유
 
 cascade가 없으면 부모 엔티티와 자식을 저장할 때 메서드를 여러 번 명시적으로 호출해야 합니다.
 
@@ -1039,7 +1039,7 @@ await em.save(User, { name: "alice", profile: { bio: "hi" }, avatar: { url: "a.p
 
 저장 중인 행을 다시 가리키는 객체 그래프에서도 양쪽에 cascade를 걸어도 안전합니다. `profile.user`에 user 자신을 넣거나 `user.posts`의 각 post가 `user`를 들고 있는 경우가 그 예입니다. cascade 상위에서 이미 저장 중인 행은 다시 저장하지 않습니다. 관련 행은 그 행의 키를 받아 갑니다. 그래서 모든 행은 한 번씩만 쓰입니다.
 
-### Cascade 없이 발생하는 일
+### Cascade가 없을 때
 
 외래 키 제약 조건이 걸려 있으면 `cascade: ["delete"]` 없이 자식이 있는 부모를 삭제하는 쿼리는 실패합니다.
 

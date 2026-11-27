@@ -1,4 +1,4 @@
-# Multi-Tenancy
+# 멀티테넌시
 
 ## 문제 상황
 
@@ -21,7 +21,7 @@ Stingerloom ORM은 네 가지를 모두 지원합니다.
 
 ---
 
-## 작동 원리 — OverlayFS 비유
+## 작동 원리: OverlayFS 비유
 
 Docker를 써 봤다면 이 구조가 익숙할 것입니다. 컨테이너는 베이스 이미지를 공유하면서 각자 쓰기 가능한 레이어를 하나씩 가집니다. 변경 사항은 최상위 레이어에 기록되고 베이스는 그대로 남습니다. 파일을 읽을 때 Docker는 최상위 레이어를 먼저 확인하고 없으면 베이스로 넘어갑니다.
 
@@ -64,7 +64,7 @@ const users = await em.find(User);
 // → SELECT * FROM "user"  (public schema)
 ```
 
-### 내부적으로 어떻게 동작하나요?
+### 내부 동작
 
 `MetadataContext.run()`은 Node.js의 `AsyncLocalStorage`를 씁니다. `AsyncLocalStorage`는 값을 파라미터로 넘기지 않아도 async 호출 체인 전체에 컨텍스트를 전파하는 내장 기능입니다. async JavaScript의 thread-local 변수라고 생각하면 됩니다.
 
@@ -166,7 +166,7 @@ curl http://localhost:3000/users
 # → SELECT * FROM "user"
 ```
 
-### 테넌트 ID는 어디서 가져와야 하나요?
+### 테넌트 ID의 출처
 
 `X-Tenant-Id` 헤더가 가장 간단합니다. 프로덕션에서는 다음 방법도 씁니다.
 
@@ -350,7 +350,7 @@ Stingerloom은 현재 PostgreSQL에서만 스키마 기반 멀티테넌시를 �
 | 테넌트별 백업/복구 | DB 단위 | DB 단위 | DB 단위 | 간단 |
 | 운영 복잡도 | 낮음 | 낮음 | 가장 낮음 | 가장 높음 |
 
-### "라운드 트립"이란?
+### "라운드 트립"의 의미
 
 라운드 트립(round trip)은 애플리케이션과 PostgreSQL 서버 사이에서 요청과 응답을 한 번 주고받는 일입니다. 라운드 트립마다 적어도 네트워크 지연이 한 번 생깁니다. 데이터베이스까지 10ms가 걸린다면 라운드 트립 5번은 데이터를 받기도 전에 50ms의 오버헤드가 됩니다.
 
@@ -391,7 +391,7 @@ App                                    PostgreSQL
 
 단점: 테넌트 읽기마다 트랜잭션으로 감싸야 하므로 지연이 늘어납니다.
 
-#### 테넌트 마커는 유효한 PG 식별자여야 합니다
+#### 테넌트 마커의 PG 식별자 규칙
 
 `search_path`가 기본 전략이므로 `MetadataContext.run(<value>)`에 넘긴 값은 `SET LOCAL search_path TO "<value>"`에서 그대로 PostgreSQL 스키마 이름으로 쓰입니다. 그래서 마커는 유효한 PostgreSQL 식별자여야 합니다. 허용하는 문자는 알파벳, 숫자, 언더스코어, 하이픈, `$`이고 첫 글자는 알파벳이나 언더스코어여야 합니다.
 
@@ -553,7 +553,7 @@ import {
 - 모든 삽입에서 테넌트 값을 검증합니다.
 - 테넌트를 넘나드는 접근이 의도된 관리자 작업에는 명시적인 탈출구를 제공합니다.
 
-### 언제 `schema_qualified` 대신 선택해야 하나요?
+### `schema_qualified` 대신 선택하는 경우
 
 | 항목 | `schema_qualified` (전략 2) | `tenant_column` (전략 3) |
 |---|---|---|
@@ -583,7 +583,7 @@ await em.register({
 });
 ```
 
-### 자동으로 일어나는 일
+### 자동으로 적용되는 동작
 
 `tenantStrategy: "tenant_column"`을 설정하면 엔티티별 코드 없이도 ORM이 모든 엔티티에 네 가지 동작을 적용합니다.
 
@@ -592,7 +592,7 @@ await em.register({
 3. **읽기 WHERE 주입.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, 그리고 `SelectQueryBuilder.getMany()` / `getCount()` / `exists()`에 `AND tenant_id = ?`가 자동으로 붙습니다. eager JOIN과 관계 로더도 같은 조건을 물려받습니다. [Raw Pipeline](./raw-pipeline.md#멀티테넌시)의 `em.pipe()` 배치와 `count()`에도 붙습니다.
 4. **쓰기 WHERE 주입.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()`, 그리고 `save()` / `saveMany()`의 UPDATE 분기까지 모두 `AND tenant_id = ?`를 받습니다. 그래서 테넌트 A에서 실행한 쿼리는 테넌트 B의 행을 건드리지 못합니다. upsert 계열도 충돌 분기에 같은 조건이 붙습니다. 자세한 내용은 아래 표에 있습니다. 테넌트 컨텍스트가 아예 없을 때의 동작은 아래의 `tenantOnMissingContext` 정책을 따릅니다.
 
-#### 어떤 쓰기 경로에 predicate가 붙나
+#### 조건이 붙는 쓰기 경로
 
 | 연산 | 테넌트 A에서 테넌트 B 소유 행을 건드릴 때 |
 |------|---------------------------------------------|
@@ -811,7 +811,7 @@ PostgreSQL에서 데이터베이스가 강제하는 행 수준 격리가 필요�
 
 `tenantStrategy: "database"`는 테넌트마다 자기만의 물리 데이터베이스를 줍니다. 풀도, DDL도, 백업 파일도 테넌트마다 따로 있습니다. ORM은 이 전략을 `MultiTenantEntityManager`라는 얇은 프록시로 제공합니다. 이 프록시는 호출마다 `MetadataContext.getCurrentTenant()`를 보고 알맞은 테넌트의 `EntityManager`에 위임합니다. 내부에서 각 테넌트는 `DatabaseClient`가 멀티 DB 설정에 이미 쓰는 이름 있는 연결(named connection) 기능 위에서 동작합니다. 그래서 이 전략은 쿼리 엔진을 깊게 다시 쓴 것이 아닙니다.
 
-### 언제 선택하나요
+### 선택하는 경우
 
 다음 중 하나라도 해당하면 database 전략이 맞습니다.
 
@@ -866,7 +866,7 @@ await MetadataContext.run("globex", () => em.find(User)); // → app_globex DB
 
 둘을 함께 써도 됩니다. 같은 테넌트의 항목이 양쪽에 있으면 map이 우선합니다.
 
-### Eager 프로비저닝
+### 사전 프로비저닝
 
 지연 해석은 개발 환경에서는 괜찮습니다. 하지만 프로덕션 트래픽이 첫 요청에서 콜드 스타트 비용을 치르면 안 됩니다.
 
@@ -892,7 +892,7 @@ publicTenantBehavior: "throw"     // MISSING_TENANT_CONTEXT로 거부
 
 모든 요청에 테넌트가 *반드시* 설정되어야 하는 HTTP 서비스에서는 `"throw"`를 권장합니다. 그러면 컨텍스트 누락이 아무도 모르게 admin DB에 쓰는 대신 즉시 드러나는 버그가 됩니다.
 
-### Cross-tenant 트랜잭션은 금지됩니다 {#cross-tenant-transactions-are-forbidden}
+### 테넌트 간 트랜잭션 금지 {#cross-tenant-transactions-are-forbidden}
 
 SQL 트랜잭션은 연결 하나에 묶이고 연결은 물리 DB 하나에 묶입니다. 그래서 트랜잭션 도중에 테넌트를 바꾸면 원자성(atomicity)을 보장하지 못합니다.
 
@@ -972,7 +972,7 @@ class UserService {
 
 `@InjectEntityManager()`도 그대로 동작합니다. `tenantStrategy: "database"`에서는 `MultiTenantEntityManager`가 가진 admin / public `EntityManager`로 해석됩니다. 그래서 전역 테이블을 다룰 때 알맞습니다.
 
-### Connection pool 예산
+### 연결 풀 예산
 
 물리 격리의 단점은 연결 풀이 테넌트 수만큼 *불어난다*는 점입니다. 테넌트 50개에 `pool.max: 10`이면 DB 서버에 연결 500개를 요구합니다. 그런데 PostgreSQL의 기본 `max_connections`는 100입니다. 다음처럼 보수적으로 설정하세요.
 
@@ -980,7 +980,7 @@ class UserService {
 - `tenantConnectionTtlMs`로 유휴 테넌트 풀을 비우고 필요할 때 다시 만듭니다.
 - `DatabaseClient.getInstance().getRegisteredNames().length`를 모니터링해서 등록된 연결 수가 예상보다 늘어나는 시점을 알아챕니다.
 
-### Raw SQL은 안전합니다 (경고 없음)
+### Raw SQL의 안전성 (경고 없음)
 
 격리를 연결 수준에서 강제하므로 `em.query("SELECT * FROM user")`는 항상 현재 테넌트의 DB만 봅니다. `tenant_column`의 raw SQL 경고는 이 전략에서 나오지 않습니다. 우회할 `WHERE tenant_id = ?` 자체가 없기 때문입니다.
 

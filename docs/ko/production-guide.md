@@ -1,4 +1,4 @@
-# Production 운영 가이드
+# 프로덕션 운영 가이드
 
 프로덕션 서비스에서 Stingerloom ORM을 안전하게 운영하려면 개발 환경과 다른 설정과 운영 전략이 필요합니다. 개발 환경에서 프로덕션으로 옮기기 전에 아래 항목을 꼭 확인하세요.
 
@@ -6,7 +6,7 @@
 
 ## 1. 권장 프로덕션 설정
 
-### Connection Pool 크기
+### 연결 풀 크기
 
 연결 풀 크기는 DB 서버의 `max_connections`와 애플리케이션 인스턴스 수를 기준으로 정합니다.
 
@@ -63,7 +63,7 @@ Recommended pool.max = floor(DB max_connections / app instances) * 0.8
 
 ---
 
-### Query Timeout
+### 쿼리 타임아웃
 
 쿼리 타임아웃은 쿼리가 끝없이 실행되어 연결이 누수되는 일을 막습니다.
 
@@ -99,7 +99,7 @@ const user = await em.findOne(User, {
 
 ---
 
-### Retry 옵션
+### 재시도 옵션
 
 `retry`는 `register()`가 여는 연결을 다시 시도합니다. 그래서 데이터베이스가 아직 시작 중이거나 네트워크가 잠깐 끊겨도 애플리케이션을 시작할 수 있습니다.
 
@@ -168,7 +168,7 @@ const slowQueries = em.getQueryLog().filter(
 
 ---
 
-## 2. synchronize에서 Migration으로 전환하기
+## 2. synchronize에서 마이그레이션으로 전환하기
 
 ### `synchronize: true`가 프로덕션에서 위험한 이유
 
@@ -276,9 +276,9 @@ pm2 restart app     # Restart the app
 
 ---
 
-## 3. Zero-Downtime Migration 전략
+## 3. 무중단 마이그레이션 전략
 
-### 안전한 Migration -- 즉시 적용 가능
+### 안전한 마이그레이션: 즉시 적용 가능
 
 | 작업 | 안전? | 이유 |
 |------|-------|------|
@@ -305,7 +305,7 @@ export class AddOptionalBioToUsers extends Migration {
 }
 ```
 
-### 위험한 Migration -- 단계별 적용 필요
+### 위험한 마이그레이션: 단계별 적용 필요
 
 | 작업 | 위험 원인 | 대응 전략 |
 |------|-----------|-----------|
@@ -343,7 +343,7 @@ export class Step3_DropOldColumn extends Migration {
 }
 ```
 
-### Blue-Green 배포 Migration 순서
+### Blue-Green 배포 마이그레이션 순서
 
 Blue-Green 배포에서는 이전 버전(Blue)과 새 버전(Green)이 같은 DB에 동시에 접근합니다.
 
@@ -367,7 +367,7 @@ pnpm migrate:run   # Final cleanup: DROP old columns, RENAME, etc.
 
 ---
 
-## 4. Connection Pool 모니터링
+## 4. 연결 풀 모니터링
 
 ### 풀 상태 확인
 
@@ -403,9 +403,9 @@ const longRunning = processlist.filter((p) => p.Time > 30);
 console.log("Running for 30+ seconds:", longRunning.length);
 ```
 
-### Leak Detection (`ConnectionLeakDetector`)
+### 연결 누수 감지 (`ConnectionLeakDetector`)
 
-::: warning `pool.leakDetectionThresholdMs`는 현재 동작하지 않아요
+::: warning `pool.leakDetectionThresholdMs`는 현재 동작하지 않습니다
 `PoolOptions`에 이 옵션이 선언되어 있고 `ConnectionLeakDetector` 클래스도 export되어 있습니다. 하지만 둘을 연결하는 코드가 없습니다. `leakDetectionThresholdMs`를 읽는 드라이버가 하나도 없으므로 지금은 값을 지정해도 효과가 없습니다.
 
 원인은 연결 경로가 서로 다르다는 데 있습니다. Detector는 `connector.acquireConnection()`이 반환하는 `IConnection` 래퍼를 추적합니다. 반면 ORM의 실제 트랜잭션 경로는 `IDataSource.createConnection()`으로 래퍼가 없는 드라이버 연결을 꺼내 씁니다. 그리고 `close()`, `commit()`, `rollback()` 등 여러 지점에서 그 연결을 해제합니다. 둘을 연결하려면 모든 드라이버의 연결 생명주기를 바꿔야 합니다. 이때 해제 경로를 하나라도 빠뜨리면 Detector는 없는 누수를 계속 보고합니다. 그래서 절반만 연결하지 않고 작업을 미뤄 두었습니다.
@@ -450,7 +450,7 @@ Detector는 관찰만 합니다. 트랜잭션이 COMMIT 중일 수 있으므로 
 | 백그라운드 잡 / 대용량 배치 임포트 | `120000` (2분) 이상 |
 | 비활성화 (단기 스크립트 등) | `0` |
 
-### Slow Query를 통한 커넥션 누수 감지
+### 느린 쿼리로 연결 누수 감지
 
 트랜잭션을 열고 닫지 않으면 연결이 풀에 반환되지 않습니다. 그래서 풀이 고갈됩니다. `queryTimeout`으로 오래 실행되는 쿼리를 자동으로 종료하세요.
 
@@ -469,7 +469,7 @@ await em.register({
 });
 ```
 
-### 커넥션 누수 트러블슈팅 가이드
+### 연결 누수 트러블슈팅 가이드
 
 증상: `acquireTimeoutMs` 초과 에러가 자주 발생합니다.
 
@@ -601,7 +601,7 @@ bootstrap();
 
 ---
 
-## 6. 대규모 Multi-Tenancy 운영
+## 6. 대규모 멀티테넌시 운영
 
 ### 수백 개 테넌트의 메모리 영향
 
@@ -615,7 +615,7 @@ bootstrap();
 
 테넌트 레이어는 `MetadataContext.run()`으로 생성됩니다. 그리고 콜백이 끝나면 자동으로 정리됩니다. 테넌트가 1,000개라도 모든 테넌트가 연결 풀 하나를 함께 씁니다.
 
-### Connection Pool 공유 전략
+### 연결 풀 공유 전략
 
 PostgreSQL 스키마 기반 멀티테넌시에서는 모든 테넌트가 연결 풀 하나를 공유합니다. 트랜잭션마다 `SET LOCAL search_path`로 스키마를 전환하므로 연결을 더 만들 필요가 없습니다.
 
@@ -817,7 +817,7 @@ bootstrap();
 
 ---
 
-## Next Steps
+## 다음 단계
 
 - [Migrations](./migrations.md): 마이그레이션 파일 작성과 실행
 - [Multi-Tenancy](./multi-tenancy.md): 레이어드 메타데이터 시스템 상세

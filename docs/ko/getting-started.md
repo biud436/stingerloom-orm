@@ -2,7 +2,7 @@
 
 설치부터 첫 CRUD까지 5분이면 충분합니다.
 
-## ORM이란?
+## ORM 개요
 
 웹 애플리케이션의 데이터는 서로 전혀 다른 두 세계에 있습니다. TypeScript 코드에서 데이터는 속성과 메서드를 가진 객체입니다. 데이터베이스에서 데이터는 행과 컬럼으로 이루어진 테이블입니다.
 
@@ -90,7 +90,7 @@ yarn add @stingerloom/orm reflect-metadata pg
 
 :::
 
-### reflect-metadata가 왜 필요할까?
+### reflect-metadata가 필요한 이유
 
 클래스 속성에 `@Column()`을 붙이면 TypeScript는 컴파일 타임에 그 속성의 타입과 이름 같은 정보를 기록합니다. 하지만 기본 설정에서는 이 정보가 JavaScript로 컴파일될 때 사라집니다.
 
@@ -176,7 +176,7 @@ export type User = InferEntity<typeof User>;
 - `t.varchar(255)`: `VARCHAR(255)` 컬럼입니다. 빌더 하나로 SQL 타입과 추론되는 TypeScript 타입(`string`)이 함께 정해집니다. 그래서 두 타입은 절대 어긋나지 않습니다.
 - `InferEntity<typeof User>`: 스키마에서 행 타입을 꺼냅니다. 별도 인터페이스도 코드 생성도 필요 없습니다.
 
-::: tip 데코레이터가 더 좋다면?
+::: tip 데코레이터를 선호하는 경우
 클래스와 데코레이터를 쓰는 스타일이 좋거나 NestJS를 쓰고 있다면 같은 엔티티를 `@Entity` / `@Column`으로도 표현할 수 있습니다. 두 방식은 똑같은 메타데이터를 생성합니다.
 
 ```typescript
@@ -386,7 +386,7 @@ await em.register({
 
 Stingerloom ORM은 `@stingerloom/orm/nestjs` subpath export로 NestJS 통합 모듈을 제공합니다.
 
-### 왜 별도의 모듈이 필요할까?
+### 별도 모듈이 필요한 이유
 
 NestJS는 **의존성 주입**(Dependency Injection, DI)을 사용합니다. `new`로 객체를 직접 만들지 않고 필요한 것을 선언하면 NestJS가 알아서 제공합니다. ORM 모듈은 ORM과 NestJS를 잇는 다리입니다. 이 모듈은 `EntityManager`와 리포지토리를 생성하고 NestJS의 DI 컨테이너에 등록합니다. 그래서 서비스는 생성자 파라미터로 이 객체를 주입받을 수 있습니다.
 
@@ -494,7 +494,7 @@ export class UsersService {
 }
 ```
 
-### 멀티 DB (Named Connections)
+### 멀티 DB (이름 있는 연결)
 
 `forRoot()`와 `forFeature()`에 `connectionName`을 넘기면 여러 데이터베이스를 동시에 쓸 수 있습니다.
 

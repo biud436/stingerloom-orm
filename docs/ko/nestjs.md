@@ -1,4 +1,4 @@
-# NestJS Integration
+# NestJS 통합
 
 ## NestJS 통합이 필요한 이유
 
@@ -10,7 +10,7 @@ Stingerloom NestJS 통합 모듈은 세 가지 문제를 해결합니다.
 2. **리포지토리 주입**: 엔티티별 리포지토리를 NestJS provider로 등록합니다. 그래서 다른 서비스처럼 데코레이터 하나로 주입할 수 있습니다.
 3. **멀티 데이터베이스 지원**: 여러 데이터베이스에 연결할 때 연결별 DI 토큰을 관리합니다. 그래서 각 리포지토리가 올바른 EntityManager에 연결됩니다.
 
-## Installation
+## 설치
 
 NestJS 통합은 subpath export로 제공됩니다. 별도 패키지를 설치할 필요가 없습니다.
 
@@ -20,9 +20,9 @@ import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
 
 ---
 
-## Quick Start
+## 빠른 시작
 
-### Step 1: forRoot()으로 모듈 등록하기
+### 1단계: forRoot()로 모듈 등록하기
 
 루트 `AppModule`에서 `forRoot()`를 호출합니다. 데이터베이스 연결은 여기서 맺어집니다.
 
@@ -62,7 +62,7 @@ NestJS가 `StingerloomOrmModule.forRoot(options)`를 처리할 때 네 가지 �
 
 핵심은 `forRoot()`를 데이터베이스 연결마다 한 번만 루트 모듈에서 호출해야 한다는 점입니다.
 
-### Step 2: forFeature()로 Feature Module에 엔티티 등록하기
+### 2단계: forFeature()로 기능 모듈에 엔티티 등록하기
 
 ```typescript
 // cats.module.ts
@@ -96,7 +96,7 @@ NestJS가 `StingerloomOrmModule.forFeature([Cat])`를 처리하면 엔티티마�
 - 해당 연결의 `entities` 배열에 없는 엔티티를 쓰면 연결 이름을 밝힌 `EntityMetadataNotFoundError`를 던집니다.
 - 맞는 `forFeature()`를 import하지 않고 리포지토리를 주입하면 토큰의 Symbol description이 추가해야 할 `forFeature([...])` 호출을 알려 줍니다.
 
-### Step 3: 서비스에 주입하기
+### 3단계: 서비스에 주입하기
 
 ```typescript
 // cats.service.ts
@@ -132,7 +132,7 @@ export class CatsService {
 
 ---
 
-## Decorators
+## 데코레이터
 
 ### @InjectRepository(Entity, connectionName?)
 
@@ -185,7 +185,7 @@ export class CatsService {
 
 ---
 
-## Lifecycle Management
+## 생명주기 관리
 
 `StingerloomOrmService`는 NestJS 훅으로 EntityManager의 생명주기를 자동으로 관리합니다.
 
@@ -211,7 +211,7 @@ bootstrap();
 
 ---
 
-## Multi-Database Connections
+## 멀티 DB 연결
 
 ### 멀티 DB가 필요한 경우
 
@@ -219,13 +219,13 @@ bootstrap();
 
 DI 프레임워크에서는 문제가 하나 생깁니다. 서비스가 `BaseRepository<Event>`를 요청하면 NestJS는 어느 데이터베이스의 리포지토리를 주입해야 할까요? 답은 **token scoping**입니다. 연결마다 고유한 DI 토큰 세트를 둡니다.
 
-### Token scoping 동작 원리
+### token scoping 동작 원리
 
 `forRoot(options, "analytics")`를 호출하면 EntityManager는 기본 `EntityManager` 클래스 토큰 대신 `"STINGERLOOM_ENTITY_MANAGER_analytics"` 토큰으로 생성됩니다. `forFeature([Event], "analytics")`를 호출하면 Event의 리포지토리는 `Symbol("INJECT_REPOSITORIES_TOKEN_Event")` 대신 `Symbol("INJECT_REPOSITORIES_TOKEN_Event_analytics")`로 등록됩니다.
 
 그래서 연결 이름이 없는 `@InjectRepository(Event)`와 `@InjectRepository(Event, "analytics")`는 같은 엔티티 클래스라도 완전히 다른 provider로 해석됩니다.
 
-### Setup
+### 설정
 
 ```typescript
 // app.module.ts
@@ -259,7 +259,7 @@ DI 프레임워크에서는 문제가 하나 생깁니다. 서비스가 `BaseRep
 export class AppModule {}
 ```
 
-### Feature Modules
+### 기능 모듈
 
 ```typescript
 // analytics.module.ts
@@ -272,7 +272,7 @@ export class AppModule {}
 export class AnalyticsModule {}
 ```
 
-### Named Connection 주입하기
+### 이름 있는 연결 주입하기
 
 데코레이터의 두 번째 인자로 연결 이름을 전달합니다.
 
@@ -294,7 +294,7 @@ export class AnalyticsService {
 
 ---
 
-## Event Subscriber 등록하기
+## 이벤트 구독자 등록하기
 
 `EntitySubscriber` 인스턴스는 모듈을 초기화할 때 등록합니다.
 
@@ -335,7 +335,7 @@ const repo = ormService.getRepository(User);
 
 ---
 
-## Exported API
+## 내보내는 API
 
 모든 항목은 `@stingerloom/orm/nestjs`에서 import합니다.
 
@@ -349,7 +349,7 @@ const repo = ormService.getRepository(User);
 | `getOrmServiceToken(name?)` | 서비스 주입용 토큰 헬퍼 |
 | `makeInjectRepositoryToken(entity, name?)` | 리포지토리 provider용 토큰 헬퍼 |
 
-## Next Steps
+## 다음 단계
 
 - [EntityManager](./entity-manager.md): 전체 CRUD API 레퍼런스
 - [Events & Subscribers](./events.md): EntitySubscriber 패턴 자세히 보기

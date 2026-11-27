@@ -1,4 +1,4 @@
-# Query Builder
+# 쿼리 빌더
 
 `find()`와 `findOne()`만으로 해결되는 쿼리가 생각보다 많습니다. 조건으로 거르기, 관계 함께 로드하기, 페이지네이션 같은 일상적인 작업은 대부분 이 두 메서드로 충분합니다.
 
@@ -29,15 +29,15 @@ Stingerloom은 쿼리 빌더를 두 가지 제공합니다. 선택 기준은 단
 | `GROUP BY`, `HAVING`, 서브쿼리, `DISTINCT`, CTE | [집계 & 서브쿼리](./query-builder-aggregations.md) |
 | 페이지네이션, 잠금, 인덱스 힌트, `validate()`, 실행, `prepare()` | [실행 & 결과](./query-builder-execution.md) |
 | `when()`, `pipe()`, `whereHas()`, `withCount()`, scope | [편의 패턴](./query-builder-patterns.md) |
-| `UPDATE … ORDER BY … LIMIT`: `createUpdateBuilder` | [UpdateQueryBuilder](#updatequerybuilder-—-타입-안전한-update-order-by-limit) |
-| `INSERT … ON CONFLICT` 표현식: `createInsertBuilder` | [InsertQueryBuilder](#insertquerybuilder-—-표현식-기반-on-conflict) |
+| `UPDATE … ORDER BY … LIMIT`: `createUpdateBuilder` | [UpdateQueryBuilder](#updatequerybuilder-타입-안전한-update-order-by-limit) |
+| `INSERT … ON CONFLICT` 표현식: `createInsertBuilder` | [InsertQueryBuilder](#insertquerybuilder-표현식-기반-on-conflict) |
 | UNION, 재귀 CTE, 윈도 함수: `RawQueryBuilder` | [Raw SQL & CTE](./raw-sql.md) |
 
 ---
 
-## SelectQueryBuilder — 타입이 있는 쿼리
+## SelectQueryBuilder: 타입이 있는 쿼리
 
-### 왜 쿼리 빌더가 필요한가
+### 쿼리 빌더가 필요한 이유
 
 본론에 앞서 짚어 볼 질문이 있습니다. 모든 쿼리를 `find()`로 처리하면 안 될까요?
 
@@ -107,7 +107,7 @@ const users = await em
 
 > 참고: `userRepo.createQueryBuilder("u")`처럼 리포지토리에서도 쿼리 빌더를 만들 수 있습니다. 동작은 같습니다.
 
-### WHERE — 행 거르기
+### WHERE: 행 거르기
 
 `where()`는 조건의 복잡도에 따라 네 가지 형태를 받습니다.
 
@@ -168,7 +168,7 @@ qb.where([
 컬럼 이름을 받는 형태는 모두 타입 안전합니다. `"age"`와 `"status"`는 `keyof User`에서 자동 완성됩니다.
 필터 객체의 키도 엔티티를 기준으로 검사합니다. 그래서 오타는 컴파일 에러로 잡힙니다.
 
-### 조건 엮기 — AND와 OR
+### 조건 엮기: AND와 OR
 
 여러 조건은 `andWhere()`와 `orWhere()`로 잇습니다.
 
@@ -193,7 +193,7 @@ qb.where("isActive", true)
 
 이 조건은 활성 상태이면서 18세 이상인 사용자이거나 나이와 관계없이 admin인 사용자를 뜻합니다.
 
-`WHERE status = 'active' OR (role = 'admin' AND verified = true)`처럼 괄호 그룹이 필요하면 [`andWhereGroup()` / `orWhereGroup()`](./query-builder-patterns.md#그룹-조건-—-andwheregroup-orwheregroup)을 쓰세요.
+`WHERE status = 'active' OR (role = 'admin' AND verified = true)`처럼 괄호 그룹이 필요하면 [`andWhereGroup()` / `orWhereGroup()`](./query-builder-patterns.md#그룹-조건-andwheregroup-orwheregroup)을 쓰세요.
 
 ### 자주 쓰는 WHERE 헬퍼
 
@@ -223,7 +223,7 @@ qb.whereLike("name", "%alice%");
 
 ---
 
-## UpdateQueryBuilder — 타입 안전한 `UPDATE … ORDER BY … LIMIT`
+## UpdateQueryBuilder: 타입 안전한 `UPDATE … ORDER BY … LIMIT`
 
 `em.updateMany()`는 "WHERE에 맞는 모든 행을 갱신한다"는 일상적인 경우를 처리합니다. 하지만 그 이상이 필요한 패턴도 있습니다.
 
@@ -307,7 +307,7 @@ WHERE는 SELECT가 받는 모든 형태를 받습니다. `qAlias()` 표현식(`i
 - **`@UpdateTimestamp`**: 직접 설정하지 않았다면 값이 자동으로 들어갑니다.
 - **`@Version` / 낙관적 잠금**: 적용되지 않습니다. 단일 엔티티 save가 아니라 벌크 DML이기 때문입니다. `em.updateMany()`와 마찬가지로 버전을 기록해야 하는 쓰기는 `em.save(entity)`로 하세요.
 
-### `build()` / `toSql()` — 실행 없이 들여다보기
+### `build()` / `toSql()`: 실행 없이 들여다보기
 
 `build()`와 `toSql()`은 모두 파라미터화된 SQL을 반환합니다. 테스트, 로깅, 디버깅에 유용합니다. 테넌트 범위 조건은 여기서 적용되지 않고 execute 시점에 붙습니다. 그래서 결과 텍스트에는 테넌트 조건이 들어 있지 않습니다.
 
@@ -340,7 +340,7 @@ const { text, values } = em
 
 ---
 
-## InsertQueryBuilder — 표현식 기반 `ON CONFLICT`
+## InsertQueryBuilder: 표현식 기반 `ON CONFLICT`
 
 충돌이 나면 `em.upsert()`는 넘긴 컬럼을 제안한 값으로 덮어쓸 수만 있습니다(`col = EXCLUDED.col`). ORM이 직접 관리하는 `@Version` / `@UpdateTimestamp` / `@DeletedAt`만 예외입니다. 그래서 새 값을 저장된 값에서 계산해야 할 때는 이 형태로 표현할 수 없습니다. 카운터 누적, 최댓값 유지, 병합이 그런 경우입니다. 읽고 계산해서 다시 쓰는 라운드 트립은 동시성 아래에서 올바르게 동작하려면 행 잠금이 필요합니다.
 
@@ -371,7 +371,7 @@ await em.createInsertBuilder(SyncMarker)
 - 저장한 행을 반환하는 `executeAndReturn()`
 - `SelectQueryBuilder`가 조회한 행을 삽입하는 `values(columns, query)` (`INSERT ... SELECT`)
 
-전체 레퍼런스와 다이얼렉트 지원표는 [EntityManager — 쓰기](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder)에 있습니다.
+전체 레퍼런스와 다이얼렉트 지원표는 [EntityManager: 쓰기 & 트랜잭션](./entity-manager-writes.md#표현식-기반-upsert-createinsertbuilder)에 있습니다.
 
 ---
 
@@ -388,7 +388,7 @@ await em.createInsertBuilder(SyncMarker)
 
 UNION, 재귀 CTE, 복잡한 윈도 함수, `DISTINCT ON`처럼 `SelectQueryBuilder`의 한계를 넘는 쿼리가 필요하면 [Raw SQL & CTE](./raw-sql.md)의 `RawQueryBuilder`를 쓰세요. 일상적인 쿼리는 `SelectQueryBuilder`로 작성하고 특수한 쿼리에만 `RawQueryBuilder`를 쓰는 것이 Stingerloom의 기본 전략입니다.
 
-## 더 가볼 곳
+## 더 읽을거리
 
 - [Pagination & Streaming](./pagination.md): 오프셋 / 커서 / 스트리밍 전략
 - [EntityManager](./entity-manager.md): `find()`, `save()` 같은 일상 CRUD

@@ -1,12 +1,12 @@
-# Logging & Diagnostics
+# 로깅 & 진단
 
 Stingerloom의 진단 도구는 ORM이 내부에서 하는 일을 보여 줍니다. 이 도구로 성능 문제를 찾고 해결합니다.
 
 ---
 
-## Query Logging
+## 쿼리 로깅
 
-### 쿼리 로깅이 왜 필요해요?
+### 쿼리 로깅이 필요한 이유
 
 ORM은 SQL을 대신 작성하므로 편합니다. 하지만 문제가 생기면 데이터베이스에 실제로 보낸 SQL을 확인해야 합니다. 데이터가 이상할 때, 페이지가 느릴 때, 트랜잭션에 데드락이 걸렸을 때가 그렇습니다. 쿼리 로깅을 켜면 그 SQL이 바로 보입니다.
 
@@ -68,9 +68,9 @@ const log = em.getQueryLog();
 
 ---
 
-## N+1 Detection
+## N+1 감지
 
-### N+1 문제가 뭐예요?
+### N+1 문제
 
 N+1 문제는 ORM을 쓰는 애플리케이션에서 가장 흔한 성능 문제입니다.
 
@@ -125,7 +125,7 @@ await em.register({
 
 경고는 EntityManager가 살아 있는 동안 엔티티마다 한 번만 출력됩니다. 그래서 같은 경고가 로그를 뒤덮지 않습니다.
 
-### 경고가 뜨면 이렇게 해결해요
+### N+1 경고 해결 방법
 
 **방법 1: find 호출 시 `relations` 옵션 사용:**
 
@@ -151,9 +151,9 @@ author!: User;
 
 ---
 
-## Slow Query Warnings
+## 느린 쿼리 경고
 
-### 느린 쿼리 감지가 왜 필요해요?
+### 느린 쿼리 감지가 필요한 이유
 
 API 엔드포인트가 800ms에 응답해도 불평하는 사람은 없습니다. 하지만 트래픽이 늘어 그 쿼리가 초당 50번 실행되면 데이터베이스가 포화됩니다. 느린 쿼리 경고는 이런 문제가 장애로 번지기 전에 미리 알립니다.
 
@@ -176,7 +176,7 @@ await em.register({
 [QueryTracker] [SLOW QUERY] 847ms: SELECT "id", "title", "body", "created_at" FROM "post" WHERE "body" LIKE '%search term%' ORDER BY "created_at" DESC
 ```
 
-### 느린 쿼리를 발견하면 이렇게 해결해요
+### 느린 쿼리 해결 방법
 
 느린 쿼리는 대부분 다음 중 하나에 해당합니다.
 
@@ -198,9 +198,9 @@ email!: string;
 
 ---
 
-## EXPLAIN -- Query Plan Analysis
+## EXPLAIN: 실행 계획 분석
 
-### EXPLAIN이 왜 중요해요?
+### EXPLAIN이 중요한 이유
 
 쿼리가 느릴 때 EXPLAIN은 *왜* 느린지 알려 줍니다. EXPLAIN이 보여 주는 데이터베이스의 실행 계획에는 다음 내용이 나옵니다.
 
@@ -314,9 +314,9 @@ PostgreSQL의 `cost`는 예상 I/O와 CPU 작업량을 나타내는 추상 단�
 
 ---
 
-## Query Timeout
+## 쿼리 타임아웃
 
-### 쿼리 타임아웃이 왜 필요해요?
+### 쿼리 타임아웃이 필요한 이유
 
 타임아웃이 없는 쿼리는 시한폭탄입니다. 실수로 5천만 행을 스캔하는 쿼리가 실행되면 그 쿼리는 데이터베이스 연결을 끝없이 점유합니다. 잠금을 잡은 채 사용자 입력을 기다리는 트랜잭션도 마찬가지입니다. 연결 풀의 크기가 10이면 이런 쿼리 10개만으로 애플리케이션 전체가 멈춥니다.
 
@@ -356,7 +356,7 @@ Stingerloom은 JavaScript 타이머가 아니라 데이터베이스의 네이티
 
 ---
 
-## Production Recommendations
+## 프로덕션 권장 설정
 
 | Setting | Development | Production | 이유 |
 |---------|-------------|------------|------|
@@ -378,7 +378,7 @@ Stingerloom은 JavaScript 타이머가 아니라 데이터베이스의 네이티
 
 ---
 
-## Next Steps
+## 다음 단계
 
 - [설정](./configuration.md): 연결 옵션과 런타임 옵션 전체
 - [이벤트 & 구독자](./events.md): 엔티티 생명주기 이벤트에 반응하기

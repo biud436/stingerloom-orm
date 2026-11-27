@@ -1,6 +1,6 @@
 # Raw Pipeline
 
-## 왜 Entity 변환이 비용인가
+## 엔티티 변환의 비용
 
 `em.find(User)`를 호출하면 내부에서 많은 일이 일어납니다. ORM은 SQL 쿼리를 보내고 데이터베이스 드라이버에서 행을 받습니다. 그리고 각 행을 타입이 지정된 엔티티 인스턴스로 변환합니다. 이 변환에는 여러 작업이 들어갑니다. 컬럼 이름을 다시 매핑하고 컬럼 트랜스포머를 적용합니다. 객체를 역직렬화하고 관계도 로드합니다.
 
@@ -24,7 +24,7 @@
 
 Raw Pipeline 플러그인이 바로 이 일을 합니다. 창고에 직접 접근하게 해 줍니다.
 
-## em.query()와 뭐가 다른가
+## em.query()와의 차이
 
 "`em.query(sql)`로도 raw 결과를 받을 수 있는데 플러그인이 왜 필요한가요?"라는 의문이 들 수 있습니다.
 
@@ -101,7 +101,7 @@ for await (const batch of em.pipe(User, { batchSize: 5000 }).raw()) {
 }
 ```
 
-### WHERE 조건 — em.find()와 동일한 문법
+### WHERE 조건: em.find()와 같은 문법
 
 파이프라인의 `where` 옵션은 `em.find()`와 완전히 같은 리졸버를 씁니다. 그래서 모든 필터 연산자가 똑같이 동작합니다.
 
@@ -279,7 +279,7 @@ for await (const batch of em.pipe(User, {
 
 #### 값이 겹치는 컬럼으로 정렬할 때
 
-Keyset 배치는 [`findWithCursor()`](./pagination.md#cursor-based-pagination)와 같은 방식으로 페이지를 넘깁니다. 위 예시처럼 기본 키로 정렬하면 컬럼 하나로 끝납니다. 다른 컬럼으로 정렬하면 그 컬럼 다음에 기본 키로 정렬합니다. 그래서 같은 값을 가진 행들이 배치 경계에 걸려도 빠지거나 두 번 읽히지 않습니다. NULL은 모든 다이얼렉트에서 오름차순이면 맨 뒤에 모이고 내림차순이면 맨 앞에 모입니다.
+Keyset 배치는 [`findWithCursor()`](./pagination.md#커서-기반-페이지네이션)와 같은 방식으로 페이지를 넘깁니다. 위 예시처럼 기본 키로 정렬하면 컬럼 하나로 끝납니다. 다른 컬럼으로 정렬하면 그 컬럼 다음에 기본 키로 정렬합니다. 그래서 같은 값을 가진 행들이 배치 경계에 걸려도 빠지거나 두 번 읽히지 않습니다. NULL은 모든 다이얼렉트에서 오름차순이면 맨 뒤에 모이고 내림차순이면 맨 앞에 모입니다.
 
 ```
 Batch 2:  SELECT * FROM "order" WHERE ...
@@ -347,7 +347,7 @@ const activeAdults = await em.pipe(User)
   .collect();
 ```
 
-::: tip filter() vs where
+::: tip filter()와 where 비교
 되도록 `where`로 거르세요. `where`는 데이터베이스에서 거르므로 전송되는 데이터 양이 줄어듭니다. `.filter()`는 SQL로 표현할 수 없는 조건에만 쓰세요. 복잡한 JavaScript 로직이나 필드 사이의 계산이 그 예입니다.
 
 ```typescript
@@ -495,7 +495,7 @@ for await (const batch of em.pipe(User, {
 }
 ```
 
-### Binary 모드 벤치마크 — 실제 데이터베이스
+### Binary 모드 벤치마크: 실제 데이터베이스
 
 같은 벤치마크를 로컬 네트워크의 실제 PostgreSQL과 MySQL에서 실행했습니다. 결과는 SQLite 인메모리 벤치마크와 매우 다릅니다. 알맞은 방법을 고르려면 그 이유를 이해해야 합니다.
 
@@ -558,7 +558,7 @@ const all = await em.find(User);
 
 행이 100K개이면 `em.find()`는 44 MB를 한 번에 로드합니다. 1M행이면 약 440 MB가 됩니다. 10M행이면 메모리가 부족합니다. `pipe()`는 행 수와 관계없이 약 27 MB를 유지합니다. 이것이 핵심입니다.
 
-::: tip 원격 DB에서 pipe() vs em.find() 선택 가이드
+::: tip 원격 DB에서 pipe()와 em.find() 선택 가이드
 - **50K행 이하, 메모리에 들어감:** `em.find()`를 쓰세요. 쿼리가 하나뿐이라 더 빠릅니다.
 - **50K행 초과, 또는 메모리 제한 환경:** `pipe()`를 쓰세요. 벽시계 시간은 더 길지만 메모리 사용량이 일정한 범위를 넘지 않습니다.
 - **외부 시스템으로 전달 (gRPC, CSV 등):** `pipe()`를 쓰세요. 어차피 외부 싱크로 스트리밍하므로 배치마다 드는 오버헤드가 분산됩니다.
@@ -680,7 +680,7 @@ pipe(bs=1000)   →  쿼리 101회   (SELECT ... LIMIT 1000) × 100 + 빈 결과
 
 쿼리 하나하나가 완전한 TCP 라운드 트립입니다. 라운드 트립 101번에 각각 약 1ms가 걸리면 데이터를 전송하기 전에 네트워크 오버헤드만 약 100ms가 됩니다. 프로세스 안에서 실행되는 SQLite에서는 이 비용이 0입니다.
 
-### Stream-and-Discard: pipe()가 진짜 이기는 곳
+### Stream-and-Discard: pipe()가 유리한 경우
 
 위 벤치마크는 pipe() 결과를 전부 배열 하나에 모았습니다. 그러면 배치의 의미가 없어집니다. 실제로는 각 배치를 처리하고 버립니다. 이때 핵심 지표는 **MaxBatch**입니다. MaxBatch는 어느 한 시점에 들고 있는 데이터의 최대량입니다.
 
@@ -706,7 +706,7 @@ pipe(bs=1000)   →  쿼리 101회   (SELECT ... LIMIT 1000) × 100 + 빈 결과
 
 ### 수치를 올바르게 읽는 법
 
-::: warning pipe()와 em.find()를 속도만으로 비교하지 마세요
+::: warning pipe()와 em.find()는 속도만으로 비교하지 않습니다
 `pipe()`는 `em.find()`를 그대로 대신하는 메서드가 아닙니다. 두 메서드는 서로 다른 문제를 해결합니다.
 
 - **`em.find()`**: 빠른 쿼리 한 번으로 모든 것을 메모리에 올립니다. 결과가 RAM에 들어가고 엔티티 인스턴스가 필요할 때 쓰세요.
@@ -870,8 +870,8 @@ em.extend(rawPipelinePlugin());
 | 파라미터 | 타입 | 기본값 | 설명 |
 |---------|------|--------|------|
 | `entity` | `ClazzType<T>` | *(필수)* | 엔티티 클래스(테이블 이름과 컬럼 해석에 사용) |
-| `options.where` | `WhereClause<T>` | — | 필터 조건(`em.find()`와 같은 문법) |
-| `options.orderBy` | `IOrderBy<T>` | — | 속성별 정렬 순서. `"ASC"`/`"DESC"`, 대소문자 무관(네이밍 전략 적용) |
+| `options.where` | `WhereClause<T>` | 없음 | 필터 조건(`em.find()`와 같은 문법) |
+| `options.orderBy` | `IOrderBy<T>` | 없음 | 속성별 정렬 순서. `"ASC"`/`"DESC"`, 대소문자 무관(네이밍 전략 적용) |
 | `options.select` | `(keyof T)[]` | `*` | 선택할 속성(네이밍 전략 적용) |
 | `options.batchSize` | `number` | `1000` | 배치당 행 수. 양의 정수 |
 | `options.keyset` | `boolean` | `false` | LIMIT/OFFSET 대신 keyset 페이지네이션 사용. `orderBy` 속성 정확히 하나와 기본 키 필요. |

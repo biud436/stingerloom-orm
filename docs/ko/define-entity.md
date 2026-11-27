@@ -20,11 +20,11 @@ export type User = InferEntity<typeof User>;
 
 `User`는 실제 런타임 클래스입니다. 그래서 ORM이 엔티티를 받는 모든 곳에 그대로 씁니다. `em.getRepository(User)`, `em.findOne(User, …)`, 관계 대상이 그 예입니다. `InferEntity<typeof User>`는 행 타입을 복원합니다. 그래서 같은 이름이 타입 역할도 합니다.
 
-::: tip 데코레이터가 더 좋다면?
+::: tip 데코레이터를 선호할 때
 데코레이터 API(`@Entity`, `@Column`, …)도 완전히 지원하며 같은 메타데이터를 생성합니다. 자세한 내용은 [엔티티 & 컬럼 (데코레이터)](./entities.md)를 참고하세요. 두 방식은 같은 프로젝트에서 자유롭게 섞어 쓸 수 있습니다. 새 코드에는 빌더 방식을 권장합니다. 데코레이터로 표현할 수 있는 모든 기능에는 대응하는 빌더가 있습니다.
 :::
 
-## 왜 코드 우선인가
+## 코드 우선 방식을 쓰는 이유
 
 ORM 없이는 테이블 하나를 서너 번 기술해야 합니다. `CREATE TABLE`, `INSERT`, `SELECT`, TypeScript 타입에 각각 적습니다. 컬럼을 하나 추가하면 그 모두를 고쳐야 합니다. 데코레이터 ORM은 이것을 클래스 하나로 줄입니다. 하지만 속성 타입을 읽으려고 `emitDecoratorMetadata` 컴파일러 플래그에 의존합니다. esbuild, SWC, Vite의 기본 트랜스포머, TypeScript 5의 표준 데코레이터는 이 플래그의 메타데이터를 내보내지 않습니다. 메타데이터가 없으면 `@Column()`은 경고 없이 타입 정보를 잃습니다.
 
@@ -654,7 +654,7 @@ export const Issue = defineEntity("issues", {
 
 컨텍스트 `e`는 Expressions DSL 전체(`e.iff`, `e.caseBuilder`, `e.coalesce`, `e.dateDiff`, `e.col(name)`)를 제공합니다. 전체 DSL은 데코레이터 가이드의 [다이얼렉트 독립 표현식](./entities.md#다이얼렉트-독립-표현식-빌더-형식)을 참고하세요.
 
-::: tip 계산 컬럼이 데이터베이스에 닿는 방식
+::: tip 계산 컬럼이 데이터베이스에 반영되는 방식
 두 스키마 워크플로 모두 계산 컬럼을 생성합니다. 런타임 `synchronize`는 CREATE TABLE에 `GENERATED ALWAYS AS` 정의를 넣습니다. 기존 테이블에는 ALTER TABLE ADD COLUMN으로 추가합니다. `stingerloom migrate:generate`는 같은 정의를 마이그레이션 파일에 출력합니다. 두 경로 모두 같은 빌더로 렌더링합니다. 다만 기존 컬럼의 `expression`을 바꾸려면 여전히 마이그레이션을 직접 작성해야 합니다. 컬럼을 삭제하고 다시 추가하는 마이그레이션입니다. 표현식 변경은 자동으로 감지되지 않습니다. 테이블을 어떻게 생성했든 Stingerloom은 항상 이 컬럼을 쓰기에서 제외합니다.
 :::
 
@@ -709,7 +709,7 @@ export const Article = defineEntity(
 
 훅은 엔티티를 `this`로도 받고 첫 번째 인자로도 받습니다. 그래서 `beforeInsert(a) { a.slug = … }`와 `beforeInsert() { this.slug = … }`는 같습니다.
 
-::: warning 훅은 인스턴스에서 실행돼요 — `new Entity(...)`를 쓰세요
+::: warning 훅은 `new Entity(...)`로 만든 인스턴스에서 실행됩니다
 훅은 엔티티 프로토타입의 메서드입니다. 그래서 저장하는 객체에 그 프로토타입이 있을 때만 실행됩니다. `defineEntity`가 만든 클래스의 생성자는 이를 위해 일부 필드만 채운 객체를 받습니다. `new Article({ … })`는 타입이 지정되고 훅이 있는 인스턴스를 만듭니다.
 
 ```typescript
@@ -782,7 +782,7 @@ export interface Post extends InferEntity<typeof Post> {}     // author?: Author
 export type Tag = InferEntity<typeof Tag>;
 ```
 
-::: warning 외래 키 컬럼을 선언하세요
+::: warning 외래 키 컬럼은 실제 컬럼으로 선언합니다
 `manyToOne`과 소유 측 `oneToOne`의 외래 키 컬럼은 실제 컬럼으로 선언해야 합니다. 그래야 스키마 동기화 때 생성됩니다. `authorId: t.int().name("author_id")`가 그 예입니다. 데코레이터 API에서 `@ManyToOne`에 외래 키용 `@Column`이나 `@RelationColumn`을 짝짓는 것과 같습니다. 그러면 관계의 `joinColumn`이 그 컬럼을 가리킵니다. 관계 옵션에 `relationColumn: { … }`을 넘겨 외래 키 메타데이터를 인라인으로 선언해도 됩니다.
 :::
 

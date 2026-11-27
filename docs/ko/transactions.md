@@ -1,6 +1,6 @@
-# Transactions
+# 트랜잭션
 
-## 트랜잭션이 존재하는 이유
+## 트랜잭션이 필요한 이유
 
 계좌 A에서 계좌 B로 $500을 이체한다고 해 봅시다. 이 작업에는 연산 두 개가 필요합니다.
 
@@ -33,7 +33,7 @@ Stingerloom ORM은 모든 쓰기 작업을 자동으로 트랜잭션으로 감�
 
 ---
 
-## @Transactional() -- 데코레이터 방식
+## @Transactional(): 데코레이터 방식
 
 메서드 위에 `@Transactional()`을 붙이면 그 메서드 안의 모든 작업이 트랜잭션 하나로 감싸집니다. BEGIN이나 COMMIT을 직접 쓸 필요가 없습니다. 데코레이터가 이를 처리합니다.
 
@@ -91,7 +91,7 @@ COMMIT;
 
 ---
 
-## em.transaction() -- 콜백 방식
+## em.transaction(): 콜백 방식
 
 클래스 메서드에 데코레이터를 붙이지 않고 트랜잭션을 바로 쓰려면 콜백 API를 쓰세요. 콜백에는 트랜잭션이 적용된 EntityManager가 전달됩니다. 콜백이 성공하면 커밋되고 에러가 나면 롤백됩니다.
 
@@ -144,13 +144,13 @@ await em.transaction(async (txEm) => {
 
 ## 격리 수준 설정
 
-### 격리 수준이 존재하는 이유
+### 격리 수준이 필요한 이유
 
 여러 사용자가 같은 데이터를 동시에 읽고 쓰면 예상 밖의 일이 생길 수 있습니다. 격리 수준은 데이터베이스가 이상 현상을 어디까지 허용할지 정하는 설정입니다. 안전성을 높이면 느려지고 속도를 높이면 안전성이 낮아지는 다이얼과 같습니다.
 
 표준 격리 수준 네 가지는 수준이 높아질수록 더 미묘한 문제까지 막습니다.
 
-### READ UNCOMMITTED -- 무법 지대
+### READ UNCOMMITTED: 무법 지대
 
 허용되는 것: 한 트랜잭션이 다른 트랜잭션이 아직 커밋하지 않은 데이터를 읽을 수 있습니다. 이를 더티 리드(dirty read)라고 합니다.
 
@@ -172,7 +172,7 @@ Time   Transaction A                        Transaction B
 
 트랜잭션 B는 실제로 존재한 적 없는 데이터를 읽었습니다. 실무에서 이 수준을 쓰는 경우는 거의 없습니다.
 
-### READ COMMITTED -- 기본값
+### READ COMMITTED: 기본값
 
 방지하는 것: 더티 리드입니다. 이 수준에서는 커밋된 데이터만 읽습니다.
 
@@ -199,7 +199,7 @@ Time   Transaction A                        Transaction B
 
 트랜잭션 A가 같은 행을 두 번 읽었는데 값이 다릅니다. 대부분의 애플리케이션에서는 이것이 문제가 되지 않습니다. 그래서 READ COMMITTED가 기본값입니다.
 
-### REPEATABLE READ -- 일관된 스냅샷
+### REPEATABLE READ: 일관된 스냅샷
 
 방지하는 것: 더티 리드와 비반복 읽기입니다. 한 번 읽은 행은 트랜잭션이 끝날 때까지 같은 값을 유지합니다.
 
@@ -225,7 +225,7 @@ Time   Transaction A                        Transaction B
 
 은행 이체나 재무 보고서처럼 트랜잭션 안에서 일관된 읽기가 필요할 때 이 수준을 쓰세요.
 
-### SERIALIZABLE -- 최대 안전성
+### SERIALIZABLE: 최대 안전성
 
 방지하는 것: 팬텀 리드를 포함한 위의 모든 문제입니다. 데이터베이스는 트랜잭션들을 순서대로 하나씩 실행한 것처럼 동작합니다.
 
@@ -446,7 +446,7 @@ async optionalStep() {
 }
 ```
 
-### 여러 커넥션에 걸친 트랜잭션 {#transactions-on-more-than-one-connection}
+### 여러 연결에 걸친 트랜잭션 {#transactions-on-more-than-one-connection}
 
 트랜잭션은 연결 하나에 속합니다. 그리고 그 연결의 작업만 트랜잭션에 합류합니다. `"default"` 연결을 여는 `@Transactional()` 안에서 `"analytics"`에 묶인 EntityManager는 그 트랜잭션에서 SQL 문을 실행하지 않습니다. SQL 문은 모두 `"analytics"`에서 실행되고 쓰기는 하나하나 자기 트랜잭션으로 커밋됩니다. 그래서 바깥 트랜잭션이 나중에 롤백되어도 이 쓰기는 남습니다. 이 작업도 원자적이어야 한다면 그 연결의 트랜잭션으로 감싸세요.
 
@@ -492,9 +492,9 @@ await Promise.all([
 
 ---
 
-## Savepoint -- 부분 롤백
+## 세이브포인트: 부분 롤백
 
-### Savepoint가 존재하는 이유
+### 세이브포인트가 필요한 이유
 
 트랜잭션 안에서 위험한 작업을 시도하다가 실패하면 그 작업만 되돌리고 나머지는 유지하고 싶을 때가 있습니다. 세이브포인트(savepoint)가 없으면 실패는 곧 전체 롤백입니다. 세이브포인트를 쓰면 특정 체크포인트까지만 되돌릴 수 있습니다.
 
@@ -520,7 +520,7 @@ RELEASE SAVEPOINT sp1;           -- Clean up the savepoint
 COMMIT;                           -- Task 1 is committed. Task 2 never happened.
 ```
 
-### 코드에서 Savepoint 사용하기
+### 코드에서 세이브포인트 사용하기
 
 ```typescript
 const session = new TransactionSessionManager();

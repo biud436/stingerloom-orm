@@ -1,4 +1,4 @@
-# Events & Subscribers
+# 이벤트 & 구독자
 
 ## 이벤트가 필요한 이유
 
@@ -19,7 +19,7 @@ Stingerloom은 세 가지 수준의 이벤트 처리를 제공합니다.
 
 ---
 
-## Lifecycle Hooks -- 엔티티 자체의 이벤트
+## 생명주기 훅: 엔티티 자체의 이벤트
 
 엔티티 생명주기 이벤트에 반응하는 가장 간단한 방법입니다. 엔티티 클래스에 데코레이터를 붙이기만 하면 됩니다. 별도로 등록할 필요는 없습니다. ORM이 메타데이터에서 훅을 자동으로 찾습니다.
 
@@ -63,7 +63,7 @@ export class Post {
 
 핵심은 다음과 같습니다. before 훅은 SQL보다 먼저 실행되므로 데이터를 변경할 수 있습니다. 반면 after 훅은 SQL을 실행한 뒤에 호출되므로 부수 효과에만 씁니다.
 
-### 사용 가능한 Hooks
+### 사용 가능한 훅
 
 | Decorator | 실행 시점 | 데이터 변경 가능 | 활용 예시 |
 |-----------|----------|-----------------|----------|
@@ -74,7 +74,7 @@ export class Post {
 | `@BeforeDelete()` | `DELETE` SQL 전 | No | 권한 확인, 제약 조건 체크 |
 | `@AfterDelete()` | `DELETE` SQL 후 | No (이미 삭제됨) | 관련 리소스 정리 |
 
-### Hooks vs. 다른 방식
+### 훅과 다른 방식 비교
 
 훅은 엔티티 고유의 로직에 가장 적합합니다. 어떤 서비스에서 저장하든 항상 실행되어야 하는 로직이 여기에 해당합니다. 예를 들어 title에서 slug를 생성하는 일은 Post를 어떻게 만들든 항상 필요합니다.
 
@@ -82,7 +82,7 @@ export class Post {
 
 ---
 
-## Global Event Listeners -- 모든 엔티티에 반응하기
+## 전역 이벤트 리스너: 모든 엔티티에 반응하기
 
 Global listener는 시스템의 모든 엔티티에서 실행됩니다. EntityManager의 `em.on()`으로 등록합니다.
 
@@ -157,7 +157,7 @@ await em.delete(User, { id: 9999 }); // 없는 행: beforeDelete는 발생하고
 
 before 이벤트는 그대로 발생합니다. 행 수는 SQL 문을 실행해야 알 수 있기 때문입니다. `softDelete()`는 소프트 삭제되지 않은 행만 세고 `restore()`는 소프트 삭제된 행만 셉니다. 그래서 같은 호출을 반복하면 after 이벤트가 발생하지 않습니다. `affected`는 데이터베이스가 보고한 값으로 WHERE에 일치한 행 수입니다. MySQL에서는 값이 바뀌지 않은 행도 포함합니다. `save()`도 같은 규칙을 따릅니다. 일치하는 행이 없는 UPDATE는 `afterUpdate`를 발행하지 않고 `EntityNotFoundError`를 던집니다.
 
-### 언제 Global Listener를 쓸까?
+### 전역 리스너를 쓰는 경우
 
 Global listener는 모든 엔티티에 적용되는 횡단 관심사(cross-cutting concerns)에 알맞습니다.
 
@@ -169,11 +169,11 @@ User가 바뀔 때 캐시를 무효화하는 것처럼 특정 엔티티에만 �
 
 ---
 
-## EntitySubscriber -- 엔티티별 이벤트 클래스
+## EntitySubscriber: 엔티티별 이벤트 클래스
 
 `EntitySubscriber`는 가장 강력한 방식입니다. 특정 엔티티의 모든 이벤트 로직을 전용 클래스 하나에 캡슐화할 수 있습니다. Global listener와 달리 구독자는 대상 엔티티의 이벤트만 받습니다.
 
-### 전체 예제: Audit Trail
+### 전체 예제: 감사 추적
 
 User 엔티티의 모든 변경을 기록하는 구독자입니다.
 
@@ -221,7 +221,7 @@ class UserAuditSubscriber implements EntitySubscriber<User> {
 }
 ```
 
-### Subscriber의 SQL 타임라인
+### 구독자의 SQL 타임라인
 
 ```
   Your code:  em.save(User, { name: "Alice", email: "alice@example.com" })
@@ -253,7 +253,7 @@ em.addSubscriber(new UserAuditSubscriber());
 em.removeSubscriber(subscriber);
 ```
 
-### 전체 Subscriber 이벤트 목록
+### 전체 구독자 이벤트 목록
 
 EntitySubscriber는 전역 리스너보다 더 많은 이벤트를 지원합니다. 트랜잭션 생명주기 이벤트도 포함됩니다.
 
@@ -340,7 +340,7 @@ class PaymentEventSubscriber implements EntitySubscriber<Payment> {
 
 ---
 
-## NestJS Integration
+## NestJS 통합
 
 NestJS에서는 `OnModuleInit` 생명주기 훅으로 모듈을 초기화할 때 구독자를 등록합니다.
 
@@ -367,7 +367,7 @@ export class AppService implements OnModuleInit {
 
 ---
 
-## 어떤 방식을 선택할까?
+## 방식 선택 기준
 
 다음 질문으로 판단하세요.
 
@@ -394,7 +394,7 @@ export class AppService implements OnModuleInit {
 
 ---
 
-## Next Steps
+## 다음 단계
 
 - [Entities](./entities.md): 엔티티 정의, 컬럼, 검증 데코레이터
 - [Transactions](./transactions.md): 트랜잭션 관리와 격리 수준

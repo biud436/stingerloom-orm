@@ -1,6 +1,6 @@
-# Migrations
+# 마이그레이션
 
-## Migration이 필요한 이유
+## 마이그레이션이 필요한 이유
 
 개발 중에는 `synchronize: true`를 켜 두면 ORM이 엔티티 정의에 맞춰 테이블을 자동으로 생성하고 변경합니다. 편리한 기능입니다. 하지만 프로덕션에서 그대로 쓰기에는 위험합니다.
 
@@ -27,7 +27,7 @@ ALTER TABLE "users" RENAME COLUMN "phone" TO "mobile";
 
 ---
 
-## Migration 파일 만들기
+## 마이그레이션 파일 만들기
 
 마이그레이션은 메서드가 두 개인 클래스입니다.
 
@@ -65,11 +65,11 @@ export class CreateUsersTable extends Migration {
 | `context.query(sql)` | SQL 문을 실행 |
 | `context.driver` | 데이터베이스 드라이버에 접근 (DDL 헬퍼, 식별자 이스케이프 등) |
 
-PostgreSQL과 SQLite에서는 `context.query()`와 `context.driver`의 헬퍼가 모두 마이그레이션의 트랜잭션 안에서 실행됩니다([마이그레이션과 트랜잭션](#migration과-트랜잭션) 참고).
+PostgreSQL과 SQLite에서는 `context.query()`와 `context.driver`의 헬퍼가 모두 마이그레이션의 트랜잭션 안에서 실행됩니다([마이그레이션과 트랜잭션](#마이그레이션과-트랜잭션) 참고).
 
 ---
 
-## Migration 예제
+## 마이그레이션 예제
 
 ### 컬럼 추가
 
@@ -157,7 +157,7 @@ export class SeedRoles extends Migration {
 
 ---
 
-## Migration 추적 방식
+## 마이그레이션 추적 방식
 
 마이그레이션을 처음 실행하면 Stingerloom이 `__migrations`라는 특수 테이블을 자동으로 생성합니다. 이 테이블에는 이미 적용된 마이그레이션이 기록됩니다.
 
@@ -204,7 +204,7 @@ DELETE FROM "__migrations" WHERE "name" = 'AddPhoneToUsers';
 
 ---
 
-## Migration과 트랜잭션
+## 마이그레이션과 트랜잭션
 
 PostgreSQL과 SQLite에서는 러너가 마이그레이션 하나를 `__migrations` 행과 함께 한 트랜잭션으로 적용합니다.
 
@@ -261,7 +261,7 @@ export class AddEmailIndex extends Migration {
 
 ---
 
-## Migration 실행하기
+## 마이그레이션 실행하기
 
 마이그레이션을 실행하는 방법은 두 가지입니다. 가장 간단한 방법은 내장 CLI입니다. 커스텀 설정이 필요하면 프로그래밍 방식 API를 씁니다.
 
@@ -334,7 +334,7 @@ npx stingerloom migrate:generate --output ./src/migrations --name AddEmailIndex
 
 > CLI는 `ts-node`나 `tsx`로 TypeScript 설정 파일을 바로 읽습니다. 둘 다 설치되어 있지 않으면 `.js` 설정 파일을 쓰세요.
 
-### Advisory Lock을 통한 동시성 안전
+### 동시성 안전: 어드바이저리 잠금
 
 여러 서버가 동시에 시작되면 마이그레이션을 동시에 실행하려 할 수 있습니다. Kubernetes 배포에서 흔한 상황입니다. 이러면 테이블을 중복으로 생성하는 에러가 나거나 더 나쁜 일이 생길 수 있습니다.
 
@@ -409,7 +409,7 @@ package.json에 스크립트를 등록해 두면 편합니다.
 
 ---
 
-## Migration 결과 확인
+## 마이그레이션 결과 확인
 
 각 마이그레이션은 성공 여부를 담은 결과 객체를 반환합니다.
 
@@ -425,7 +425,7 @@ for (const result of results) {
 }
 ```
 
-마이그레이션이 실패하면 러너는 즉시 멈추고 이후 마이그레이션을 실행하지 않습니다. 이후 마이그레이션은 대부분 실패한 마이그레이션에 의존하기 때문입니다. PostgreSQL과 SQLite에서는 실패한 마이그레이션이 이미 롤백된 상태입니다. MySQL에서는 적용된 채로 남은 SQL 문이 `result.error`에 나옵니다([마이그레이션과 트랜잭션](#migration과-트랜잭션) 참고).
+마이그레이션이 실패하면 러너는 즉시 멈추고 이후 마이그레이션을 실행하지 않습니다. 이후 마이그레이션은 대부분 실패한 마이그레이션에 의존하기 때문입니다. PostgreSQL과 SQLite에서는 실패한 마이그레이션이 이미 롤백된 상태입니다. MySQL에서는 적용된 채로 남은 SQL 문이 `result.error`에 나옵니다([마이그레이션과 트랜잭션](#마이그레이션과-트랜잭션) 참고).
 
 ---
 
@@ -444,7 +444,7 @@ migrations/
 
 ---
 
-## Schema Diff -- 자동 Migration 생성
+## Schema Diff: 마이그레이션 자동 생성
 
 간단한 변경은 마이그레이션 파일을 직접 작성해도 됩니다. 하지만 복잡한 변경을 직접 작성하기는 번거롭습니다. Schema Diff는 엔티티 정의를 실제 데이터베이스 스키마와 비교해서 필요한 마이그레이션 코드를 자동으로 생성합니다.
 
@@ -631,7 +631,7 @@ bio!: string;
 
 `renamedFrom`에는 값을 가져올 데이터베이스 컬럼 이름을 적습니다. 이 옵션이 있으면 synchronize와 `migrate:generate`가 `RENAME COLUMN`을 내보냅니다. 옵션이 없으면 `bio`를 빈 컬럼으로 추가하고 `legacyNote`를 삭제합니다. 엔티티가 선언한 내용을 그대로 따른 동작입니다. 그 이름의 컬럼이 더 이상 없으면 이 옵션은 아무 일도 하지 않습니다. 그래서 이름 변경이 모든 환경에 반영된 뒤에 지우면 됩니다. `defineEntity`에서는 `t.varchar(100).renamedFrom("legacyNote")`로 같은 설정을 합니다. `EntitySchema` 컬럼에서는 `renamedFrom: "legacyNote"`로 설정합니다.
 
-#### 거절된 이름 변경은 이렇게 보입니다
+#### 거절된 이름 변경의 경고
 
 `synchronize`는 drop + add를 적용하기 전에 쌍마다 경고를 한 줄씩 남깁니다.
 
@@ -738,7 +738,7 @@ MySQL은 값을 컬럼 타입 자체에 담습니다(`role ENUM('admin','user','
 ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NULL;
 ```
 
-### Schema Diff가 비교하지 않는 것
+### Schema Diff가 비교하지 않는 항목
 
 아직 없는 테이블은 `synchronize`와 생성된 마이그레이션 모두 빠짐없이 생성합니다. 컬럼, 각 관계의 외래 키 컬럼, 인덱스, 외래 키 제약 조건, `@ManyToMany` 관계의 조인 테이블까지 포함합니다. 생성된 `down()`은 같은 것을 역순으로 삭제합니다.
 

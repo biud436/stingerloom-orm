@@ -18,9 +18,9 @@ const [loc] = await em.query(CachedLocation)`
 // loc: { id: number; x: number; y: number; cachedAt: Date }
 ```
 
-## 왜 필요한가
+## 필요한 이유
 
-### ORM이 관리하지 않는 테이블도 있습니다
+### ORM이 관리하지 않는 테이블
 
 게임 서버로 예를 들어 보겠습니다. 인벤토리 아이템은 `items` 테이블에 들어 있습니다. 이 테이블은 ORM이 매핑합니다. 테이블 생성과 마이그레이션도 ORM이 맡고 조회할 때는 관계까지 함께 로드합니다. 엔티티 매핑은 원래 이런 일을 하려고 있는 기능입니다.
 
@@ -32,7 +32,7 @@ SELECT * FROM cached_location AS a WHERE a.id = 16
 
 쿼리 자체는 이것이 전부입니다. 어려운 일은 이 결과를 타입이 맞는 행으로 꺼내는 것이었습니다. Row Shape가 나오기 전에는 방법이 세 가지 있었습니다. 하지만 셋 모두 이 조회 한 번에는 필요 없는 비용을 요구했습니다.
 
-### `em.query<T>()`: 타입은 붙지만 아무도 확인하지 않습니다
+### `em.query<T>()`: 타입은 붙지만 아무도 확인하지 않는 방식
 
 ```typescript
 interface CachedLocation {
@@ -60,7 +60,7 @@ const [loc] = await em.query<CachedLocation>`
 
 컴파일은 통과하지만 실행 결과는 데이터베이스마다 달라집니다. `loc.cachedAt.getTime()`은 SQLite에서만 `TypeError`를 던집니다. `loc.isHot === true`는 MySQL에서 `false`가 됩니다. `row.total + 1`은 PostgreSQL에서 `"21"`이 됩니다. 이런 버그는 쿼리와 멀리 떨어진 곳에서 터지고 그것도 특정 데이터베이스에서만 터집니다. 운영 환경과 다른 드라이버로 실행되는 테스트에서 처음 발견되는 경우가 많습니다.
 
-### 엔티티로 매핑하기: 값은 맞지만 남의 테이블을 떠안습니다
+### 엔티티로 매핑하기: 값은 맞지만 남의 테이블을 떠안는 방식
 
 `@Entity`나 `defineEntity()`로 정의하면 변환은 전부 맞게 나옵니다. 대신 아래 비용이 따라옵니다.
 
@@ -68,7 +68,7 @@ const [loc] = await em.query<CachedLocation>`
 - **스키마의 주인이 ORM으로 바뀝니다.** `synchronize`가 켜져 있으면 ORM은 그 테이블을 자기 것으로 봅니다. 테이블이 없으면 만듭니다. 그리고 `synchronize: true`에서는 컬럼을 엔티티에 맞게 고치고 엔티티에 없는 컬럼은 삭제합니다. 남의 테이블에서 조회할 컬럼 세 개만 매핑했다면 나머지 컬럼은 삭제됩니다.
 - **쿼리 하나 때문에 모델이 하나 생깁니다.** 엔티티는 쓰기 계약이기도 합니다. 그래서 기본 키, 훅, 검증, 테넌트 범위, 관계가 함께 따라옵니다. 조회 한 번에는 전부 군더더기입니다.
 
-### `getRawMany({ coerce })`: 변환은 되지만 엔티티가 필요하고 같은 내용을 두 번 적습니다
+### `getRawMany({ coerce })`: 변환은 되지만 엔티티와 중복 선언이 필요한 방식
 
 ```typescript
 // qb: 엔티티에서 시작한 SelectQueryBuilder
@@ -185,7 +185,7 @@ em.query(CachedLocation): the result has no column "cached_at" (field "cachedAt"
 - **테넌트 범위 적용.** shape를 붙여도 raw SQL이라는 점은 다른 `em.query`와 같습니다. `tenant_column` 전략에서는 테넌트 조건을 직접 써야 합니다. raw SQL에 대한 테넌트 경고도 평소처럼 출력됩니다. `MultiTenantEntityManager`에서는 `query(shape)`가 현재 테넌트의 연결로 실행됩니다.
 - **엔티티 생명주기.** 훅, 이벤트, 검증, 결과 캐시, identity map 모두 적용되지 않습니다.
 
-## 드는 비용
+## 비용
 
 - `defineRow()`는 객체 하나를 만들어 얼려 둘 뿐입니다. 메타데이터 기록도, 부팅 단계도, DDL도 없습니다. 한 번도 쿼리하지 않은 shape는 그냥 객체 하나입니다.
 - 처음 `em.query(shape)`를 호출할 때 컬럼별 읽기 계획을 만들어 그 shape에 캐시합니다. 약한 참조로 캐시하기 때문에 shape가 사라지면 계획도 함께 정리됩니다.
@@ -214,7 +214,7 @@ export const CachedLocation = defineEntity("cached_location", {
 
 빌더가 같고 읽기 규칙도 같습니다. 그래서 `find(CachedLocation)`도 shape로 조회하던 것과 같은 값을 반환합니다.
 
-## `coerce`와는 어떻게 다른가
+## `coerce`와의 차이
 
 엔티티에서 시작한 쿼리 빌더의 raw 결과를 다룰 때는 여전히 `getRawMany({ coerce })`를 씁니다. 다만 예전에 엔티티 규칙과 다르던 두 부분은 이제 엔티티 규칙을 따릅니다.
 
@@ -237,7 +237,7 @@ em.query<Row>(shape: RowShape<Row>): (strings: TemplateStringsArray, ...values: 
 em.query<Row>(shape: RowShape<Row>, sql: string | Sql, params?: unknown[]): Promise<Row[]>;
 ```
 
-## Next Steps
+## 다음 단계
 
 - [Raw SQL & CTE](./raw-sql.md): 태그드 `em.query`, `em.ref()`, `RawQueryBuilder`
 - [엔티티 정의](./define-entity.md): `t` 빌더, 그리고 ORM이 관리하는 테이블을 위한 `defineEntity()`

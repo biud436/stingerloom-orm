@@ -208,7 +208,7 @@ ORDER BY DATE_TRUNC('week', "i"."completed_at") ASC;
 - **PostgreSQL**에는 SQL 표준 ordered-set aggregate인 `percentile_cont(p) WITHIN GROUP (ORDER BY x)`가 있습니다. `Expressions.percentileCont(...)`가 이 함수를 그대로 렌더링합니다. 그래서 쿼리 전체가 `SelectQueryBuilder` 안에서 끝납니다.
 - **MySQL**에는 네이티브 ordered-set aggregate가 없습니다. 표준 에뮬레이션은 쿼리 자체를 다시 작성합니다. CTE가 cycle time마다 `ROW_NUMBER() OVER (ORDER BY x)`를 붙이고 바깥 쿼리가 `rn = CEIL(N * p)`인 행을 고릅니다. 표현식 하나만 바꾸는 것이 아니라 쿼리 전체를 다시 짜야 합니다. 그래서 MySQL에서 DSL aggregate는 `OrmError(UNSUPPORTED_OPERATION)`을 던지고 에뮬레이션 패턴을 안내합니다.
 
-### Dialect 분기
+### 다이얼렉트 분기
 
 ```typescript
 if (em.getDriver() instanceof SqliteDriver) {
@@ -222,7 +222,7 @@ return isPg
   : cycleTimePercentilesMySqlEmulation(projectId, windowDays);
 ```
 
-### PostgreSQL -- 네이티브 ordered-set aggregate
+### PostgreSQL: 네이티브 ordered-set aggregate
 
 DSL만으로 작성합니다. `Expressions.percentileCont`로 백분위수 세 개를 쿼리 하나에서 투영합니다.
 
@@ -261,7 +261,7 @@ FROM "issue" AS "i"
 WHERE "i"."project_id" = $1 …;
 ```
 
-### MySQL -- `ROW_NUMBER()` 에뮬레이션
+### MySQL: `ROW_NUMBER()` 에뮬레이션
 
 CTE는 전부 타입 있는 코드로 작성합니다. 투영, `ROW_NUMBER` 정렬, 표본 크기를 구하는 `COUNT(*) OVER ()`가 모두 쿼리 빌더에서 나옵니다. 백분위수에 해당하는 행을 고르는 부분만 raw SQL로 남습니다. `MAX(CASE WHEN rn = CEIL(total * p) …)` 형태를 만드는 DSL 헬퍼는 없기 때문입니다.
 

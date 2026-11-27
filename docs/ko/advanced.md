@@ -1,10 +1,10 @@
-# Advanced Features
+# 고급 기능 모음
 
 아래 기능은 프로덕션 환경에서 유용합니다. 기본 CRUD와 관계를 익힌 뒤에 필요한 기능만 골라 읽으세요.
 
-## EntitySubscriber -- 엔티티별 이벤트 구독
+## EntitySubscriber: 엔티티별 이벤트 구독
 
-### 왜 필요한가요
+### 필요한 이유
 
 전역 `em.on()` 리스너는 애플리케이션의 모든 엔티티 이벤트를 받습니다. 하지만 실제로 모든 엔티티에 같은 로직을 적용하는 경우는 드뭅니다. `User`가 생성되면 환영 이메일을 보내야 합니다. 반면 `Order`가 생성되면 창고에 알려야 합니다. 이처럼 엔티티마다 필요한 동작이 다릅니다.
 
@@ -61,9 +61,9 @@ EntitySubscriber가 지원하는 이벤트는 다음과 같습니다.
 | `beforeTransactionCommit()` / `afterTransactionCommit()` | COMMIT 전/후 |
 | `beforeTransactionRollback()` / `afterTransactionRollback()` | ROLLBACK 전/후 |
 
-## N+1 감지와 슬로우 쿼리 경고
+## N+1 감지와 느린 쿼리 경고
 
-### 왜 필요한가요
+### 필요한 이유
 
 N+1 문제는 ORM을 쓰는 애플리케이션에서 성능을 떨어뜨리는 가장 흔한 원인 중 하나입니다. 이 문제는 겉으로 드러나지 않습니다. 코드는 깔끔하고 테스트도 통과합니다. 하지만 데이터베이스는 쏟아지는 쿼리에 시달립니다.
 
@@ -117,9 +117,9 @@ const log = em.getQueryLog();
 
 > 힌트: N+1이 감지되면 JOIN 기반 로딩으로 바꾸세요. 관계 데코레이터에 `eager: true`를 설정하거나 `em.find(User, { relations: ["posts"] })`처럼 `relations` 옵션을 넘기면 됩니다.
 
-## Cursor 기반 페이지네이션
+## 커서 기반 페이지네이션
 
-### 왜 필요한가요
+### 필요한 이유
 
 Offset 페이지네이션(`LIMIT 10 OFFSET 10000`)에는 근본적인 문제가 있습니다. 10,000행을 건너뛰려면 데이터베이스가 먼저 10,000행을 전부 읽고 버려야 합니다. 그래서 뒤쪽 페이지로 갈수록 느려집니다.
 
@@ -187,9 +187,9 @@ async function getPosts(req: Request, res: Response) {
 
 offset, cursor, streaming 전략의 자세한 비교는 [Pagination & Streaming](./pagination.md)을 참고하세요.
 
-## Validation
+## 검증
 
-### 왜 필요한가요
+### 필요한 이유
 
 검증은 서비스 메서드에 흩어 두지 말고 엔티티 수준에서 해야 합니다. `price`가 양수여야 한다면 그 규칙을 `Product` 엔티티에 두어야 합니다. 그래야 어떤 코드 경로로 저장하든 규칙이 적용됩니다.
 
@@ -237,9 +237,9 @@ try {
 | `@Min(n)` | number | 최솟값 |
 | `@Max(n)` | number | 최댓값 |
 
-## BaseRepository -- Repository 패턴
+## BaseRepository: 리포지토리 패턴
 
-### 왜 필요한가요
+### 필요한 이유
 
 `em.find(User, ...)`, `em.save(User, ...)`, `em.delete(User, ...)`를 반복해서 쓰다 보면 `User` 인자가 항상 같습니다. 리포지토리는 EntityManager를 특정 엔티티에 한 번 바인딩합니다. 그래서 호출할 때마다 엔티티 클래스를 다시 적을 필요가 없습니다. 경계도 분명해집니다. 각 서비스가 모든 일을 하는 EntityManager 대신 자기 리포지토리로 작업하기 때문입니다.
 
@@ -288,9 +288,9 @@ const [users, total] = await userRepo
   .getManyAndCount();
 ```
 
-## 대량 데이터 Streaming
+## 대량 데이터 스트리밍
 
-### 왜 필요한가요
+### 필요한 이유
 
 데이터베이스에 있는 사용자 200만 명 모두에게 환영 이메일을 보내야 한다고 생각해 보겠습니다. `em.find(User)`를 실행하면 ORM은 200만 행을 한꺼번에 메모리에 올립니다. 결국 Node.js 프로세스는 메모리가 부족해 종료됩니다.
 
@@ -342,9 +342,9 @@ for await (const post of em.stream(Post, {
 
 자세한 내용과 세 가지 데이터 접근 전략의 비교는 [Pagination & Streaming](./pagination.md)을 참고하세요.
 
-## Type-Safe Query Builder
+## 타입 안전 쿼리 빌더
 
-### 왜 필요한가요
+### 필요한 이유
 
 쿼리의 90%는 `find()`로 충분합니다. 하지만 복잡한 JOIN, 집계를 쓰는 GROUP BY, 비관적 잠금, DISTINCT가 필요할 때도 있습니다. 이때 raw SQL을 쓰면 타입 안전성을 잃습니다. `SelectQueryBuilder`는 SQL의 모든 기능을 컴파일 타임 검사와 함께 제공합니다.
 
@@ -366,9 +366,9 @@ const [activeUsers, total] = await em
 
 UNION, CTE, 윈도 함수 같은 더 고급 SQL에는 `RawQueryBuilder`를 사용하세요. 두 빌더의 전체 가이드는 [Query Builder](./query-builder.md)에 있습니다. UNION, CTE, 윈도 함수 예제는 [Raw SQL & CTE](./raw-sql.md)를 참고하세요.
 
-## Deadlock Retry
+## 데드락 재시도
 
-### 왜 필요한가요
+### 필요한 이유
 
 **데드락**(deadlock)은 두 트랜잭션이 상대가 가진 잠금을 서로 기다리는 상태입니다. 어느 쪽도 진행할 수 없으므로 데이터베이스가 하나를 골라 종료합니다.
 
@@ -398,7 +398,7 @@ await em.transaction(async (txEm) => {
 
 ## 확장성
 
-### DriverRegistry -- 커스텀 데이터베이스 드라이버
+### DriverRegistry: 커스텀 데이터베이스 드라이버
 
 `DriverRegistry`를 쓰면 내장 MySQL, PostgreSQL, SQLite 외의 커스텀 데이터베이스 드라이버를 등록할 수 있습니다. CockroachDB나 Oracle 같은 다른 SQL 데이터베이스를 지원하려 할 때 유용합니다.
 
@@ -426,7 +426,7 @@ await em.register({
 
 내장 드라이버(`mysql`, `mariadb`, `postgres`, `sqlite`)는 자동으로 등록됩니다.
 
-### ColumnTypeRegistry -- 커스텀 컬럼 타입
+### ColumnTypeRegistry: 커스텀 컬럼 타입
 
 `ColumnTypeRegistry`를 쓰면 다이얼렉트별 SQL 매핑과 선택적 트랜스포머를 가진 커스텀 컬럼 타입을 정의할 수 있습니다.
 
@@ -466,7 +466,7 @@ price!: number;
 
 `em.registerColumnType(name, definition)`은 `ColumnTypeRegistry.getInstance().register(name, definition)`의 단축형입니다. 레지스트리는 프로세스 전체에서 하나입니다. 그래서 EntityManager 하나로 등록한 타입을 같은 프로세스의 모든 EntityManager에서 쓸 수 있습니다. 커스텀 타입은 `em.register()`가 스키마를 동기화하기 전에 등록하세요.
 
-### DialectExpression -- 다이얼렉트 인식 SQL
+### DialectExpression: 다이얼렉트 인식 SQL
 
 `DialectExpression`은 데이터베이스마다 다른 SQL 표현식을 생성하는 전략 패턴을 제공합니다.
 

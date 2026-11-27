@@ -47,11 +47,11 @@ raw SQL을 쓰는 방법은 일부러 여러 단계로 나뉘어 있습니다. �
 - `raw(str)`는 문자열을 그대로 끼워 넣습니다. SQL을 직접 쓰는 것과 같다고 보세요. 문자열이 사용자 입력이라면 `raw()`에 넘기기 전에 직접 허용 목록(allowlist)으로 검증하세요(예: `column ∈ knownColumns`).
 - `em.query(text, params)`는 `params`를 바인딩합니다. 하지만 `text`는 escape하지 않습니다. 같은 원칙이 적용됩니다. text에는 값만 넣고 식별자는 절대 보간하지 마세요.
 
-### 단계 올라가는 예제
+### 단계별로 올라가는 예제
 
 게시글과 사용자가 있는 블로그를 예로 듭니다. 활성 사용자 목록에서 시작해 역할별로 게시된 글 수가 많은 상위 3명의 순위까지 한 단계씩 올라갑니다.
 
-#### 1단계 -- `SelectQueryBuilder`
+#### 1단계: `SelectQueryBuilder`
 
 활성 사용자를 이름 순으로 정렬해서 조회합니다. 모든 부분이 `keyof T`로 타입 안전하고 SQL은 한 줄도 쓰지 않습니다.
 
@@ -64,7 +64,7 @@ const users = await em
   .getMany();
 ```
 
-#### 2단계 -- Expressions DSL
+#### 2단계: Expressions DSL
 
 같은 목록을 `role`로 묶고 행마다 게시된 글 수를 붙입니다. 엔티티 정보는 여전히 유지됩니다. 조인한 관계와 집계 모두 엔티티 컬럼으로 표현됩니다.
 
@@ -89,7 +89,7 @@ const rows = await em
 
 `p.id.count()` 같은 집계는 다이얼렉트에 맞는 SQL을 렌더링하면서도 엔티티 속성 경로를 유지합니다. `p.id`는 `@Column`과 NamingStrategy로 자동 해석됩니다. 그래서 `"p"."id"`를 직접 쓸 필요가 없습니다.
 
-#### 3단계 -- `sql` 템플릿 + `em.ref()`
+#### 3단계: `sql` 템플릿 + `em.ref()`
 
 역할별 상위 3명은 파생 테이블 위의 윈도 함수 없이는 DSL로 깔끔하게 표현하기 어렵습니다. 역할 안에서 사용자의 순위를 매기는 CTE를 만들고 rank <= 3으로 걸러야 합니다. 그런데 이 CTE도 실제 엔티티 컬럼(`User.id`, `User.role`)을 참조합니다. 그래서 `em.ref()`와 `em.aliasRef()`를 써서 이름을 바꿔도 깨지지 않게 합니다.
 
@@ -127,7 +127,7 @@ const top3PerRole = await em.query<{ role: string; name: string; postCount: numb
 
 TypeScript에서 `User.role`의 이름을 바꾸면 CTE 본문과 바깥 쿼리 양쪽에 그대로 반영됩니다. `"role"`과 `` `role` `` 중 어느 따옴표를 쓸지도 다이얼렉트에 따라 자동으로 선택됩니다.
 
-#### 4단계 -- `em.query()` (완전 raw)
+#### 4단계: `em.query()` (완전 raw)
 
 위 쿼리의 `EXPLAIN ANALYZE`나 다이얼렉트마다 다른 통계 뷰를 동적으로 가리키는 작업에는 대응하는 DSL 모델이 없습니다. 이때는 `em.query()`로 내려가 SQL을 직접 씁니다. 값은 여전히 파라미터로 바인딩됩니다. 하지만 식별자는 직접 작성합니다.
 
@@ -168,7 +168,7 @@ RawQueryBuilder의 `where()` 메서드는 조건의 배열을 받아 AND로 결�
 
 `'"users"."id"'` 같은 따옴표 문자열을 직접 적으면 코드가 금방 지저분해집니다. 그리고 컬럼 이름을 바꾸면 이 문자열은 아무 경고 없이 깨집니다. 아래 두 헬퍼는 엔티티 클래스나 별칭 이름에서 `sql` 태그와 호환되는 프록시를 반환합니다. 이 프록시가 다이얼렉트에 맞는 SQL 조각을 자동으로 만듭니다. 그래서 같은 코드가 PostgreSQL, MySQL, SQLite에서 그대로 동작합니다.
 
-### `em.ref(Entity, alias?)` -- 엔티티 바인딩
+### `em.ref(Entity, alias?)`: 엔티티 바인딩
 
 ```typescript
 import sql from "sql-template-tag";
@@ -211,7 +211,7 @@ sql`
 `;
 ```
 
-### `em.aliasRef(name)` -- alias 전용
+### `em.aliasRef(name)`: 별칭 전용
 
 엔티티에 묶을 수 없는 CTE, 파생 테이블, 그 밖의 SQL 구조에는 이 헬퍼를 씁니다.
 
@@ -227,7 +227,7 @@ sql`SELECT ${t.minDepth} FROM cte ${t}`;
 
 엔티티 테이블에는 `em.ref()`를 쓰세요. CTE 본문 안에만 있는 컬럼(`depth`, `path` 등)을 쓰거나 엔티티가 없는 CTE나 파생 테이블에 조인할 때는 `em.aliasRef()`를 쓰세요.
 
-### `em.refs(...specs)` -- 일괄 변형
+### `em.refs(...specs)`: 일괄 변형
 
 쿼리 하나에 ref가 서너 개 필요할 때 매번 한 줄씩 선언하면 코드가 반복됩니다. 재귀 CTE에서 엔티티를 자기 자신과 self-join하면서 CTE 별칭도 참조하는 경우가 전형적입니다. `em.refs(...)`는 `ref()`나 `aliasRef()`와 같은 형태의 인자를 받아 타입 있는 튜플을 반환합니다.
 
@@ -248,7 +248,7 @@ spec 형태는 다음과 같습니다.
 
 튜플 형태에는 `as const`가 필요합니다. 그래야 TypeScript가 별칭을 리터럴 문자열 타입으로 좁히고 구조 분해에 알맞은 요소 타입을 전파합니다.
 
-### `em.query\`…\`` -- 짧은 raw 쿼리용 tagged shortcut
+### `em.query\`…\``: 짧은 raw 쿼리용 태그드 템플릿
 
 일회성 raw 쿼리에서는 ref를 명시적으로 만드는 일이 번거로운 보일러플레이트입니다. 이런 경우를 위해 `em.query`는 태그드 템플릿도 받습니다.
 
@@ -285,7 +285,7 @@ const [{ count }] = await em.query(Count)`
 // 어느 드라이버에서든 count는 number
 ```
 
-## WHERE, JOIN, Subquery
+## WHERE, JOIN, 서브쿼리
 
 RawQueryBuilder는 SelectQueryBuilder와 같은 WHERE 헬퍼를 제공합니다. `andWhere()`, `orWhere()`, `whereIn()`, `whereNull()`, `whereBetween()` 등이 있습니다. 차이는 컬럼 이름이 타입 안전하지 않은 raw 문자열이라는 점입니다.
 
@@ -323,7 +323,7 @@ const query = em.createQueryBuilder()
   .build();
 ```
 
-## Set Operations -- UNION, INTERSECT, EXCEPT
+## 집합 연산: UNION, INTERSECT, EXCEPT
 
 완전히 다른 쿼리의 결과를 합쳐야 할 때가 있습니다. 예를 들어 직원과 계약직을 목록 하나로 합치는 경우입니다.
 
@@ -364,7 +364,7 @@ const query = em.createQueryBuilder()
 const subscribedEmails = await em.query(query);
 ```
 
-## Common Table Expressions (CTE)
+## CTE (공통 테이블 표현식)
 
 ### CTE가 필요한 이유
 
@@ -405,7 +405,7 @@ const users = await em.query(query);
 
 `with()` 메서드는 이름과 함께 `Sql` 객체나 콜백을 받습니다. 콜백에는 새 `RawQueryBuilder`가 전달됩니다. CTE 결과는 메인 쿼리의 FROM 절에서 일반 테이블처럼 참조할 수 있습니다.
 
-### Recursive CTE
+### 재귀 CTE
 
 조직도, 카테고리 트리, 스레드 댓글처럼 본래 계층 구조인 데이터가 있습니다. **Recursive CTE**를 사용하면 단계마다 쿼리를 보내지 않고 쿼리 하나로 계층 구조를 탐색할 수 있습니다.
 
@@ -448,9 +448,9 @@ Recursive CTE는 `UNION ALL`로 결합한 두 부분으로 구성됩니다.
 
 데이터베이스는 새 행이 더 이상 생기지 않을 때까지 recursive step을 반복해서 실행합니다. 반복할 때마다 트리에서 한 단계 더 깊이 들어갑니다.
 
-## Window Functions
+## 윈도 함수
 
-### Window Functions가 필요한 이유
+### 윈도 함수가 필요한 이유
 
 부서별로 직원의 급여 순위를 매기려 한다고 가정합니다. GROUP BY를 쓰면 한 부서의 모든 직원이 행 하나로 합쳐집니다. 그래서 개별 직원의 데이터가 사라집니다. 윈도 함수(window function)는 모든 행을 유지하면서 계산한 값을 옆에 추가합니다.
 
@@ -522,7 +522,7 @@ const query = em.createQueryBuilder()
 
 `partitionBy`를 생략하면 윈도가 전체 결과 집합에 걸칩니다. 그래서 합계가 그룹별이 아니라 모든 행에 걸쳐 누적됩니다.
 
-## DISTINCT -- 중복 제거
+## DISTINCT: 중복 제거
 
 RawQueryBuilder는 DISTINCT 변형도 지원합니다.
 
@@ -553,7 +553,7 @@ qb.selectDistinctOn(['"department"'], ['"id"', '"name"', '"salary"'])
 
 실무에서는 일상적인 쿼리를 `SelectQueryBuilder`로 시작하세요. UNION, 재귀 계층 탐색, 윈도 분석이 필요해서 한계에 부딪히면 그 쿼리에만 `RawQueryBuilder`를 쓰면 됩니다.
 
-## Next Steps
+## 다음 단계
 
 - [Raw 쿼리 결과에 타입 붙이기](./row-shapes.md): `defineRow()`로 엔티티 없이 raw SQL 결과에 타입과 변환 적용
 - [Query Builder](./query-builder.md): `keyof T` 자동 완성을 지원하는 타입 안전한 SelectQueryBuilder

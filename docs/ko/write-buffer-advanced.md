@@ -1,12 +1,12 @@
-# Write Buffer — Advanced
+# Write Buffer: 고급편
 
-WriteBuffer의 고급 기능을 쓰려면 Identity Map, 변경 추적(dirty checking), 엔티티 상태, `flush()`를 먼저 이해해야 합니다. 아직 읽지 않았다면 [Write Buffer — Basics](./write-buffer.md)부터 읽으세요.
+WriteBuffer의 고급 기능을 쓰려면 Identity Map, 변경 추적(dirty checking), 엔티티 상태, `flush()`를 먼저 이해해야 합니다. 아직 읽지 않았다면 [Write Buffer: 기본편](./write-buffer.md)부터 읽으세요.
 
 ---
 
-## Lazy Loading
+## 지연 로딩
 
-### N+1 문제와 Lazy Loading이 필요한 이유
+### N+1 문제와 지연 로딩이 필요한 이유
 
 게시글과 작성자가 있는 블로그를 생각해 보겠습니다. 게시글 10개를 조회하면 대개 각 게시글의 작성자도 필요합니다. 방법은 두 가지입니다.
 
@@ -43,7 +43,7 @@ SELECT * FROM "user" WHERE "id" = $2   -- post 2's author
 
 WriteBuffer는 관계 속성을 자동으로 지연 로딩 프록시(lazy proxy)로 초기화합니다. 로드되지 않은 관계에 접근하면 DB 쿼리가 실행됩니다. 그리고 로드된 엔티티는 버퍼의 Identity Map에 등록됩니다.
 
-### Lazy proxy의 동작 방식
+### 지연 로딩 프록시의 동작 방식
 
 ```typescript
 const buf = em.buffer();
@@ -68,7 +68,7 @@ console.log(post.author.name);  // "Alice" — works directly
 | `@OneToOne` | Promise → 단일 관련 엔티티 |
 | `@ManyToMany` | Promise → 관련 엔티티 배열 (피벗 테이블을 먼저 조회) |
 
-### Promise 함정 — 첫 번째 접근만 해당
+### Promise 함정: 첫 번째 접근만 해당
 
 JavaScript의 속성 getter는 언어 제약 때문에 동기적으로 동작합니다. 그래서 프록시는 DB 쿼리 결과를 동기적으로 반환할 수 없습니다. 첫 번째 접근이 Promise를 반환하는 것은 이 때문입니다.
 
@@ -113,7 +113,7 @@ post.comments = [myComment];  // proxy is replaced with your array
 // No DB query, no Promise
 ```
 
-### 직렬화는 안전해요 — 로드 안 된 관계는 건너뜁니다
+### 안전한 직렬화: 로드되지 않은 관계는 건너뜀
 
 로드되지 않은 지연 로딩 속성은 non-enumerable입니다. 그래서 `JSON.stringify`, 객체 스프레드, `Object.keys`, 로그 출력, 테스트 pretty-printer는 모두 그 속성을 건너뜁니다. 숨은 쿼리도 실행되지 않고 방치된 Promise도 생기지 않습니다.
 
@@ -136,9 +136,9 @@ JSON.stringify(post);
 
 ---
 
-## Pessimistic Locking
+## 비관적 잠금
 
-### Dirty checking만으로 부족한 경우
+### 변경 추적만으로 부족한 경우
 
 변경 추적은 로드와 flush 사이에 내가 바꾼 값을 찾아냅니다. 그렇다면 그 사이에 다른 트랜잭션이 값을 바꾸면 어떻게 될까요?
 
@@ -190,9 +190,9 @@ COMMIT
 
 ---
 
-## Bulk DML
+## 대량 DML
 
-### updateMany / deleteMany — 엔티티별 추적이 필요 없을 때
+### updateMany / deleteMany: 엔티티별 추적이 필요 없을 때
 
 조건에 맞는 많은 행을 한 번에 갱신하거나 삭제할 때가 있습니다. 이때 엔티티를 하나씩 로드할 필요는 없습니다. `active = false`로 바꾸려고 사용자 10,000명을 로드하면 지나치게 느립니다.
 
@@ -228,7 +228,7 @@ COMMIT;
 - Bulk update: 조건에 맞는 추적 엔티티에 SET 값을 메모리에서도 적용합니다.
 - Bulk delete: 조건에 맞는 추적 엔티티를 Identity Map에서 제거합니다.
 
-### Batch INSERT — 여러 행을 하나의 구문으로
+### Batch INSERT: 여러 행을 SQL 문 하나로
 
 기본 설정에서는 사용자 3명을 persist하면 INSERT 3개가 따로 실행됩니다. `batchInsert: true`로 설정하면 multi-row INSERT 하나로 합쳐집니다.
 
@@ -273,7 +273,7 @@ SELECT ... FROM `user` WHERE `id` IN (?, ?, ?)
 
 인스턴스에 키가 이미 있으면 `saveMany()`도 한 행씩 저장합니다.
 
-### Batch UPDATE — 여러 행을 하나의 구문으로
+### Batch UPDATE: 여러 행을 SQL 문 하나로
 
 `batchUpdate: true`로 설정하면 같은 타입의 dirty 엔티티 여러 개를 `CASE WHEN`을 쓴 SQL 문 하나로 갱신합니다.
 
@@ -311,7 +311,7 @@ WHERE "id" IN ($7, $8, $9)
 
 ---
 
-## Flush Events
+## flush 이벤트
 
 flush 중에 실행되는 콜백을 연산 타입별로 등록할 수 있습니다. 감사 로그, 캐시 무효화, 데이터 변경 뒤의 알림 전송에 유용합니다.
 
@@ -357,7 +357,7 @@ buf.onFlushEvent("postUpdate", (event) => {
 
 ---
 
-## Read-only Entities
+## 읽기 전용 엔티티
 
 엔티티를 read-only로 지정하면 flush할 때 변경 추적을 건너뜁니다. 실수로 속성을 수정해도 변경 사항은 DB에 저장되지 않습니다.
 
@@ -376,13 +376,13 @@ buf.isReadOnly(config);  // true
 
 ---
 
-## Change Tracking Policy
+## 변경 추적 정책
 
-### Dirty checking의 비용
+### 변경 추적의 비용
 
 `flush()`를 호출할 때마다 버퍼는 추적 중인 모든 엔티티의 현재 상태를 스냅샷과 비교합니다. 엔티티가 10개라면 순식간입니다. 하지만 10,000개라면 깊은 비교(deep equality)를 10,000번 해야 하므로 비용을 무시할 수 없습니다.
 
-### DEFERRED_IMPLICIT (기본값) — 전부 검사
+### DEFERRED_IMPLICIT (기본값): 전부 검사
 
 flush할 때 추적 중인 모든 엔티티의 변경 여부를 확인합니다. 어떤 상황에서도 정확하며 이 정책이 기본값입니다.
 
@@ -394,7 +394,7 @@ user.name = "updated";
 await buf.flush();  // automatically detects the change
 ```
 
-### DEFERRED_EXPLICIT — 명시적으로 지정한 것만 검사
+### DEFERRED_EXPLICIT: 명시적으로 지정한 것만 검사
 
 명시적 추적에서는 직접 dirty로 표시한 엔티티만 검사합니다.
 
@@ -421,7 +421,7 @@ UPDATE "user" SET "name" = $1 WHERE "id" = $2
 -- parameters: ['updated', 1]
 ```
 
-### 언제 어떤 정책을 쓸까
+### 정책 선택 기준
 
 | 정책 | flush당 변경 검사 비용 | 적합한 경우 |
 |--------|---------------------------|------------|
@@ -430,9 +430,9 @@ UPDATE "user" SET "name" = $1 WHERE "id" = $2
 
 ---
 
-## Flush Modes
+## flush 모드
 
-### 버퍼가 언제 자동으로 flush할까?
+### 자동 flush 시점
 
 기본값인 `MANUAL`에서는 버퍼가 자동으로 flush하지 않습니다. 준비가 되면 직접 `flush()`를 호출해야 합니다. 그래서 새 사용자를 `persist()`한 뒤 바로 `find()`로 모든 사용자를 조회하면 새 사용자는 결과에 나타나지 않습니다. 아직 메모리에만 있기 때문입니다.
 
@@ -451,7 +451,7 @@ em.extend(bufferPlugin({ flushMode: FlushMode.AUTO }));
 | `COMMIT` | `MANUAL`의 deprecated 별칭입니다. 동작이 완전히 같습니다. | 새 코드에서는 사용하지 마세요. 버퍼는 트랜잭션 생명주기에 묶여 있지 않습니다. 그래서 JPA식 "커밋 시점 flush"를 지원할 수 없습니다. |
 | `ALWAYS` | 대기 중인 작업이 없어도 모든 쿼리 전에 자동으로 flush합니다. | 디버깅 전용. DB와 버퍼가 항상 동기화됩니다. |
 
-### 예시: AUTO mode
+### 예시: AUTO 모드
 
 ```typescript
 const buf = em.buffer();  // flushMode: AUTO
@@ -500,7 +500,7 @@ Proxy는 배열을 변경하는 모든 메서드를 가로챕니다.
 
 ---
 
-## Nested Unit of Work
+## 중첩 Unit of Work
 
 ### 문제: 부분 롤백
 
@@ -520,7 +520,7 @@ for (const row of csvRows) {
 await buf.flush();  // If ONE product fails, ALL 100 are rolled back!
 ```
 
-### 해결: SAVEPOINT를 사용하는 중첩 버퍼
+### 해결: 세이브포인트를 사용하는 중첩 버퍼
 
 중첩 버퍼는 연산을 `SAVEPOINT`로 감쌉니다. 세이브포인트는 트랜잭션 안의 "체크포인트"입니다. 중첩 버퍼가 실패하면 그 연산만 롤백되고 부모 버퍼의 작업은 보존됩니다.
 
@@ -580,7 +580,7 @@ COMMIT;                                  -- products 1 and 3 saved, product 2 sk
 
 ---
 
-## Accumulate and Retry Pattern
+## 누적 후 재시도 패턴
 
 `retainAfterFlush`의 기본값은 `true`입니다. 이 설정에서는 flush가 성공한 뒤 버퍼가 추적 중인 엔티티의 스냅샷을 다시 찍습니다. 그래서 변경을 모았다가 flush하고 다시 모았다가 flush하는 사이클을 만들 수 있습니다.
 
@@ -624,7 +624,7 @@ try {
 
 ---
 
-## Configuration Reference
+## 설정 레퍼런스
 
 모든 옵션은 `bufferPlugin()`이나 `em.buffer()`에 넘길 수 있습니다. `bufferPlugin()`에 넘긴 값은 전역 기본값이 됩니다. 그리고 `em.buffer()`에 넘긴 값은 그 인스턴스에서만 기본값을 덮어씁니다.
 
@@ -634,7 +634,7 @@ try {
 | `cascade` | `boolean \| BufferCascadeOptions` | `true` | 관계 메타데이터를 따라 persist/remove/merge/detach를 전파합니다. `{ persist, merge, remove, refresh }` 객체로 지정하면 작업별로 켜고 끌 수 있습니다 |
 | `orphanRemoval` | `boolean` | `false` | 컬렉션 배열에서 제거된 `@OneToMany` 자식을 자동으로 삭제합니다 |
 | `manyToManySync` | `boolean` | `true` | 컬렉션이 바뀌면 `@ManyToMany` 피벗 테이블의 행을 자동으로 동기화합니다 |
-| `flushMode` | `FlushMode` | `MANUAL` | 쿼리 전 자동 flush 시점: `MANUAL`, `AUTO`, `ALWAYS` ([Flush Modes](#flush-modes) 참고) |
+| `flushMode` | `FlushMode` | `MANUAL` | 쿼리 전 자동 flush 시점: `MANUAL`, `AUTO`, `ALWAYS` ([Flush Modes](#flush-모드) 참고) |
 | `autoFlush` | `boolean` | `false` | `FlushMode.AUTO`의 단축 옵션 |
 | `changeTracking` | `ChangeTrackingPolicy` | `DEFERRED_IMPLICIT` | 엔티티의 변경 여부를 검사하는 시점 |
 | `batchInsert` | `boolean` | `false` | 같은 엔티티 타입의 INSERT 여러 개를 multi-row SQL 문 하나로 합칩니다 |
@@ -646,9 +646,9 @@ try {
 
 ---
 
-## Next Steps
+## 다음 단계
 
-- [Write Buffer — Basics](./write-buffer.md): 핵심 개념, Identity Map, 변경 추적(dirty checking), flush
+- [Write Buffer: 기본편](./write-buffer.md): 핵심 개념, Identity Map, 변경 추적(dirty checking), flush
 - [Plugin System](./plugins.md): 커스텀 플러그인 작성
 - [Events & Subscribers](./events.md): 엔티티 생명주기 이벤트
 - [API Reference](./api-reference.md): 전체 메서드 시그니처

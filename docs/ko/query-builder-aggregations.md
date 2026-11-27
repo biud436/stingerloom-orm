@@ -1,4 +1,4 @@
-# Query Builder — 집계 & 서브쿼리
+# 쿼리 빌더: 집계 & 서브쿼리
 
 GROUP BY, HAVING, 서브쿼리, DISTINCT부터는 `find()`로 표현하기 어렵습니다. 이런 쿼리에서 쿼리 빌더가 힘을 발휘합니다. 아래 예제는 모두 MySQL / PostgreSQL / SQLite에서 똑같이 동작합니다.
 
@@ -39,11 +39,11 @@ await em.createQueryBuilder(Post, "p")
 
 `addOrderBy("postCount", "DESC")`는 키를 FROM 별칭으로 한정합니다. 그래서 `"p"."postCount"`가 됩니다. `postCount`는 SELECT 목록에만 있는 별칭이므로 데이터베이스가 이 참조를 거부합니다. SELECT 별칭으로 정렬하려면 한 단계 낮은 `appendSql(sql\`ORDER BY "alias" ...\`)`를 쓰세요. 이때는 한정하지 않으므로 별칭이 그대로 남습니다.
 
-두 방식을 모두 지원합니다. 다만 같은 집계를 여러 자리에서 쓴다면 `qAlias()` 쪽이 유리합니다. 기준을 바꿀 때 한 군데만 고치면 되기 때문입니다. `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.countDistinct()`는 모두 같은 방식으로 씁니다. 전체 연산자는 [QueryDSL 집계](./query-builder-querydsl.md#집계-—-count-sum-avg-min-max)에 있습니다.
+두 방식을 모두 지원합니다. 다만 같은 집계를 여러 자리에서 쓴다면 `qAlias()` 쪽이 유리합니다. 기준을 바꿀 때 한 군데만 고치면 되기 때문입니다. `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.countDistinct()`는 모두 같은 방식으로 씁니다. 전체 연산자는 [QueryDSL 집계](./query-builder-querydsl.md#집계-count-sum-avg-min-max)에 있습니다.
 
 ### 그룹 수 세기
 
-그룹화된 빌더에서 `getCount()`는 `HAVING`을 통과한 그룹의 개수를 반환합니다. 어느 한 그룹의 크기가 아닙니다. `paginate()`와 `getManyAndCount()`의 `total`이 그룹 행 수와 맞는 것도 이 규칙 덕분입니다. 그룹별 크기는 위처럼 집계를 투영한 뒤 `getRawMany()`로 조회하세요. 자세한 내용은 [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-는-그룹-수를-셉니다)를 참고하세요.
+그룹화된 빌더에서 `getCount()`는 `HAVING`을 통과한 그룹의 개수를 반환합니다. 어느 한 그룹의 크기가 아닙니다. `paginate()`와 `getManyAndCount()`의 `total`이 그룹 행 수와 맞는 것도 이 규칙 덕분입니다. 그룹별 크기는 위처럼 집계를 투영한 뒤 `getRawMany()`로 조회하세요. 자세한 내용은 [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-그룹-수-세기)를 참고하세요.
 
 ### 표현식으로 그룹화하기
 
@@ -253,7 +253,7 @@ const results = await em.query(
 
 댓글 스레드나 조직도 같은 계층 데이터에 재귀 CTE가 필요하면 [Raw SQL & CTE](./raw-sql.md)를 참고하세요.
 
-### `SelectQueryBuilder`를 안는 상위 헬퍼
+### `SelectQueryBuilder`를 받는 상위 헬퍼
 
 서브쿼리 자체가 `SelectQueryBuilder`라면 타입 있는 헬퍼를 쓰는 편이 낫습니다. 파라미터 바인딩이 그대로 유지되고 안쪽 쿼리에서도 자동완성이 됩니다.
 
@@ -312,7 +312,7 @@ DISTINCT는 결과 집합에서 중복 행을 제거합니다. 선택한 컬럼�
 
 PostgreSQL 전용인 `DISTINCT ON`은 [Raw SQL & CTE](./raw-sql.md)를 참고하세요.
 
-## GROUP BY로는 부족할 때 — 윈도우 집계
+## GROUP BY로는 부족할 때: 윈도 함수 집계
 
 GROUP BY는 그룹마다 행을 하나로 합칩니다. 하지만 "개별 행은 그대로 두고 팀별 누적 합계를 함께 보여 달라"처럼 원본 행을 유지한 채 집계만 더해야 할 때가 있습니다. 이런 경우에는 GROUP BY 대신 윈도 함수를 씁니다.
 
@@ -330,7 +330,7 @@ qb.select(["id", "teamId", "score"])
   .getRawMany();
 ```
 
-표현식을 `.toScalar()`로 마무리하면 WHERE / HAVING 안에 서브쿼리처럼 넣을 수도 있습니다. 전체 API와 리더보드 실전 예제는 [QueryDSL → 윈도 함수](./query-builder-querydsl.md#윈도우-함수-—-aggregate-over-windowbuilder)에 있습니다.
+표현식을 `.toScalar()`로 마무리하면 WHERE / HAVING 안에 서브쿼리처럼 넣을 수도 있습니다. 전체 API와 리더보드 실전 예제는 [QueryDSL 표현식의 윈도 함수](./query-builder-querydsl.md#윈도-함수-aggregate-over-windowbuilder)에 있습니다.
 
 ## 다음 단계
 

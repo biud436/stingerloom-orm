@@ -1,4 +1,4 @@
-# Migration CLI
+# 마이그레이션 CLI
 
 ## 마이그레이션이 필요한 이유
 
@@ -8,7 +8,7 @@
 
 마이그레이션은 데이터베이스 스키마의 버전 관리라고 생각하면 됩니다. 마이그레이션 하나하나는 스키마를 한 단계 앞으로 또는 뒤로 옮기는 커밋(commit)입니다.
 
-## 마이그레이션 워크플로우
+## 마이그레이션 워크플로
 
 일반적인 마이그레이션 워크플로는 처음부터 끝까지 다음과 같습니다.
 
@@ -149,8 +149,8 @@ npx stingerloom migrate:generate --output ./migrations --name add_posts
 | `--config <path>` | 설정 파일 경로 | 자동 감지 |
 | `--output <dir>` | 생성된 마이그레이션 출력 디렉토리 | `./migrations` |
 | `--name <suffix>` | 생성된 마이그레이션 파일의 이름 접미사 | `auto_migration` |
-| `--version` | 설치된 `@stingerloom/orm` 버전 출력 | -- |
-| `--help`, `-h` | 도움말 표시 | -- |
+| `--version` | 설치된 `@stingerloom/orm` 버전 출력 | 없음 |
+| `--help`, `-h` | 도움말 표시 | 없음 |
 
 `--flag value` 대신 `--flag=value` 형태도 받습니다. 알 수 없는 플래그는 무시되지 않고 에러가 됩니다. 예를 들어 `stingerloom introspect --dry-runn`은 `Unknown option: "--dry-runn"`을 출력하고 중단합니다. 오타를 무시한 채 엔티티 파일을 쓰지 않습니다.
 
@@ -270,7 +270,7 @@ CREATE TABLE "__migrations" (
 
 마이그레이션의 적용 여부는 이 테이블을 기준으로 판단합니다. `migrate:run`을 실행하면 CLI는 이 테이블을 읽고 이미 적용된 마이그레이션을 건너뜁니다. `migrate:rollback`을 실행하면 마지막 항목을 찾아 되돌립니다.
 
-## 동시성 안전 -- Advisory Lock
+## 동시성 안전: 어드바이저리 잠금
 
 ### 동시 마이그레이션이 위험한 이유
 
@@ -278,7 +278,7 @@ CREATE TABLE "__migrations" (
 
 더 나쁜 경우도 있습니다. 두 프로세스가 서로 다른 마이그레이션을 동시에 실행하면 순서가 뒤섞여 스키마가 불일치 상태로 남을 수 있습니다.
 
-### Advisory Lock이 이를 방지하는 방법
+### 어드바이저리 잠금으로 막는 방법
 
 CLI는 마이그레이션을 실행하기 전에 데이터베이스 어드바이저리 잠금(database advisory lock)을 획득합니다. 어드바이저리 잠금은 파일이나 메모리가 아니라 데이터베이스 안에 존재하는 협력형 잠금입니다. 같은 잠금을 획득하려는 다른 프로세스는 첫 번째 프로세스가 잠금을 해제할 때까지 대기합니다.
 
@@ -289,7 +289,7 @@ CLI는 마이그레이션을 실행하기 전에 데이터베이스 어드바이
 
 그러므로 여러 서버에 동시에 배포해도 안전합니다. 서버 하나만 마이그레이션을 실행하고 나머지는 대기합니다.
 
-## 프로그래밍 API -- MigrationCli
+## 프로그래밍 API: MigrationCli
 
 자체 도구나 CI/CD 파이프라인에서는 `MigrationCli`를 직접 쓰세요.
 
@@ -345,7 +345,7 @@ await cli.close();
 | `migrateGenerate()` | `Promise<{filePath, sql}>` | 마이그레이션 자동 생성 |
 | `setGenerateOptions(opts)` | `this` | 출력 디렉토리와 이름 설정 |
 
-## Schema Diff 자동 생성 -- 동작 과정
+## Schema Diff 자동 생성: 동작 과정
 
 `migrate:generate` 명령은 마이그레이션 시스템에서 가장 강력한 부분입니다. 이 명령을 실행하면 아래 순서로 일이 일어납니다.
 
@@ -423,7 +423,7 @@ export class SchemaUpdate1711234567892 extends Migration {
 
 `down()` 메서드는 모든 변경을 역순으로 되돌립니다. 그래서 롤백하면 변경 전 상태로 깔끔하게 돌아갑니다.
 
-### Rename 감지
+### 이름 변경 감지
 
 SchemaDiff는 휴리스틱으로 컬럼 이름 변경을 감지합니다. 예를 들어 `email`을 `emailAddress`로 바꿨다고 해 봅시다. 같은 테이블에서 같은 타입의 컬럼이 하나 삭제되고 하나 추가된 경우입니다. 이때 SchemaDiff는 다음 SQL을 생성합니다.
 

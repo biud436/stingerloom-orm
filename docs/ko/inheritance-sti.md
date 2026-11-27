@@ -1,4 +1,4 @@
-# Single Table Inheritance (STI) -- 심층 가이드
+# Single Table Inheritance (STI): 심층 가이드
 
 **Single Table Inheritance**는 부모와 모든 자식을 포함한 클래스 계층 구조 전체를 데이터베이스 테이블 하나에 매핑하는 전략입니다. 각 행이 어느 타입인지는 구분 컬럼(discriminator column)으로 가려냅니다.
 
@@ -103,7 +103,7 @@ await em.register({
 
 자식은 루트의 테이블을 함께 쓰므로 자기 테이블 이름을 따로 가질 수 없습니다. 자식에 루트 테이블과 다른 이름으로 `@Entity({ name: "..." })`을 붙이면 클래스를 선언하는 시점에 ORM이 `ORM_SCHEMA_ERROR`를 던집니다.
 
-## INSERT -- Discriminator 값이 설정되는 방식
+## INSERT: 구분 값이 설정되는 방식
 
 구분 값은 직접 설정하지 않습니다. ORM이 `@DiscriminatorValue("credit_card")`에서 값을 읽어 모든 INSERT에 자동으로 주입합니다.
 
@@ -165,7 +165,7 @@ VALUES (50, 'Payment')
 RETURNING *;
 ```
 
-### 모든 INSERT 경로가 같은 값을 씁니다
+### 모든 INSERT 경로에 같은 구분 값 적용
 
 어떤 메서드로 쓰든 모든 행에 같은 값이 들어갑니다. `save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()`, `upsert()`, `insertIgnore()`, `batchUpsert()`, `createInsertBuilder()`, 그리고 WriteBuffer flush까지 전부입니다. 페이로드에 구분 컬럼 값을 적어도 ORM이 엔티티의 구분 값으로 덮어씁니다.
 
@@ -208,7 +208,7 @@ ON DUPLICATE KEY UPDATE
 
 `em.upsert(Payment, ...)`처럼 루트로 upsert하면 키를 가진 행이 어느 서브타입이든 갱신합니다. 이때 그 행의 구분 값은 건드리지 않습니다.
 
-## SELECT -- 자식 엔티티 조회 (em.find)
+## SELECT: 자식 엔티티 조회 (em.find)
 
 자식 엔티티를 조회하면 ORM이 구분 값으로 거르는 `WHERE` 절을 자동으로 추가합니다. 그래서 다른 타입의 행은 결과에 나오지 않습니다.
 
@@ -249,7 +249,7 @@ WHERE `payment_type` = 'credit_card';
 
 주목할 점: BankTransferPayment에 속하는 컬럼인 `bankCode`는 결과 객체에 없습니다. ORM은 `CreditCardPayment` 클래스에 속하는 컬럼만 매핑합니다. 다른 형제 타입의 NULL 컬럼은 역직렬화 과정에서 버려집니다.
 
-## SELECT -- Polymorphic Query (루트 엔티티)
+## SELECT: 다형성 쿼리 (루트 엔티티)
 
 루트 엔티티를 조회하면 구분 값 필터 없이 테이블의 모든 행을 반환합니다. ORM은 각 행의 구분 값을 읽고 알맞은 TypeScript 클래스의 인스턴스를 만듭니다.
 
@@ -312,7 +312,7 @@ console.log(JSON.stringify(all, null, 2));
 
 서브클래스가 선언한 관계의 조인 컬럼도 공유 테이블에 있습니다. 그래서 루트 조회도 이 컬럼을 SELECT합니다. 그리고 그 서브클래스의 인스턴스는 `find(CreditCardPayment)`로 조회했을 때와 똑같이 외래 키 섀도 속성을 가집니다. `issuer` 관계가 있는 `CreditCardPayment`의 `issuerId`가 그 예입니다. 루트에서 `where: { issuerId }`로 거를 수도 있습니다.
 
-### Polymorphic 역직렬화 작동 원리
+### 다형성 역직렬화 동작 원리
 
 ORM은 내부에서 각 행을 다음 순서로 처리합니다.
 
@@ -324,7 +324,7 @@ ORM은 내부에서 각 행을 다음 순서로 처리합니다.
 
 이 로직은 `ResultTransformer.toPolymorphicEntities()`에 있습니다. 구분 값 맵은 `InheritanceResolver.buildDiscriminatorMap()`에서 한 번 만들어지고 쿼리 동안 캐시됩니다.
 
-## SELECT -- Relations와 함께
+## SELECT: 관계와 함께
 
 상속 엔티티는 표준 `@ManyToOne`과 `@OneToMany` 관계를 지원합니다. 모든 자식이 관계를 상속받도록 루트 엔티티에 관계를 정의하세요.
 
@@ -448,7 +448,7 @@ export class Store {
 }
 ```
 
-## SELECT -- findOne 사용
+## SELECT: findOne 사용
 
 `findOne`은 `find`와 똑같이 동작합니다. 다만 엔티티 하나나 `null`을 반환합니다.
 
@@ -484,7 +484,7 @@ CreditCardPayment { id: 1, amount: 100, cardNumber: "4111-1111-1111-1111" }
 
 주목할 점: 구분 값 조건과 `amount` 조건이 AND로 묶입니다. 구분 값 필터가 항상 먼저 오고 그다음에 사용자가 지정한 WHERE 조건이 옵니다.
 
-## SELECT -- QueryBuilder 사용
+## SELECT: QueryBuilder 사용
 
 `SelectQueryBuilder`는 STI 상속 로직을 자동으로 적용합니다. `em.createQueryBuilder()`에 자식 엔티티를 넘기면 구분 값 WHERE 절이 자동으로 들어갑니다. 루트 엔티티를 조회하면 다형성 역직렬화로 알맞은 서브클래스 인스턴스를 반환합니다.
 
@@ -551,7 +551,7 @@ SELECT "p".* FROM "payment" AS "p";
 
 QueryBuilder는 각 행의 구분 값을 읽고 알맞은 TypeScript 클래스의 인스턴스를 만듭니다. `em.find()`와 같은 방식입니다. 모든 QueryBuilder 메서드(`getMany()`, `getOne()`, `getCount()`, `exists()`)가 이 다형성 역직렬화를 지원합니다.
 
-## SELECT -- WriteBuffer 사용
+## SELECT: WriteBuffer 사용
 
 WriteBuffer 플러그인(Unit of Work)은 조회를 그대로 `EntityManager.find()`에 위임합니다. 그래서 구분 값 WHERE 절과 다형성 역직렬화를 비롯한 모든 상속 로직이 똑같이 동작합니다.
 
@@ -691,7 +691,7 @@ DELETE FROM "payment" WHERE "payment_type" = 'credit_card';
 | `instanceof` 검사가 런타임에 동작합니다 | 자식 타입이 10개 이상이면 스키마가 복잡해집니다 |
 | 인덱스 하나가 계층 전체를 커버합니다 | 자식 전용 컬럼에는 모든 행을 대상으로 하는 UNIQUE 제약 조건을 걸 수 없습니다 |
 
-## STI를 사용해야 할 때
+## STI를 사용해야 하는 경우
 
 STI가 잘 맞는 경우는 다음과 같습니다.
 

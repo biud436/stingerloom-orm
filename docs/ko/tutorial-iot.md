@@ -1,6 +1,6 @@
-# Tutorial: IoT 스마트 온도계 백엔드 만들기
+# 튜토리얼: IoT 스마트 온도계 백엔드 만들기
 
-## 무엇을 만드나요?
+## 만들 시스템
 
 스마트 빌딩을 떠올려 보세요. 벽, 천장, 에어덕트에 작은 온도계 수천 개가 설치되어 있습니다. 각 온도계는 30초마다 중앙 서버로 온도 데이터를 전송합니다. 모바일 앱은 실시간 대시보드를 보여 줍니다. 서버실이 과열되면 알림이 울립니다. 매일 밤 cron job이 데이터를 집계해서 일일 리포트를 만듭니다.
 
@@ -36,7 +36,7 @@ NestJS와 Stingerloom ORM으로 이 백엔드를 처음부터 만들어 보겠�
       └──────┘ └─────┘ └───────┘
 ```
 
-### ORM의 역할 - 그리고 ORM이 아닌 것
+### ORM의 담당 범위
 
 코드를 작성하기 전에 ORM이 맡는 범위를 분명히 짚고 넘어가겠습니다. ORM은 TypeScript 객체와 데이터베이스 사이를 변환하는 도구입니다. 캐시도 잡 큐도 인증 시스템도 아닙니다.
 
@@ -622,7 +622,7 @@ CREATE INDEX "idx_daily_stats_date" ON "daily_stats" ("date");
 
 ### 설계 결정 설명
 
-#### `recordedAt`와 `temperatureCelsius`에 `@Index()`를 쓰는 이유
+#### `recordedAt`과 `temperatureCelsius`에 `@Index()`를 쓰는 이유
 
 PostgreSQL은 기본적으로 인덱스를 B-tree 구조로 저장합니다. `recordedAt`에 B-tree 인덱스가 있으면 데이터베이스는 범위 쿼리(`BETWEEN`, `>=`, `<`)와 `ORDER BY`를 전체 테이블 스캔 없이 처리합니다. "최근 7일간의 데이터"를 찾을 때 모든 행을 읽지 않습니다. 트리를 따라 시작 지점으로 이동한 뒤 거기서부터 순서대로 읽습니다.
 
@@ -630,7 +630,7 @@ PostgreSQL은 기본적으로 인덱스를 B-tree 구조로 저장합니다. `re
 
 `temperatureCelsius` 인덱스도 같은 목적으로 씁니다. "35도 이상인 데이터 모두 찾기" 같은 임계값 쿼리를 위한 인덱스입니다. Step 6에서는 `explain()`으로 쿼리 플래너가 이 인덱스들을 실제로 쓰는지 확인합니다.
 
-#### `@BeforeInsert()`를 데이터베이스 CHECK 제약조건 대신 쓰는 이유
+#### `@BeforeInsert()`를 데이터베이스 CHECK 제약 조건 대신 쓰는 이유
 
 두 방법 모두 데이터를 검증합니다. 하지만 동작하는 계층이 다릅니다.
 
@@ -640,7 +640,7 @@ PostgreSQL은 기본적으로 인덱스를 B-tree 구조로 저장합니다. `re
 
 가장 좋은 방법은 둘 다 쓰는 것입니다. 훅으로는 사용자에게 보여 줄 명확한 에러 메시지를 만들고 CHECK 제약 조건으로는 데이터 무결성을 지킵니다. 예제 코드는 ORM 기능인 훅만 씁니다. 하지만 프로덕션에서는 마이그레이션 파일에 CHECK 제약 조건도 추가하세요.
 
-#### Users에는 `@DeletedAt()` (soft delete)를 쓰고 Readings에는 안 쓰는 이유
+#### Users에는 소프트 삭제(`@DeletedAt()`)를 쓰고 Readings에는 쓰지 않는 이유
 
 Users에는 감사와 규정 준수 요구사항이 있습니다. GDPR 같은 규정에서는 사용자를 보이지 않게 "삭제"하면서도 데이터를 올바르게 처리했음을 증명하는 기록은 보존해야 하기도 합니다. 소프트 삭제가 이 요구를 해결합니다. 사용자는 모든 쿼리 결과에서 사라지지만 행은 감사용으로 남습니다.
 
@@ -657,7 +657,7 @@ PostgreSQL materialized view(`CREATE MATERIALIZED VIEW`)도 비슷한 목적으�
 
 ---
 
-## Step 3: 멀티테넌시 -- 하나의 앱, 여러 빌딩
+## Step 3: 멀티테넌시 (하나의 앱, 여러 빌딩)
 
 ### 비유
 
@@ -748,9 +748,9 @@ Request B는 이미 시작되어 t2에서 자기 컨텍스트를 설정했습니
 
 `AsyncLocalStorage` 없이 `global.currentTenant = tenantId` 같은 단순한 전역 변수를 쓰면 경쟁 상태(race condition)가 생깁니다. Request A의 데이터베이스 쿼리가 실행되기 전에 Request B가 테넌트를 `building_b`로 덮어씁니다. 그러면 Request A가 잘못된 스키마를 쿼리합니다. `AsyncLocalStorage`는 이런 전형적인 동시성 버그를 구조적으로 없앱니다.
 
-### 테넌트 컨텍스트가 없을 때 어떻게 되나요?
+### 테넌트 컨텍스트가 없을 때
 
-시작 스크립트나 모듈 초기화 코드처럼 `MetadataContext.run()` 바깥에서 코드가 실행되면 ORM은 `public` 스키마로 폴백합니다. 이는 의도한 동작입니다. public 스키마에는 `ensureSchema()`가 복제하는 템플릿 테이블이 있기 때문입니다.
+시작 스크립트나 모듈 초기화 코드처럼 `MetadataContext.run()` 바깥에서 코드가 실행되면 ORM은 `public` 스키마로 넘어갑니다. 이는 의도한 동작입니다. public 스키마에는 `ensureSchema()`가 복제하는 템플릿 테이블이 있기 때문입니다.
 
 ```typescript
 // Outside any MetadataContext — targets "public" schema
@@ -802,7 +802,7 @@ export class TenantSchemaService {
 
 `ensureSchema()`는 먼저 스키마가 있는지 확인합니다. 스키마가 없으면 public 스키마의 테이블 구조를 복제해서 새로 생성합니다. 새 테넌트를 위해 빈 테이블 세트를 찍어 내는 것과 같습니다.
 
-### 스키마 프로비저닝이 포함된 업데이트된 Middleware
+### 스키마 프로비저닝을 추가한 Middleware
 
 ```typescript
 // src/tenant/tenant.middleware.ts (updated)
@@ -981,7 +981,7 @@ import { ReadingsController } from "./readings.controller";
 export class ReadingsModule {}
 ```
 
-### 단일 데이터 수집 -- save()
+### 단일 데이터 수집: save()
 
 온도계 하나가 데이터 하나를 보낼 때는 `save()`를 씁니다.
 
@@ -1028,7 +1028,7 @@ RETURNING *
 
 이 SQL이 실행되기 전에 `@BeforeInsert()` 훅이 실행됩니다. 온도가 절대영도보다 낮으면 훅이 에러를 던집니다. 그래서 INSERT가 데이터베이스에 도달하지 않습니다.
 
-### 배치 수집 -- insertMany()
+### 배치 수집: insertMany()
 
 디바이스가 데이터를 버퍼에 모았다가 한 번에 100개를 보내기도 합니다. `save()`를 루프에서 호출하면 INSERT 문이 100개 생깁니다. `insertMany()`는 이 INSERT를 SQL 문 하나로 묶습니다.
 
@@ -1063,7 +1063,7 @@ VALUES ($1, $2, $3, $4, $5, NOW()),
 
 왕복이 100번에서 1번으로 줄어듭니다. 실제 벤치마크에서는 10~50배 빠릅니다.
 
-::: warning insertMany()는 라이프사이클 훅을 실행하지 않아요
+::: warning insertMany()는 생명주기 훅을 실행하지 않습니다
 `@BeforeInsert()`와 `@AfterInsert()` 훅은 `save()`와 `saveMany()`에서만 동작합니다. 배치 항목마다 검증해야 한다면 `insertMany()`를 호출하기 전에 애플리케이션 코드에서 검증하세요. 아니면 `saveMany()`를 쓰세요. `saveMany()`는 더 느리지만 훅이 동작합니다.
 :::
 
@@ -1251,7 +1251,7 @@ LIMIT 1
 -- Parameters: [1]
 ```
 
-### 데이터 이력 -- 커서 페이지네이션을 활용한 무한 스크롤
+### 데이터 이력: 커서 페이지네이션을 활용한 무한 스크롤
 
 사용자가 디바이스를 탭해서 이력을 보면 앱은 스크롤 목록을 보여 줍니다. 아래로 스크롤하면 데이터가 더 로드됩니다. 이 방식을 **무한 스크롤**이라고 합니다. 무한 스크롤에 가장 알맞은 페이지네이션 전략은 커서 기반입니다.
 
@@ -1437,7 +1437,7 @@ const devices = await this.deviceRepo.find({
 
 ---
 
-## Step 7: 집계 -- 일일 통계
+## Step 7: 일일 통계 집계
 
 ### 실시간 집계의 문제점
 
@@ -1744,7 +1744,7 @@ worker 안에서 `MetadataContext.run(tenantId, ...)`을 호출하는 것이 중
 Redis 캐싱은 ORM이 맡는 일이 아닙니다. ORM의 책임은 PostgreSQL에서 끝납니다. 여기서는 ORM의 EntitySubscriber 패턴으로 두 시스템을 연결합니다. 원본 데이터가 바뀌면 캐시를 무효화하는 방식입니다.
 :::
 
-### 패턴: Redis 먼저, ORM 폴백
+### 패턴: Redis 먼저, 없으면 ORM
 
 ```
 Mobile App requests GET /devices/1/stats/weekly

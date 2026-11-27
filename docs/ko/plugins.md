@@ -1,4 +1,4 @@
-# Plugins
+# 플러그인
 
 ## 플러그인이 필요한 이유
 
@@ -8,7 +8,7 @@ ORM은 CRUD, 스키마 동기화, 이벤트 시스템, Unit of Work, 감사 로�
 
 플러그인은 브라우저 확장 프로그램과 비슷합니다. 브라우저는 페이지 렌더링, 탭 관리, 북마크 같은 필수 기능만 제공합니다. 광고 차단이나 비밀번호 관리는 확장 프로그램으로 설치합니다. 필요한 것만 설치하고 하나를 제거해도 나머지는 영향을 받지 않습니다.
 
-## 플러그인 동작 방식 -- Lifecycle
+## 플러그인 동작 방식: 생명주기
 
 플러그인은 다음과 같은 생명주기를 거칩니다.
 
@@ -32,7 +32,7 @@ ORM은 CRUD, 스키마 동기화, 이벤트 시스템, Unit of Work, 감사 로�
                   -- clean up timers, connections, caches
 ```
 
-### Step 1: Install
+### 1단계: 설치
 
 `em.extend()`에 플러그인 객체를 전달합니다. Stingerloom은 같은 이름의 플러그인이 이미 설치되어 있는지 확인합니다. 이미 있으면 아무 동작도 하지 않습니다. `extend()`는 멱등(idempotent)하게 설계되었습니다. 그래서 여러 번 호출해도 부수 효과 없이 안전합니다.
 
@@ -59,19 +59,19 @@ await em.register({
 });
 ```
 
-### Step 2: Receive Context
+### 2단계: 컨텍스트 받기
 
 `install()`은 호출될 때 `PluginContext` 객체를 받습니다. 이 객체는 EntityManager 내부를 그대로 노출하지 않습니다. 플러그인이 쓰도록 골라 둔 기능만 제공하는 API입니다. 그래서 EntityManager 내부가 바뀌어도 플러그인은 안정적으로 동작합니다.
 
-### Step 3: Add Methods
+### 3단계: 메서드 추가
 
 `install()` 함수는 객체를 반환할 수 있습니다. 반환한 객체의 모든 메서드는 EntityManager 인스턴스에 믹스인됩니다. 설치한 뒤에는 이 메서드를 내장 메서드처럼 `em`에서 바로 호출합니다.
 
-### Step 4: Active Operation
+### 4단계: 동작
 
 이제 플러그인은 EntityManager의 일부입니다. 이벤트 리스너가 동작하고 메서드를 호출할 수 있습니다. 모든 기능이 내장 기능처럼 동작합니다.
 
-### Step 5: Shutdown
+### 5단계: 종료
 
 NestJS 앱이 종료될 때처럼 `em.propagateShutdown()`이 호출되면 플러그인의 `shutdown()`이 설치의 역순으로 호출됩니다. 마지막에 설치된 플러그인이 가장 먼저 종료됩니다. interval 정리, 소켓 닫기, 버퍼 flush 같은 작업은 여기서 처리합니다.
 
@@ -132,7 +132,7 @@ em.getLog(); // typed as string[]
 
 ---
 
-## PluginContext Reference
+## PluginContext 레퍼런스
 
 `install()` 함수가 받는 `PluginContext`는 EntityManager 내부 기능 중 허용된 부분만 노출합니다.
 
@@ -159,7 +159,7 @@ em.getLog(); // typed as string[]
 
 ---
 
-## Plugin Dependencies
+## 플러그인 의존성
 
 플러그인은 다른 플러그인이 먼저 설치되어 있어야 한다고 선언할 수 있습니다. 의존하는 플러그인이 없으면 `extend()`는 명확한 에러 메시지와 함께 즉시 에러를 던집니다.
 
@@ -186,7 +186,7 @@ em.extend(derivedPlugin);
 
 ---
 
-## Method Name Conflicts
+## 메서드 이름 충돌
 
 플러그인이 `find`, `save`처럼 EntityManager에 이미 있는 메서드를 추가하려 하면 `extend()`는 `PLUGIN_CONFLICT` 에러를 던집니다. 코어 메서드를 덮어쓰면 ORM이 예측할 수 없는 방식으로 깨집니다. 이 에러는 그런 일을 막는 안전장치입니다.
 
@@ -194,7 +194,7 @@ em.extend(derivedPlugin);
 
 ---
 
-## API Reference
+## API 레퍼런스
 
 ### StingerloomPlugin\<TApi\>
 
@@ -220,7 +220,7 @@ interface StingerloomPlugin<TApi = {}> {
 }
 ```
 
-### EntityManager Plugin Methods
+### EntityManager 플러그인 메서드
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
@@ -230,7 +230,7 @@ interface StingerloomPlugin<TApi = {}> {
 
 ---
 
-## 쿼리 훅 -- beforeQuery / afterQuery
+## 쿼리 훅: beforeQuery / afterQuery
 
 플러그인은 EntityManager가 실행하는 모든 SQL 쿼리를 가로챌 수 있습니다. 이 기능은 쿼리 로깅, 성능 모니터링, 쿼리 변환 같은 횡단 관심사를 구현할 때 유용합니다.
 
@@ -271,7 +271,7 @@ interface QueryInfo {
 
 `beforeQuery`에서 수정한 `QueryInfo`를 반환하면 쿼리를 변환할 수 있습니다. `afterQuery`는 결과와 실행 시간(ms)을 받습니다. 그래서 느린 쿼리 경고나 메트릭 수집에 쓸 수 있습니다.
 
-### 트랜잭션 훅 -- beforeTransaction / afterTransaction
+### 트랜잭션 훅: beforeTransaction / afterTransaction
 
 플러그인은 쿼리마다 호출되는 훅 외에 트랜잭션 경계도 관찰할 수 있습니다. 트랜잭션 훅은 EntityManager가 여는 트랜잭션마다 한 번씩 발생합니다. `em.transaction()`, `ctx.executeInTransaction()`, 쓰기마다 감싸는 암묵적 트랜잭션이 여기에 해당합니다. 트랜잭션 안의 SQL 문마다 발생하지는 않습니다. `@Transactional` 메서드가 여는 트랜잭션은 여기에 포함되지 않습니다. 데코레이터에는 EntityManager가 없으므로 플러그인에 알림이 가지 않습니다.
 
@@ -303,7 +303,7 @@ const txAudit: StingerloomPlugin = {
 
 ---
 
-## Built-in Plugins
+## 내장 플러그인
 
 Stingerloom에는 기본 제공 플러그인이 두 개 있습니다.
 
@@ -316,7 +316,7 @@ Stingerloom에는 기본 제공 플러그인이 두 개 있습니다.
 - [WriteBuffer (Unit of Work)](./write-buffer.md)
 - [Raw Pipeline](./raw-pipeline.md)
 
-## Next Steps
+## 다음 단계
 
 - [WriteBuffer (Unit of Work)](./write-buffer.md): 기본 제공 UoW 플러그인
 - [Raw Pipeline](./raw-pipeline.md): 엔티티 오버헤드 없는 대용량 데이터 스트리밍

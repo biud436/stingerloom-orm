@@ -8,7 +8,7 @@ OOP에서는 `class Child extends Parent`라고 쓰면 자식이 부모의 필�
 
 아직 와닿지 않아도 괜찮습니다. 구체적인 문제를 먼저 보면 필요한 이유가 분명해집니다.
 
-## 왜 상속 매핑이 필요할까?
+## 상속 매핑이 필요한 이유
 
 온라인 결제 시스템을 만든다고 해 봅시다. 이 시스템은 신용카드 결제, 계좌이체 결제, 암호화폐 결제를 처리해야 합니다. 세 결제 방식 모두 `id`, `amount`, `createdAt` 같은 공통 필드를 가집니다. 그리고 방식마다 고유한 필드도 있습니다.
 
@@ -18,7 +18,7 @@ OOP에서는 `class Child extends Parent`라고 쓰면 자식이 부모의 필�
 
 상속 매핑 없이 해결하는 방법은 세 가지입니다. 하지만 셋 모두 문제가 있습니다.
 
-### 시나리오 1: 엔티티를 따로따로 만든다
+### 시나리오 1: 엔티티를 따로따로 만들기
 
 결제 유형마다 별도의 엔티티 클래스를 만듭니다. 공통 필드는 클래스마다 복사합니다.
 
@@ -40,7 +40,7 @@ class BankTransferPayment {
 
 새 공통 필드를 추가하면 세 클래스를 모두 수정해야 합니다. 전체 결제 내역 조회 같은 다형성 쿼리(polymorphic query)는 UNION ALL을 직접 작성해야 합니다. 그리고 중복된 코드에서는 버그가 쉽게 생깁니다.
 
-### 시나리오 2: 하나의 거대한 테이블에 다 넣는다
+### 시나리오 2: 거대한 테이블 하나에 모두 넣기
 
 모든 결제 유형의 컬럼을 테이블 하나에 모읍니다.
 
@@ -58,7 +58,7 @@ class Payment {
 
 동작은 합니다. 하지만 nullable 컬럼이 넘쳐나고 타입 안전성이 없습니다. `cardNumber`에 접근할 때 그 행이 정말 신용카드 결제인지 TypeScript로는 확인할 방법이 없기 때문입니다.
 
-### 시나리오 3: TypeScript 상속만 쓴다
+### 시나리오 3: TypeScript 상속만 쓰기
 
 ```typescript
 class Payment {
@@ -95,7 +95,7 @@ Stingerloom ORM은 같은 세 가지 전략을 같은 이름으로 채택했습�
 | Joined / Table Per Type (TPT) | `@Inheritance({ strategy: "JOINED" })` | 1 + N개 (부모 + 자식) | 보통 (JOIN 필요) | 정규화가 중요하고 자식 고유 컬럼이 많을 때 |
 | Table Per Class (TPC) | `@Inheritance({ strategy: "TABLE_PER_CLASS" })` | N개 (독립) | 느림 (UNION ALL) | 자식 엔티티가 독립적이고 다형성 쿼리가 드물 때 |
 
-## Quick Start
+## 빠른 시작
 
 상속 매핑에는 데코레이터 세 개가 필요합니다.
 
@@ -139,7 +139,7 @@ await em.register({
 });
 ```
 
-## Strategy 1: Single Table Inheritance (STI)
+## 전략 1: Single Table Inheritance (STI)
 
 계층 구조의 모든 클래스가 데이터베이스 테이블 하나를 공유합니다. 각 행의 타입은 구분 컬럼에 기록됩니다.
 
@@ -269,7 +269,7 @@ await em.delete(CreditCardPayment, { id: cc.id });
 | 스키마가 단순함 | NULL 컬럼으로 저장 공간 낭비 |
 | 다형성 쿼리가 간단함 | 자식 타입이 많아지면 테이블이 넓어짐 |
 
-## Strategy 2: Joined / Table Per Type (TPT)
+## 전략 2: Joined / Table Per Type (TPT)
 
 루트 엔티티는 공통 컬럼을 담은 자기 테이블을 가집니다. 각 자식 엔티티는 고유 컬럼만 담은 별도의 테이블을 가집니다. 자식 테이블의 기본 키는 루트 테이블을 참조하는 외래 키 역할도 합니다.
 
@@ -419,7 +419,7 @@ await em.delete(CreditCardPayment, { id: cc.id });
 | 자식 컬럼에 NOT NULL 가능 | INSERT와 DELETE에 SQL 문 여러 개 필요 |
 | 자식 타입이 많아져도 잘 확장됨 | 다형성 쿼리에 LEFT JOIN N개 필요 |
 
-## Strategy 3: Table Per Class (TPC)
+## 전략 3: Table Per Class (TPC)
 
 루트를 포함한 각 엔티티 클래스가 독립된 자기 테이블을 가집니다. 상속받은 컬럼도 각 테이블에 복사됩니다. 공유 테이블은 없습니다.
 
@@ -572,7 +572,7 @@ await em.delete(CreditCardPayment, { id: cc.id });
 | 완전히 독립된 테이블 | 다형성 쿼리가 느린 UNION ALL 사용 |
 | nullable 컬럼 불필요 | 테이블 간 ID가 충돌할 수 있음 |
 
-## 릴레이션과 함께 사용하기
+## 관계와 함께 사용하기
 
 상속 엔티티도 일반적인 `@ManyToOne`과 `@OneToMany` 관계를 지원합니다. 알맞은 엔티티 클래스에 관계를 정의하면 됩니다.
 

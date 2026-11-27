@@ -41,7 +41,7 @@
 
 ## 세 가지 사용 방식
 
-### 1. CLI — `npx stingerloom introspect`
+### 1. CLI: `npx stingerloom introspect`
 
 가장 간단한 방법입니다. CLI는 `stingerloom.config.ts`나 `ormconfig.ts`에 있는 데이터베이스 설정을 그대로 재사용합니다.
 
@@ -78,7 +78,7 @@ npx stingerloom introspect --style code-first
 
 생성된 파일 중에 `// NOTE:`가 달린 파일이 있으면 CLI가 그 개수와 파일 이름을 로그로 남깁니다. 그래서 스키마가 커도 NOTE를 놓치지 않습니다.
 
-### 2. `runIntrospect()` — 프로그램 헬퍼
+### 2. `runIntrospect()`: 프로그래밍 방식 헬퍼
 
 모든 과정을 직접 제어하려는 스크립트에서 씁니다. `runIntrospect`는 한 번의 호출로 `DatabaseClient` 연결, 제너레이터 실행, 파일 쓰기를 모두 처리합니다.
 
@@ -114,12 +114,12 @@ for (const e of result.entities) {
 |------|------|--------|
 | `outputDir` | `string` | `./entities` |
 | `schema` | `string` | `"public"`(PostgreSQL 전용) |
-| `includeTables` | `string[]` | — |
-| `excludeTables` | `string[]` | — |
-| `codeBuilderOptions` | `EntityCodeBuilderOptions` | — |
+| `includeTables` | `string[]` | 없음 |
+| `excludeTables` | `string[]` | 없음 |
+| `codeBuilderOptions` | `EntityCodeBuilderOptions` | 없음 |
 | `dryRun` | `boolean` | `false`. true면 파일을 쓰지 않고 엔티티만 반환 |
 
-### 3. `IntrospectionGenerator` — 저수준 빌딩 블록
+### 3. `IntrospectionGenerator`: 저수준 빌딩 블록
 
 커스텀 쿼리 함수로 제너레이터를 실행할 때 씁니다. 코드를 생성하지 않고 스키마만 읽을 때도 씁니다.
 
@@ -308,7 +308,7 @@ code-first 출력에는 빠지면 안 되는 부분이 두 가지 있습니다.
 
 이 장치들이 결과를 보장합니다. 레거시 데이터베이스를 인트로스펙션해 엔티티를 커밋해 두면 CI/CD가 이 엔티티를 스테이징 데이터베이스에 다시 적용해도 결과가 같습니다.
 
-### 에코가 보존하지 못하는 것
+### 라운드 트립에서 보존되지 않는 항목
 
 라운드 트립을 거치면 원리상 보존되지 않는 것도 있습니다. 다만 어느 것도 아무 표시 없이 사라지지는 않습니다. 제너레이터는 해당 필드나 엔티티 위에 `// NOTE:` 주석을 답니다. 그리고 같은 문장을 `GeneratedEntity.notes`로도 반환합니다.
 
@@ -439,9 +439,9 @@ MySQL에서는 `RESTRICT`를 `NO ACTION`으로 읽습니다. InnoDB는 `RESTRICT
 
 만든 이름이 다른 속성과 겹칠 때가 있습니다. 예를 들어 외래 키 컬럼이 `user_id`인데 `user`라는 텍스트 컬럼이 이미 있는 경우입니다. 이때는 외래 키 컬럼 이름 전체를 camelCase로 바꾼 `userId`로 넘어갑니다. 그래도 겹치면 숫자 접미사를 붙입니다.
 
-복합 외래 키, 다른 스키마를 가리키는 외래 키, 생성 대상이 아닌 테이블을 가리키는 외래 키는 일반 컬럼으로 남기고 NOTE를 답니다([에코가 보존하지 못하는 것](#에코가-보존하지-못하는-것) 참고).
+복합 외래 키, 다른 스키마를 가리키는 외래 키, 생성 대상이 아닌 테이블을 가리키는 외래 키는 일반 컬럼으로 남기고 NOTE를 답니다([라운드 트립에서 보존되지 않는 항목](#라운드-트립에서-보존되지-않는-항목) 참고).
 
-### 자기참조 FK
+### 자기 참조 외래 키
 
 외래 키가 같은 테이블을 가리키면 관계는 출력합니다. 하지만 클래스는 import하지 않습니다.
 
@@ -457,7 +457,7 @@ export class Department {
 }
 ```
 
-### 복합 PK 클로저 테이블
+### 복합 기본 키 클로저 테이블
 
 외래 키 컬럼이 기본 키의 일부이기도 하면 `@PrimaryColumn` 선언과 관계를 모두 출력합니다. 이런 구조는 클로저 테이블이나 복합 기본 키를 가진 조인 테이블에서 흔합니다.
 
@@ -656,7 +656,7 @@ export class PostCommentClosure {
 - **`@OneToOne`과 `@ManyToOne`의 구분.** 모든 외래 키는 `@ManyToOne`으로 출력됩니다. 외래 키 컬럼에 고유 제약 조건이 있으면 직접 바꾸는 편이 좋습니다.
 - **읽기 좋은 속성 별칭.** `CTGR_GRP_SQ` 같은 컬럼은 camelCase로 변환해 `ctgrGrpSq`가 됩니다. `groupId`처럼 더 알아보기 쉬운 이름을 원하면 속성 이름을 바꾸세요. 이때 `name:` 옵션은 그대로 `CTGR_GRP_SQ`를 가리키게 둡니다.
 
-엔티티가 테이블에서 표현하지 못하는 나머지 항목은 [에코가 보존하지 못하는 것](#에코가-보존하지-못하는-것)에 있습니다. 이 항목은 생성된 파일에도 NOTE로 표시됩니다.
+엔티티가 테이블에서 표현하지 못하는 나머지 항목은 [라운드 트립에서 보존되지 않는 항목](#라운드-트립에서-보존되지-않는-항목)에 있습니다. 이 항목은 생성된 파일에도 NOTE로 표시됩니다.
 
 `@ManyToOne(() => Entity, (entity: any) => entity.foo)`의 역방향 측 접근자는 `any`를 쓴 플레이스홀더입니다. 그래서 역방향 측 속성이 없어도 코드가 컴파일됩니다. `@OneToMany` 컬렉션을 추가한 뒤에는 플레이스홀더를 실제 이름으로 바꾸세요.
 

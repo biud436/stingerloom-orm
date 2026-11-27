@@ -20,7 +20,7 @@ await em.register({ /* ... */, logging: true });
 
 ## 타입 변경
 
-### `select`로 고른 컬럼만 결과 타입에 남습니다
+### `select`로 고른 컬럼만 남는 결과 타입
 
 지금까지는 `select`에 무엇을 적든 `find()`가 `T[]`를 반환했습니다. 고르지 않은 컬럼도 타입으로는 있는 것처럼 보였습니다. 하지만 막상 읽으면 `undefined`였습니다. 3.0부터는 `select`가 있으면 결과 타입에 다음만 남습니다. 고른 속성, 함께 로드한 관계, `withCount`로 센 개수, 엔티티의 메서드입니다.
 
@@ -41,7 +41,7 @@ const users: User[] = await em.find(User, { select: ["id"] });  // 3.0에서는 
 
 예외가 하나 있습니다. ORM은 컬렉션 관계를 부모와 짝지으려고 기본 키를 따로 읽습니다. 이 기본 키는 객체에는 들어 있지만 좁혀진 타입에는 없습니다. 이 값을 읽어야 한다면 캐스트하세요.
 
-### `select` 객체 형식에는 `true` / `false`만 씁니다
+### `true` / `false`만 받는 `select` 객체 형식
 
 `ISelectOption`에는 `{ author: { ... } }`처럼 객체를 중첩하는 세 번째 형식이 있었습니다. 관계의 컬럼을 고르는 문법처럼 생겼고 타입 검사도 통과했습니다. 하지만 실제로는 아무 효과가 없었습니다. 3.0에서는 이 형식을 없앴습니다. 불리언이 아닌 값을 넣으면 `InvalidQueryError`를 던집니다. 관계의 컬럼은 `relations` 쪽에서 고르세요.
 
@@ -49,7 +49,7 @@ const users: User[] = await em.find(User, { select: ["id"] });  // 3.0에서는 
 em.find(Post, { relations: { author: { select: ["id", "name"] } } });
 ```
 
-### `em.pipe()`에 `find()` 옵션을 넘길 수 없습니다
+### 전용 옵션만 받는 `em.pipe()`
 
 `RawPipelineOptions`는 `FindOption`을 상속했습니다. 그래서 `take`, `limit`, `relations`, `withDeleted` 같은 옵션이 타입 검사는 통과했지만 실제로는 무시됐습니다. `em.pipe(User, { take: 10 })`가 테이블 전체를 읽은 것도 이 때문입니다.
 
@@ -87,42 +87,42 @@ em.find(Post, { relations: { author: { select: ["id", "name"] } } });
 
 ## 동작 변경
 
-### `clear()`가 `TRUNCATE` 대신 `DELETE`를 씁니다
+### `TRUNCATE` 대신 `DELETE`를 쓰는 `clear()`
 
 예전에 PostgreSQL에서는 `TRUNCATE ... RESTART IDENTITY CASCADE`를 실행했습니다. 그래서 이 테이블을 참조하는 다른 테이블까지 함께 비웠습니다. MySQL에서는 외래 키 검사를 끄고 TRUNCATE했습니다. 이제 `clear()`는 호출한 쪽의 트랜잭션 안에서 `DELETE`로 삭제합니다. 삭제하는 범위도 호출한 쪽이 볼 수 있는 행으로 한정합니다. 범위는 현재 테넌트의 행입니다. 단일 테이블 상속의 자식이라면 그 타입의 행으로 좁힙니다. 상속 계층이라면 계층에 속한 모든 테이블이 범위에 들어갑니다. 다른 테이블은 건드리지 않습니다.
 
 - ID 카운터가 초기화되지 않습니다. `clear()` 뒤에 id가 1부터 다시 시작한다고 가정한 테스트는 생성된 id를 읽어 쓰도록 바꿔야 합니다.
 - 다른 테이블이 아직 참조하는 행이 있으면 기본값인 `NO ACTION`에서는 `clear()`가 실패합니다. 참조하는 쪽 테이블을 먼저 비우거나 `onDelete: "CASCADE"`를 선언하세요.
 
-### after 이벤트는 실제로 바뀐 행이 있을 때만 발생합니다
+### 실제로 바뀐 행이 있을 때만 발생하는 after 이벤트
 
 `delete()`, `deleteMany()`, `softDelete()`, `restore()`, `update()`, `updateMany()`, `increment()`, `decrement()`는 호출할 때마다 after 이벤트를 발생시켰습니다. 그래서 `delete(User, { id: 9999 })`처럼 삭제한 행이 없어도 삭제 이벤트가 나갔습니다. 이제는 영향받은 행이 하나 이상일 때만 after 이벤트가 발생합니다. 그리고 그 행 수를 `affected`에 담습니다. before 이벤트는 지금처럼 매번 발생합니다.
 
-### 스키마 동기화가 컬럼 이름 변경을 넘겨짚지 않습니다
+### 컬럼 이름 변경을 넘겨짚지 않는 스키마 동기화
 
 예전에는 사라진 컬럼과 새로 생긴 컬럼의 타입이 같으면 처음 맞은 쌍을 이름 변경으로 보고 처리했습니다. 그 바람에 전혀 상관없는 컬럼으로 기존 값이 옮겨 가기도 했습니다.
 
 이제는 두 경우에만 이름을 바꿉니다. 엔티티에 `renamedFrom`을 선언한 경우와 두 이름이 누가 봐도 같은 컬럼인 경우입니다. `user_name` → `userName`, `name` → `fullName`, 짧은 오타가 그 예입니다. 나머지는 엔티티에 선언된 대로 컬럼을 삭제하고 새로 만듭니다. 그리고 어떤 `renamedFrom`을 추가하면 되는지 경고로 알려 줍니다. 예전 추측에 기대고 있었다면 동기화하기 전에 `renamedFrom`부터 추가하세요.
 
-### 배열 프로퍼티는 `json` 컬럼이 됩니다
+### `json` 컬럼이 되는 배열 속성
 
 `type` 없이 선언한 `@Column() tags!: string[]`는 지금까지 `text`로 매핑됐습니다. 이제는 nullable `json` 컬럼이 됩니다. 그래서 MySQL과 PostgreSQL에서는 기존 `text` 컬럼이 엔티티와 맞지 않게 됩니다. `text`를 계속 쓰려면 `type: "text"`를 적어 주세요. `json`으로 옮기려면 동기화하기 전에 데이터를 먼저 마이그레이션하세요.
 
-### `bigint` 값이 더 이상 반올림되지 않습니다
+### 더 이상 반올림되지 않는 `bigint` 값
 
 이제 드라이버는 ±2^53을 넘는 정수를 반올림하지 않고 10진수 문자열로 넘깁니다. 속성에 어떤 값이 들어갈지는 `bigintMode`로 지정합니다. 기본값 `"number"`는 ±2^53을 넘는 값에서 에러를 던집니다. `"string"`과 `"bigint"`는 각각 문자열과 `bigint`로 담습니다. 속성을 `bigint` 타입으로 선언했다면 `bigintMode: "bigint"`로 추론합니다. SQLite에서는 bigint 컬럼을 `BIGINT`로 선언합니다. 저장 방식은 전과 같습니다.
 
-### 키셋 페이지네이션이 기본 키까지 봅니다
+### 기본 키까지 보는 키셋 페이지네이션
 
 쿼리 빌더의 `getCursor()`는 정렬 값만 보고 페이지를 나눴습니다. 그래서 정렬 값이 같은 행은 건너뛰었습니다. 이제는 `findWithCursor()`와 같은 키셋을 씁니다. 정렬 속성으로 먼저 정렬하고 값이 같으면 기본 키 컬럼으로 순서를 정합니다. 오름차순에서 NULL은 맨 뒤에 옵니다.
 
 그래서 정렬 값이 같은 행 사이의 순서는 빌더에 건 `orderBy()`로 바꾸지 못합니다. 2.x에서 받은 커서로 이어서 읽으면 첫 페이지만 예전 방식으로 나뉩니다. 다음 페이지부터는 새 방식을 따릅니다.
 
-### MySQL 8.0.19 이상에서 upsert SQL이 바뀝니다
+### MySQL 8.0.19 이상에서 바뀌는 upsert SQL
 
 서버가 MySQL 8.0.19 이상이면 `upsert()`, `batchUpsert()`, `createInsertBuilder()`가 deprecated된 `VALUES(col)` 대신 행 별칭을 쓴 `INSERT … AS new (…) ON DUPLICATE KEY UPDATE`를 만듭니다. MariaDB와 그보다 낮은 MySQL은 여전히 `VALUES()`를 씁니다. 직접 만든 드라이버는 새로 추가된 선택 메서드 `ISqlDriver.supportsInsertRowAlias()`로 이 동작을 켤 수 있습니다.
 
-### 롤백되면 넘긴 객체도 원래대로 돌아갑니다
+### 롤백되면 원래대로 돌아가는 객체
 
 트랜잭션이 ROLLBACK되면 쓰기 과정에서 객체에 채워 넣었던 값을 원래대로 되돌립니다. 생성된 기본 키, cascade로 채운 외래 키, 타임스탬프, `@Version` 초기값이 해당합니다. 그래서 데드락 재시도처럼 같은 객체를 다시 저장해도 문제가 없습니다. COMMIT되면 바뀌는 것은 없습니다.
 

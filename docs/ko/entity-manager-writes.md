@@ -1,4 +1,4 @@
-# EntityManager -- 쓰기 & 트랜잭션
+# EntityManager: 쓰기 & 트랜잭션
 
 EntityManager로 여러 행을 한 번에 쓰는 배치 연산, upsert, 트랜잭션, Raw SQL 실행의 사용법입니다.
 
@@ -6,7 +6,7 @@ EntityManager로 여러 행을 한 번에 쓰는 배치 연산, upsert, 트랜�
 
 ---
 
-## 배치 삽입 -- insertMany()
+## 배치 삽입: insertMany()
 
 ### insertMany()가 필요한 이유
 
@@ -45,9 +45,9 @@ VALUES (?, ?), (?, ?), (?, ?)
 
 ---
 
-## 배치 삽입 후 반환 -- insertManyAndReturn()
+## 배치 삽입 후 반환: insertManyAndReturn()
 
-### insertManyAndReturn()가 필요한 이유
+### insertManyAndReturn()이 필요한 이유
 
 `insertMany()`는 빠릅니다. 하지만 `{ affected: number }`만 반환합니다. 생성된 기본 키, 타임스탬프, DB 기본값이 채워진 엔티티 인스턴스가 필요할 때가 있습니다. 이때 다중 행 INSERT를 SQL 문 하나로 실행하는 효율도 유지하려면 `insertManyAndReturn()`을 사용하세요.
 
@@ -106,9 +106,9 @@ const users = await em.saveMany(User, [{ name: "Alice" }]);
 
 ---
 
-## 배치 저장 -- saveMany()
+## 배치 저장: saveMany()
 
-### insertMany()가 있는데 왜 saveMany()가 필요할까요?
+### insertMany()가 있는데도 saveMany()가 필요한 이유
 
 `insertMany()`는 빠릅니다. 하지만 새 행만 삽입합니다. `saveMany()`는 항목마다 기본 키를 확인해서 INSERT와 UPDATE 가운데 하나를 고릅니다. 새 엔티티와 기존 엔티티가 섞여 있을 때 사용하세요.
 
@@ -144,9 +144,9 @@ COMMIT
 
 ---
 
-## INSERT에서 undefined vs null -- DB 기본값 살리기
+## INSERT에서 undefined vs null: DB 기본값 살리기
 
-### 왜 구분이 중요할까요?
+### 구분이 중요한 이유
 
 `save()`와 `saveMany()`는 `undefined`를 "값을 주지 않았다"는 뜻으로 해석합니다. TypeORM, knex와 같은 의미입니다. 엔티티 값이 `undefined`인 컬럼은 INSERT 컬럼 목록에서 빠집니다. 그 컬럼은 DB의 `DEFAULT` 절이 채웁니다. `@Column({ default })`로 선언한 기본값도 여기에 해당합니다. 반면 `null`을 명시하면 컬럼이 목록에 들어가고 `NULL`을 기록합니다.
 
@@ -189,7 +189,7 @@ INSERT INTO "t" DEFAULT VALUES
 
 ## 쓰기 페이로드의 미지 키
 
-### 어떤 키가 "아는 키"인가요?
+### "아는 키"의 기준
 
 `save()`, `saveMany()`, `insertMany()`, `insertManyAndReturn()`, `upsert()`, `insertIgnore()`, `batchUpsert()`는 값을 속성 키로 읽습니다. 페이로드에 담을 수 있는 키는 다음과 같습니다.
 
@@ -244,7 +244,7 @@ DB 컬럼 이름도 보고합니다. INSERT는 그 키를 읽지 않기 때문�
 
 ---
 
-## RETURNING 결과는 프로퍼티 이름으로 돌아와요
+## 속성 이름으로 매핑되는 RETURNING 결과
 
 RETURNING을 지원하는 드라이버에서는 `save()`가 반환하는 엔티티를 `RETURNING *` 행으로 만듭니다(PostgreSQL, MariaDB 10.5+). 이 행은 ResultTransformer를 거치므로 DB 컬럼 이름이 엔티티 속성 키로 역매핑됩니다. `@Column({ name })`과 `SnakeNamingStrategy` 같은 NamingStrategy 매핑도 모두 적용됩니다. 컬럼 트랜스포머의 `from`도 함께 적용됩니다.
 
@@ -264,9 +264,9 @@ saved.left;             // 1 (클래스에 선언한 속성 키)
 
 ---
 
-## 배치 삭제 -- deleteMany()
+## 배치 삭제: deleteMany()
 
-### 왜 delete()를 여러 번 호출하는 대신 deleteMany()를 쓸까요?
+### delete()를 여러 번 호출하지 않고 deleteMany()를 쓰는 이유
 
 `insertMany()`가 `save()` 루프보다 빠른 것과 같은 이유입니다. SQL 문 하나가 여러 개보다 낫습니다. `deleteMany()`는 기본 키 값 배열을 받아서 `DELETE ... WHERE id IN (...)` SQL 문 하나를 생성합니다.
 
@@ -329,7 +329,7 @@ await em.delete(Session, { userId: null });
 
 빈 criteria는 여전히 `DeleteWithoutConditionsError`를 던집니다. 테이블 전체 삭제를 막는 가드는 바뀌지 않았습니다.
 
-### 벌크 criteria의 논리 결합자 -- AND / OR / NOT
+### 벌크 criteria의 논리 결합자: AND / OR / NOT
 
 `delete()`, `softDelete()`, `restore()`의 criteria와 `updateMany()`, `update()`의 `where`는 조회의 `where`와 똑같이 `AND`, `OR`, `NOT` 키를 받습니다. 중첩 깊이에는 제한이 없습니다. 쓰기 전에 실행하는 식별자 검사도 조회 경로와 같은 방식으로 결합자 안쪽까지 순회합니다. 그래서 `OR` 분기 안의 오타도 SQL을 실행하기 전에 같은 `Did you mean` 제안과 함께 잡아냅니다.
 
@@ -358,7 +358,7 @@ criteria 검사는 이제 쓰기의 다른 모든 작업보다 먼저 실행합�
 
 ---
 
-## 조건부 수정 -- update()
+## 조건부 갱신: update()
 
 ### update()가 필요한 이유
 
@@ -378,7 +378,7 @@ await em.update(Post, { id: 1 }, { viewCount: sql`view_count + 1` });
 
 ---
 
-## 일괄 수정 -- updateMany()
+## 일괄 갱신: updateMany()
 
 ### updateMany()가 필요한 이유
 
@@ -426,11 +426,11 @@ WHERE "isActive" = $4
 -- Parameters: [false, '2026-03-22 12:00:00', '2026-03-22 12:00:00', true]
 ```
 
-SET 절에 `"updatedAt"` 컬럼이 자동으로 들어갔습니다. ORM은 일괄 수정에서도 `@UpdateTimestamp` 컬럼을 자동으로 주입합니다.
+SET 절에 `"updatedAt"` 컬럼이 자동으로 들어갔습니다. ORM은 일괄 갱신에서도 `@UpdateTimestamp` 컬럼을 자동으로 주입합니다.
 
-### soft-delete된 행은 기본적으로 제외됩니다
+### 기본으로 제외되는 소프트 삭제된 행
 
-엔티티에 `@DeletedAt` 컬럼이 있으면 `updateMany()`는 소프트 삭제되지 않은 행만 갱신합니다. `updateMany()`에 위임하는 `update()`, `increment()`, `decrement()`도 같습니다. 어느 메서드든 `find()`와 똑같이 `WHERE`에 `"deletedAt" IS NULL`을 덧붙입니다. 그래서 일괄 수정은 소프트 삭제된 행의 데이터를 바꾸지 않습니다.
+엔티티에 `@DeletedAt` 컬럼이 있으면 `updateMany()`는 소프트 삭제되지 않은 행만 갱신합니다. `updateMany()`에 위임하는 `update()`, `increment()`, `decrement()`도 같습니다. 어느 메서드든 `find()`와 똑같이 `WHERE`에 `"deletedAt" IS NULL`을 덧붙입니다. 그래서 일괄 갱신은 소프트 삭제된 행의 데이터를 바꾸지 않습니다.
 
 소프트 삭제된 행까지 포함하려면 `withDeleted: true`를 넘깁니다.
 
@@ -501,9 +501,9 @@ await em.updateMany(Product,
 
 ---
 
-## 원자적 증감 -- increment() / decrement()
+## 원자적 증감: increment() / decrement()
 
-### 왜 필요할까요?
+### 필요한 이유
 
 카운터는 `update()`나 `updateMany()`에 raw SQL 표현식을 넘겨서 증가시켜도 됩니다.
 
@@ -580,9 +580,9 @@ await productRepo.decrement({ id: 9 }, "stock");
 
 ---
 
-## Upsert -- 삽입 또는 수정
+## Upsert: 삽입 또는 갱신
 
-### 왜 upsert가 필요할까요?
+### upsert가 필요한 이유
 
 "로그인 추적" 기능을 생각해 보세요. 사용자가 로그인할 때마다 행을 새로 삽입하거나 기존 행을 갱신하려고 합니다. upsert가 없으면 다음 순서로 처리해야 합니다.
 
@@ -592,7 +592,7 @@ await productRepo.decrement({ id: 9 }, "stock");
 
 이 방식은 왕복이 세 번 필요합니다. 경쟁 상태도 생깁니다. 두 요청이 동시에 행이 없다고 확인하고 둘 다 INSERT를 시도하면 중복 키 에러가 납니다. upsert는 원자적인 SQL 문 하나로 두 문제를 모두 해결합니다.
 
-### PK 기준
+### 기본 키 기준
 
 ```typescript
 await em.upsert(User, {
@@ -620,7 +620,7 @@ ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `email` = VALUES(`email`)
 
 핵심은 PostgreSQL의 `ON CONFLICT ... DO UPDATE`와 MySQL의 `ON DUPLICATE KEY UPDATE`입니다. 둘 다 "삽입을 시도하고 지정한 컬럼에서 충돌하면 기존 행을 대신 갱신하라"는 뜻입니다.
 
-### 유니크 컬럼 기준
+### 고유 컬럼 기준
 
 세 번째 인자로 충돌 대상을 지정합니다. 각 컬럼은 페이로드처럼 속성 키로 적어도 되고 DB 컬럼 이름으로 적어도 됩니다.
 
@@ -673,7 +673,7 @@ ON DUPLICATE KEY UPDATE `name` = `new`.`__name`, `email` = `new`.`__email`
 
 별칭이 컬럼 이름을 `__name`처럼 바꾸는 것은 의도한 동작입니다. 별칭에 테이블과 같은 컬럼 이름을 쓰면 UPDATE 절에서 한정자 없는 컬럼 이름이 모두 모호해집니다(MySQL 에러 1052). 그리고 그 자리의 한정자 없는 이름은 원래부터 저장된 행을 뜻했습니다. 그래서 `` sql`hits + 1` `` 같은 raw 조각도 전과 똑같이 저장된 `hits`를 읽습니다. 별칭에는 INSERT가 나열한 컬럼만 들어 있습니다. 이 때문에 `createInsertBuilder()` SQL 문이 나열하지 않은 컬럼을 제안 행에서 읽으면 ORM은 그 컬럼을 `DEFAULT`로 목록에 추가합니다. 그 결과 `VALUES(col)`과 마찬가지로 컬럼 기본값을 읽습니다.
 
-### 배치 Upsert -- batchUpsert()
+### 배치 Upsert: batchUpsert()
 
 수백, 수천 행을 한 번에 upsert해야 할 때는 `batchUpsert()`가 `upsert()`를 루프에서 호출하는 것보다 훨씬 빠릅니다. `batchUpsert()`는 행을 다중 행 `INSERT ... ON CONFLICT` 문으로 묶어서 보냅니다. SQL 문은 행이 명시한 컬럼 집합마다 하나씩이고 대개는 하나뿐입니다. 명시한 컬럼이 다른 행은 같은 트랜잭션 안의 다른 SQL 문으로 보냅니다. 그래서 컬럼을 비워 둔 행이 충돌해도 저장된 값을 NULL로 덮어쓰지 않습니다.
 
@@ -748,7 +748,7 @@ ON DUPLICATE KEY UPDATE `amount` = VALUES(`amount`),
 - **`insertIgnore()`**: 삽입하는 행에는 같은 값을 채웁니다. 그리고 충돌한 행은 소프트 삭제 여부와 상관없이 절대 쓰지 않습니다.
 - **`createInsertBuilder()`**: 삽입하는 행은 같은 방식으로 채웁니다. 하지만 `doUpdate()`는 나열한 컬럼만 대입합니다. 버전 증가, 타임스탬프 갱신, `@DeletedAt` 초기화는 추가하지 않습니다.
 
-### 반환값 — `{ affected: number }`
+### 반환값: `{ affected: number }`
 
 `upsert()`와 `batchUpsert()` 모두 `Promise<{ affected: number }>`를 반환합니다.
 
@@ -799,7 +799,7 @@ ON DUPLICATE KEY UPDATE `name` = IF(`user`.`tenant_id` = ?, VALUES(`name`), `use
 
 ---
 
-## 표현식 기반 Upsert — createInsertBuilder()
+## 표현식 기반 Upsert: createInsertBuilder()
 
 ### upsert()의 한계
 
@@ -867,7 +867,7 @@ builder.values({ mac, bucketStart, records, syncedAt: sql`NOW()` });
 
 일반 값에는 평소처럼 컬럼의 write 트랜스포머를 적용합니다. 반면 조각의 내용은 호출자가 책임집니다.
 
-### 쿼리 결과로 삽입하기 — INSERT ... SELECT
+### 쿼리 결과로 삽입하기: INSERT ... SELECT
 
 `values(columns, query)`는 행 목록 대신 `SelectQueryBuilder`의 결과 행을 씁니다. 행이 애플리케이션을 거치지 않습니다. 그래서 주문을 일별 합계로 묶어 삽입하는 작업이 SQL 문 하나로 끝납니다. 충돌 절을 붙이면 다시 실행했을 때 이미 저장된 합계에 값을 더합니다.
 
@@ -933,7 +933,7 @@ SQL과 마찬가지로 쿼리가 선택한 값은 `columns`에 위치 순서대�
 
 2번 형태의 리터럴 값에는 `insertMany()`의 값과 똑같이 컬럼의 write 트랜스포머를 적용합니다.
 
-### 충돌 무시 — doNothing()
+### 충돌 무시: doNothing()
 
 ```typescript
 await em.createInsertBuilder(AuditLog)
@@ -945,7 +945,7 @@ await em.createInsertBuilder(AuditLog)
 
 MySQL에서는 `INSERT IGNORE`가 됩니다. `INSERT IGNORE`는 중복 키뿐 아니라 그 SQL 문의 모든 에러를 경고로 낮춥니다. 이 점에 주의하세요. `insertIgnore()`가 이미 감수하는 것과 같은 단점입니다.
 
-### 갱신 대상 좁히기 — doUpdateWhere()
+### 갱신 대상 좁히기: doUpdateWhere()
 
 제안한 측정값이 실제로 더 최신일 때만 행을 갱신하려는 경우가 있습니다. 이때는 조건에서 저장된 행과 제안한 행을 직접 비교합니다. `doUpdate()`와 똑같이 한정하지 않은 참조는 저장된 행을 읽고 `qExcluded` 참조는 제안한 행을 읽습니다.
 
@@ -985,7 +985,7 @@ import { iff } from "@stingerloom/orm";
 
 가드가 거짓이면 모든 컬럼이 저장된 값을 유지하므로 결과는 같습니다. 대신 조건을 컬럼마다 반복해야 합니다.
 
-### 부분 유니크 인덱스와 제약 이름
+### 부분 고유 인덱스와 제약 조건 이름
 
 ```typescript
 // ON CONFLICT ("email") WHERE "deleted_at" IS NULL DO UPDATE …
@@ -997,7 +997,7 @@ import { iff } from "@stingerloom/orm";
 
 `{ where }`는 충돌을 판정할 인덱스를 좁힙니다. 고유 인덱스 자체가 부분 인덱스일 때 필요합니다. `doUpdateWhere()`는 충돌한 행 가운데 갱신할 행을 좁힙니다. 둘은 서로 다른 절이므로 함께 써도 됩니다.
 
-### 쓴 행 돌려받기 — executeAndReturn()
+### 쓴 행 반환: executeAndReturn()
 
 `execute()`는 영향받은 행 수만 반환합니다. `executeAndReturn()`은 같은 SQL 문을 실행합니다. 그리고 그 SQL 문이 쓴 행을 엔티티 인스턴스로 반환합니다. 반환한 행에는 생성된 키, DB 기본값, 충돌 절이 계산한 값이 모두 들어 있습니다.
 
@@ -1023,7 +1023,7 @@ PostgreSQL과 SQLite에서는 `RETURNING *`을 쓰므로 여러 행을 쓰는 SQ
 - auto-increment 기본 키는 `LAST_INSERT_ID()`로 받습니다. 갱신 경로에서는 충돌 절에 `id = LAST_INSERT_ID(id)`를 함께 넣습니다. 이 대입은 키 값을 바꾸지 않습니다.
 - 그 밖의 행은 `onConflict()` 컬럼이나 기본 키로 다시 조회합니다. `onConflict()` 컬럼은 갱신한 행을 조회할 때 씁니다. 그래서 행에 그 값이 들어 있어야 하고 그 컬럼이 고유 키를 이뤄야 합니다.
 
-두 행 이상을 넘기면 쿼리를 보내기 전에 `UNSUPPORTED_OPERATION`을 던집니다. MariaDB 10.5+는 충돌 절이 없는 INSERT라면 `RETURNING`으로 행을 반환합니다. 충돌 절이 있으면 MySQL과 같은 경로로 처리합니다. `ON DUPLICATE KEY UPDATE`나 `INSERT IGNORE`로 처리한 행에서 MariaDB의 `RETURNING`이 무엇을 보고하는지 명세가 없기 때문입니다. [INSERT ... SELECT](#쿼리-결과로-삽입하기-—-insert-select)는 다시 조회할 행이 없으므로 이 경로에서 에러를 던집니다.
+두 행 이상을 넘기면 쿼리를 보내기 전에 `UNSUPPORTED_OPERATION`을 던집니다. MariaDB 10.5+는 충돌 절이 없는 INSERT라면 `RETURNING`으로 행을 반환합니다. 충돌 절이 있으면 MySQL과 같은 경로로 처리합니다. `ON DUPLICATE KEY UPDATE`나 `INSERT IGNORE`로 처리한 행에서 MariaDB의 `RETURNING`이 무엇을 보고하는지 명세가 없기 때문입니다. [INSERT ... SELECT](#쿼리-결과로-삽입하기-insert-select)는 다시 조회할 행이 없으므로 이 경로에서 에러를 던집니다.
 
 ### SQL 확인
 
@@ -1046,7 +1046,7 @@ const { text, values } = em.createInsertBuilder(SyncMarker)
 - **`affected`는 드라이버가 보고한 값 그대로**입니다. `upsert()`와 같은 MySQL 1 대 2 주의 사항이 적용됩니다.
 - 리포지토리에서는 `markerRepo.createInsertBuilder()`로 씁니다.
 
-### 드라이버 지원
+### 다이얼렉트 지원
 
 | 기능 | PostgreSQL | MySQL / MariaDB | SQLite |
 |------|-----------|-----------------|--------|
@@ -1066,13 +1066,13 @@ MySQL은 모든 고유 키를 한꺼번에 충돌 대상으로 삼습니다. 그
 
 ## 트랜잭션
 
-### 왜 트랜잭션이 필요할까요?
+### 트랜잭션이 필요한 이유
 
 EntityManager의 개별 연산은 각각 자동으로 트랜잭션에 감싸서 실행합니다. `save`, `find`, `delete` 등이 그렇습니다. 그렇다면 두 연산이 반드시 함께 성공하거나 함께 실패해야 할 때는 어떻게 할까요?
 
 이커머스 결제를 생각해 보세요. 주문을 생성하고 재고를 차감합니다. 주문 생성은 성공했는데 재고 차감이 실패할 수도 있습니다. 그러면 주문은 생겼는데 상품은 여전히 "구매 가능"으로 남습니다. 데이터가 서로 맞지 않게 됩니다. 트랜잭션은 연산을 원자적 단위로 묶어서 이 문제를 해결합니다. 모든 변경이 커밋되거나 모든 변경이 롤백됩니다.
 
-### 콜백 API -- transaction()
+### 콜백 API: transaction()
 
 트랜잭션을 쓰는 가장 간단한 방법입니다. 콜백은 `this` EntityManager를 받습니다. 그리고 콜백 안의 모든 연산이 같은 트랜잭션을 공유합니다.
 
@@ -1167,9 +1167,9 @@ NestJS 서비스에서는 콜백 API 대신 `@Transactional()` 데코레이터�
 
 ---
 
-## Raw SQL -- query()
+## Raw SQL: query()
 
-### 왜 Raw SQL이 필요할까요?
+### Raw SQL이 필요한 이유
 
 EntityManager API는 데이터베이스 작업의 90%를 처리합니다. 하지만 API가 제공하지 않는 기능이 필요할 때가 있습니다. 윈도 함수, CTE(Common Table Expressions), DB 전용 문법, raw SQL로 쓰는 편이 더 읽기 쉬운 복잡한 조인이 그 예입니다.
 

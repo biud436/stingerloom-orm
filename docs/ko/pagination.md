@@ -1,8 +1,8 @@
-# Pagination & Streaming
+# 페이지네이션 & 스트리밍
 
 Stingerloom은 대량 데이터를 다루는 세 가지 전략을 제공합니다. 오프셋(offset) 기반 페이지네이션, 커서(cursor) 기반 페이지네이션, 스트리밍(streaming)입니다. 전략마다 용도가 다르므로 무엇을 만드는지에 따라 알맞은 전략을 골라야 합니다.
 
-## Deep Page 문제 -- 왜 세 가지 전략이 필요한가요?
+## 깊은 페이지 문제: 세 가지 전략이 필요한 이유
 
 API를 살펴보기 전에 근본적인 문제를 먼저 이해하면 도움이 됩니다.
 
@@ -32,7 +32,7 @@ SELECT * FROM "post" WHERE "id" > 4990 ORDER BY "id" ASC LIMIT 11
 | Cursor (`findWithCursor`) | 대규모 데이터셋, 무한 스크롤 | 임의 페이지 접근 불가 |
 | Streaming (`stream()`) | 수백만 행 배치 처리 | API 응답에는 부적합 |
 
-## Offset-Based Pagination
+## 오프셋 기반 페이지네이션
 
 전통적인 LIMIT/OFFSET 페이지네이션입니다. 사용자가 특정 페이지로 바로 이동해야 하는 중소규모 데이터셋에 적합합니다.
 
@@ -60,7 +60,7 @@ ORDER BY "createdAt" DESC
 LIMIT 10 OFFSET 10
 ```
 
-### findAndCount -- 한 번의 호출로 총 개수까지
+### findAndCount: 한 번의 호출로 총 개수까지
 
 페이지가 있는 UI를 만들 때는 데이터와 총 개수가 함께 필요한 경우가 많습니다. `findAndCount()`는 같은 연결에서 데이터 쿼리와 COUNT 쿼리를 실행하고 두 결과를 한 번에 반환합니다.
 
@@ -88,7 +88,7 @@ LIMIT 10 OFFSET 0
 SELECT COUNT(*) FROM "post"
 ```
 
-### paginate() -- 페이지 데이터와 메타데이터를 한 번에
+### paginate(): 페이지 데이터와 메타데이터를 한 번에
 
 `findAndCount()`는 `[rows, total]` 튜플만 반환합니다. 총 개수와 함께 `totalPages`, `hasNextPage` 같은
 파생 페이지 메타데이터도 필요하면 쿼리 빌더의 `paginate()`를 쓰세요. `paginate()`는
@@ -121,7 +121,7 @@ LIMIT/OFFSET이 남지 않고 원본으로 다시 페이지네이션할 수 있�
 
 빌더에 `groupBy()`가 있으면 페이지의 각 행이 그룹입니다. 그래서 `total`은 `HAVING`을
 통과한 그룹의 개수를 셉니다. `findWithPage()`가 `FindOption.groupBy`에 적용하는 규칙과
-같습니다. [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-는-그룹-수를-셉니다)를 참고하세요.
+같습니다. [GROUP BY가 있는 getCount()](./query-builder-execution.md#group-by가-있는-getcount-그룹-수-세기)를 참고하세요.
 
 반환 형태는 `em.findWithPage()`와 같습니다. 그래서 `FindOption`에서 시작하는지 빌더에서
 시작하는지에 따라 둘을 바꿔 쓸 수 있습니다.
@@ -136,7 +136,7 @@ const result = await em.findWithPage(Post, {
 });
 ```
 
-### Offset Pagination을 쓰면 좋은 경우
+### 오프셋 페이지네이션을 쓰면 좋은 경우
 
 - 사용자가 5페이지나 50페이지로 직접 이동해야 할 때
 - 총 행 수가 10만 개 이하로 적을 때
@@ -144,7 +144,7 @@ const result = await em.findWithPage(Post, {
 
 > 경고: 대규모 데이터셋에서는 성능이 떨어집니다. 데이터베이스가 결과를 반환하기 전에 `OFFSET`만큼의 행을 스캔하고 버려야 하기 때문입니다. 100만 행 테이블에서 5,000페이지를 요청하면 데이터베이스는 50,000행을 읽고 그중 49,990행을 버립니다.
 
-## Cursor-Based Pagination
+## 커서 기반 페이지네이션
 
 대규모 데이터셋에서는 커서 기반 페이지네이션이 페이지 깊이에 관계없이 일정한 성능을 냅니다.
 
@@ -228,7 +228,7 @@ async function getPosts(req: Request, res: Response) {
 }
 ```
 
-### Cursor Pagination을 쓰면 좋은 경우
+### 커서 페이지네이션을 쓰면 좋은 경우
 
 - 무한 스크롤이나 "Load more" UI
 - 10만 행 이상의 대규모 데이터셋
@@ -249,15 +249,15 @@ const page = await em.findWithCursor(Post, {
 });
 ```
 
-## Streaming
+## 스트리밍
 
 수백만 행을 처리할 때 행을 한꺼번에 메모리에 올리는 것은 비현실적입니다. `stream()`은 설정한 배치 크기만큼 행을 조회하는 `AsyncGenerator`를 반환합니다. 그래서 전체 결과 집합을 메모리에 올리지 않고 엔티티를 하나씩 처리할 수 있습니다.
 
-### find()를 루프에서 쓰면 안 되나요?
+### find() 루프 대신 stream()을 쓰는 이유
 
 `find()`로 오프셋을 직접 관리하며 배치 처리를 구현할 수도 있습니다. 하지만 `stream()`은 이 일을 대신하면서 세부 사항도 정확히 처리합니다. 빈 배치를 처리하고 데이터의 끝을 감지하며 엔티티를 하나씩 yield합니다. 그래서 처리 코드가 깔끔해집니다.
 
-### Batching SQL
+### 배치 SQL
 
 `stream()`은 내부에서 LIMIT/OFFSET으로 한 번에 배치 하나를 조회합니다. 배치 크기가 500이면 다음과 같습니다.
 
@@ -316,7 +316,7 @@ for await (const post of em.stream(Post, {
 }
 ```
 
-### Streaming 전에 총 개수 확인하기
+### 스트리밍 전에 총 개수 확인하기
 
 처리하기 전에 총 개수가 필요하면 `count()`를 먼저 호출하세요.
 
@@ -332,7 +332,7 @@ for await (const user of em.stream(User, { where: { isActive: true } })) {
 }
 ```
 
-### stream() vs find() 어떤 걸 써야 하나요?
+### stream()과 find() 선택 기준
 
 | Scenario | Use |
 |----------|-----|
@@ -352,7 +352,7 @@ for await (const user of em.stream(User, { where: { isActive: true } })) {
 | 메모리 사용량 | 페이지 크기에 비례 | 페이지 크기에 비례 | 배치 크기에 비례 |
 | Use case | Admin dashboard | Infinite scroll | ETL / batch job |
 
-## Next Steps
+## 다음 단계
 
 - [EntityManager](./entity-manager.md): 전체 CRUD 레퍼런스
 - [Query Builder](./query-builder.md): GROUP BY, JOIN, 집계를 쓰는 복잡한 쿼리

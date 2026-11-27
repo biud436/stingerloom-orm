@@ -1,4 +1,4 @@
-# Query Builder — JSON 컬럼 탐색
+# 쿼리 빌더: JSON 컬럼 탐색
 
 > 참고: ORM 튜토리얼은 JSON 컬럼 예제로 `metadata`를 쓰는 경우가 많습니다. 하지만 이 이름은 코드 스멜에 가깝습니다. "metadata"는 문자 그대로 "데이터를 설명하는 데이터"라는 뜻이어서 컬럼에 실제로 무엇이 들어 있는지 감춥니다. 아래 예제는 `User` 엔티티의 `profile` JSON 컬럼을 씁니다. 이 컬럼에는 구체적인 비즈니스 데이터가 들어 있고 형태도 명시되어 있습니다. 아래 설명은 컬럼 이름과 상관없이 모든 `json` / `jsonb` 컬럼에 그대로 적용됩니다.
 
@@ -131,7 +131,7 @@ WHERE json_extract("u"."profile", ?) = ?
 
 아래 예제는 모두 `const u = qAlias(User, "u")`를 전제로 하고 PostgreSQL 출력을 기준으로 합니다. MySQL과 SQLite에서는 같은 뜻의 함수 호출로 바뀝니다.
 
-### 비교 — `.eq` / `.neq` (`.ne` 별칭) / `.gt` / `.gte` / `.lt` / `.lte`
+### 비교: `.eq` / `.neq` (`.ne` 별칭) / `.gt` / `.gte` / `.lt` / `.lte`
 
 ```typescript
 u.profile.personal.age.gte(18);
@@ -144,7 +144,7 @@ u.profile.personal.age.gte(18);
 
 `.ne()`는 `.neq()`와 같은 뜻의 별칭입니다. 읽기 좋은 쪽을 쓰세요.
 
-### 패턴 — `.like` / `.notLike`
+### 패턴: `.like` / `.notLike`
 
 ```typescript
 u.profile.contact.email.like("%@corp.com");
@@ -153,7 +153,7 @@ u.profile.contact.email.like("%@corp.com");
 -- PostgreSQL (jsonb): "u"."profile" -> 'contact' ->> 'email' LIKE $1
 ```
 
-### 집합 — `.in` / `.notIn`
+### 집합: `.in` / `.notIn`
 
 ```typescript
 u.profile.role.in(["admin", "editor"]);
@@ -164,7 +164,7 @@ u.profile.role.in(["admin", "editor"]);
 
 빈 배열을 넘기면 `1 = 0`으로 축약되어 어떤 행도 매칭되지 않습니다. `.notIn([])`은 `1 = 1`이 되어 모든 행이 매칭됩니다. 쿼리가 올바른 SQL로 유지되도록 둔 안전장치입니다.
 
-### NULL — `.isNull` / `.isNotNull`
+### NULL: `.isNull` / `.isNotNull`
 
 ```typescript
 u.profile.contact.email.isNull();
@@ -175,7 +175,7 @@ u.profile.contact.email.isNull();
 
 존재하지 않는 경로를 추출하면 NULL이 됩니다. 그래서 "경로가 없거나 값이 null"인 경우는 `.isNull()`로 표현하는 것이 맞습니다.
 
-### 구조 — `.contains(value)`
+### 구조: `.contains(value)`
 
 ```typescript
 u.profile.contains({ role: "admin" });     // 객체 containment
@@ -194,7 +194,7 @@ PostgreSQL에서는 스칼라 값을 넘기면 `to_jsonb($1::text/::numeric/::bo
 u.profile.role.eq("admin");
 ```
 
-### 구조 — `.hasKey(key)`
+### 구조: `.hasKey(key)`
 
 ```typescript
 u.profile.contact.hasKey("email");
@@ -207,7 +207,7 @@ u.profile.contact.hasKey("email");
 
 > PostgreSQL에서 왜 `?` 연산자를 피할까요? `?`는 `sql-template-tag`의 바인딩 플레이스홀더와 글자가 겹치기 때문입니다. 같은 뜻의 `jsonb_exists(...)` 함수를 대신 씁니다.
 
-### 스칼라 — `.arrayLength()` / `.typeOf()`
+### 스칼라: `.arrayLength()` / `.typeOf()`
 
 두 메서드는 모두 `JsonScalarExpression`을 반환합니다. JSON 함수 호출 결과를 비교할 수 있는 상태로 들고 있는 값이라고 생각하면 됩니다. 결과는 숫자나 문자열입니다. 그래서 `.eq/.neq/.gt/.gte/.lt/.lte` 비교를 바로 이어 붙일 수 있습니다.
 
@@ -225,7 +225,7 @@ JSON_LENGTH(`u`.`profile`, '$.tags') > ?
 JSON_TYPE(JSON_EXTRACT(`u`.`profile`, '$.tags')) = ?
 ```
 
-## 실전 — 프로필 기반 세그먼트 필터
+## 실전: 프로필 기반 세그먼트 필터
 
 관리자 화면에서 "서울 거주, 22–35세, admin이나 editor, 태그에 `blue` 포함, 연락처 전화번호가 있는 사용자"를 쿼리 하나로 조회한다고 해 봅시다. 이 쿼리에는 여러 JSON 연산이 함께 쓰입니다.
 
@@ -251,7 +251,7 @@ const dormant = await em.createQueryBuilder(User, "u")
 
 표현식이 길어지면 `.when()` / `.pipe()` 같은 합성 헬퍼와 함께 쓰세요. 합성 헬퍼는 [편의 패턴](./query-builder-patterns.md)에 있습니다. JSON 경로 조건도 다른 `ConditionLike`와 똑같이 취급됩니다. 그래서 `Expressions.and(...)`, `Expressions.or(...)`에 그대로 넣을 수 있습니다.
 
-## 동적 경로 — `.path(string)`
+## 동적 경로: `.path(string)`
 
 프록시 접근은 코드에 고정된 정적 경로에 잘 맞습니다. 하지만 프록시로 표현하기 어려운 경우가 두 가지 있습니다.
 

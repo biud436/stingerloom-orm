@@ -1,6 +1,6 @@
-# Query Builder — QueryDSL 표현식
+# 쿼리 빌더: QueryDSL 표현식
 
-## 왜 필요할까
+## 필요한 이유
 
 쿼리 빌더에는 어색한 불균형이 하나 있습니다. 컬럼 이름은 자동완성되지만 연산자는 여전히 손으로 입력하는 문자열입니다.
 
@@ -22,7 +22,7 @@ qb.addSelect(sql`COUNT(*)`, "total")
 
 두 문제는 원인이 같습니다. SQL 표현식을 값이 아니라 문자열로 다루기 때문입니다. 값이라면 변수에 담아 재사용하고 타입 검사도 받을 수 있습니다. 문자열은 그저 문자열일 뿐입니다.
 
-## 아이디어 — 표현식을 객체로
+## 아이디어: 객체로 다루는 표현식
 
 해결 방법은 단순합니다. SQL 표현식을 일급 객체로 만듭니다. 컬럼은 객체이고 비교는 그 객체의 메서드입니다. 비교한 결과도 또 다른 객체입니다.
 
@@ -51,7 +51,7 @@ u         .age              .gte(18)
 
 JSON 컬럼도 같은 원리로 동작합니다. 다만 경로가 중첩되므로 기능이 조금 더 있습니다. 자세한 내용은 [JSON 컬럼 탐색](./query-builder-json.md)에 있습니다.
 
-## 무엇이 달라지나
+## 달라지는 점
 
 달라지는 점은 연산자 문자열이 메서드로 바뀐 것만이 아닙니다. 표현식이 객체가 되었으므로 변수에 담을 수 있습니다. 앞에서 `COUNT(*)`를 세 번 적던 쿼리는 다음과 같이 바뀝니다.
 
@@ -87,7 +87,7 @@ u2.col("firstName");           // qAlias도 .col() 지원
 
 한 쿼리 안에서 두 방식을 섞어 써도 됩니다. 타입이 있는 참조만 필요하면 `alias()`를 씁니다. 조건식까지 만들려면 `qAlias()`를 씁니다.
 
-### 동적 컬럼 접근 — `.field()` / `.jsonField()`
+### 동적 컬럼 접근: `.field()` / `.jsonField()`
 
 `qAlias()`의 정적 접근자에는 리터럴 속성 이름이 필요합니다. 컬럼 이름이 사용자 입력에서 오면 동적 접근자를 씁니다. UI에서 고른 정렬 키나 필터 필드가 그런 경우입니다.
 
@@ -152,7 +152,7 @@ qb.where(o.status.in([o.previousStatus, "draft"]));
 
 평범한 JavaScript 값은 그대로 파라미터로 바인딩합니다. `o.price.gt(50)`은 여전히 `> $1`을 생성합니다. SQL에 직접 쓰는 값은 컬럼, 스칼라, 집계 같은 표현식 피연산자뿐입니다. 표현식 피연산자는 별칭 레지스트리에서 해석됩니다. 그래서 네이밍 전략 변환이 그대로 적용되고 인젝션 위험도 없습니다.
 
-## 정렬 — `.asc()` / `.desc()` / `.nullsFirst()` / `.nullsLast()`
+## 정렬: `.asc()` / `.desc()` / `.nullsFirst()` / `.nullsLast()`
 
 정렬 방향을 메서드로 씁니다.
 
@@ -174,7 +174,7 @@ await em.createQueryBuilder(User, "u")
 
 그래서 어느 드라이버에서든 코드는 `u.createdAt.desc().nullsLast()` 그대로입니다.
 
-## 집계 — `.count()` / `.sum()` / `.avg()` / `.min()` / `.max()`
+## 집계: `.count()` / `.sum()` / `.avg()` / `.min()` / `.max()`
 
 컬럼 뒤에 집계 함수를 바로 붙입니다.
 
@@ -196,7 +196,7 @@ SELECT에 넣을 때는 `.as("total")`로 이름을 붙이기를 권장합니다
 
 중복을 빼고 세려면 `.countDistinct()`를 씁니다. 그러면 `COUNT(DISTINCT u.role)`을 생성합니다.
 
-## 조건부 집계 — `.filter(...)` / `countIf` / `sumIf`
+## 조건부 집계: `.filter(...)` / `countIf` / `sumIf`
 
 `.filter(condition)`은 조건에 맞는 행만 집계합니다. 그래서 범위가 다른 여러 집계를 `GROUP BY` 한 번으로 묶을 수 있습니다. 상태별로 쿼리를 따로 실행하지 않아도 됩니다.
 
@@ -222,7 +222,7 @@ await em.createQueryBuilder(User, "u")
 
 어느 형태든 NULL을 다루는 방식은 같습니다. 일치하는 행이 없으면 `COUNT`는 `0`을 반환합니다. `SUM`, `AVG`, `MIN`, `MAX`는 `NULL`을 반환합니다. 필터를 건 집계는 `having()`에서도 동작합니다(`u.id.countIf(...).gt(10)`).
 
-## SELECT 별칭 — `.as("name")`
+## SELECT 별칭: `.as("name")`
 
 `.as("name")`은 일반 컬럼, JSON 경로, 집계 어디에든 붙일 수 있습니다. 결과는 `AliasedExpression`입니다. 이 값은 SELECT에서만 씁니다. `where()`나 `having()`에 넘기면 타입 검사에서 막힙니다.
 
@@ -243,7 +243,7 @@ JSON 경로 별칭은 다이얼렉트의 텍스트 추출 연산자로 컴파일
 
 `addSelect(u.age.as("years"))`로 기존 SELECT 목록 뒤에 덧붙여도 됩니다. 한 번의 `select([...])`에 별칭 컬럼과 집계를 섞어 넣어도 됩니다.
 
-## `CASE WHEN …` — 조건 분기 표현식
+## `CASE WHEN …`: 조건 분기 표현식
 
 ::: tip `Expressions`는 이름이 긴 편
 이 절부터 여러 곳에서 쓰는 `Expressions` 네임스페이스는 import할 때 별칭을 붙여 씁니다.
@@ -299,7 +299,7 @@ qb.select([weight.as("w")]);
 
 잘못된 SQL이 실행 단계까지 가지 않게 막으려는 것입니다.
 
-### 실전 — CASE를 변수처럼 재사용
+### 실전: CASE를 변수처럼 재사용
 
 CASE 표현식도 한 번 만들어 두면 여러 곳에 쓸 수 있습니다. 여기에 `coalesce`로 NULL 대체값까지 붙이면 DB 서버에서 계산하는 파생 필드가 됩니다.
 
@@ -378,7 +378,7 @@ exp.buckets(u.age, [
 
 `iff`, `mapValues`, `buckets`는 모두 `ScalarExpression`을 반환합니다. 그래서 Tier 2/3의 모든 연산에 그대로 이어집니다. `.as()`, 캐스팅, 비교, `coalesce(...)`, `Expressions.and(...)`, `.or(...)`가 그 예입니다. mapping이나 thresholds가 비어 있으면 즉시 에러를 던집니다.
 
-## null 처리 — `coalesce()` / `nullif()`
+## null 처리: `coalesce()` / `nullif()`
 
 `coalesce(a, b, c, …)`는 인자를 왼쪽부터 보고 처음 나오는 null이 아닌 값을 반환합니다. `nullif(a, b)`는 `a`가 `b`와 같으면 NULL을 반환하고 다르면 `a`를 반환합니다. 빈 문자열이나 `-1` 같은 센티넬 값을 진짜 NULL로 바꿀 때 씁니다. `coalesce`와 `nullif`는 표준 SQL이므로 어느 드라이버에서나 같은 SQL을 생성합니다.
 
@@ -405,7 +405,7 @@ qb.where(coalesce(u.score, 0).gte(50));
 
 정적 헬퍼인 `Expressions.coalesce`와 `Expressions.nullif`도 있습니다. 코드 스타일에 맞는 쪽을 고르면 됩니다.
 
-## 행 단위 최대 / 최소 — `greatest()` / `least()`
+## 행 단위 최대 / 최소: `greatest()` / `least()`
 
 `greatest(a, b, …)`는 한 행 안에서 인자 중 가장 큰 값을 반환합니다. 여러 행을 집계하는 `MAX()`와는 다른 함수입니다. `least(...)`는 반대로 가장 작은 값을 반환합니다. 받는 인자는 `coalesce()`와 같습니다. 컬럼 참조, 스칼라 표현식, 집계, JSON 경로, 평범한 값을 받습니다.
 
@@ -447,7 +447,7 @@ Expressions.greatest(o.listPrice, o.promoPrice)
 
 자유 함수와 `Expressions.greatest`에는 인자가 두 개 이상 필요합니다. 체인 형태에서는 수신 객체가 첫 인자입니다. 그래서 나머지 인자가 하나 이상 필요합니다. 인자가 모자라면 드라이버마다 뜻이 달라지는 SQL을 만드는 대신 에러를 던집니다.
 
-## upsert가 제안한 행 — `qExcluded()`
+## upsert가 제안한 행: `qExcluded()`
 
 `INSERT … ON CONFLICT` 안에는 행이 두 개 있습니다. 이미 저장된 행과 SQL 문이 제안한 행입니다. `qExcluded(Entity)`는 제안한 행을 가리키는 타입 있는 참조입니다. 평범한 `qAlias` 프록시이므로 이 문서의 모든 표현식과 그대로 조합할 수 있습니다.
 
@@ -480,7 +480,7 @@ await em.createInsertBuilder(SyncMarker)
 - MySQL 8.0.19 이상: `` `new`.`__col` ``. [행 별칭](./entity-manager-writes.md#mysql-8-0-19-행-별칭으로-읽는-제안-행)을 씁니다.
 - MariaDB와 그 이전 MySQL: `` VALUES(`col`) ``
 
-이 참조는 `createInsertBuilder()` 안에서만 씁니다. 빌더 전체는 [표현식 기반 Upsert](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder)에 있습니다.
+이 참조는 `createInsertBuilder()` 안에서만 씁니다. 빌더 전체는 [표현식 기반 Upsert](./entity-manager-writes.md#표현식-기반-upsert-createinsertbuilder)에 있습니다.
 
 `qExcluded()`는 `doUpdateWhere()` 조건 안에서도 씁니다. 가드를 건 upsert는 이 방법으로 저장된 행과 제안한 행을 비교합니다.
 
@@ -490,7 +490,7 @@ await em.createInsertBuilder(SyncMarker)
 // WHERE "sync_markers"."last_time" < EXCLUDED."last_time"
 ```
 
-## 현재 시각 — `currentDate()` / `currentTime()` / `currentTimestamp()`
+## 현재 시각: `currentDate()` / `currentTime()` / `currentTimestamp()`
 
 `currentDate()`, `currentTime()`, `currentTimestamp()`는 DB 서버의 시계를 쿼리 어디에든 넣는 표준 SQL 헬퍼입니다. 결과는 `ScalarExpression`입니다. 그래서 `.as()`, `.eq()`, `coalesce` 중첩 같은 합성을 모두 그대로 쓸 수 있습니다. 세 드라이버 모두 같은 리터럴을 생성합니다. 리터럴은 `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`입니다.
 
@@ -508,7 +508,7 @@ qb.select([exp.currentDate().as("today")]);
 
 비교 메서드에 스칼라 표현식을 넘기면 바인딩하지 않고 SQL에 직접 씁니다. 그래서 `u.createdAt.lte(currentTimestamp())`는 `CURRENT_TIMESTAMP`를 쿼리에 그대로 씁니다. 컬럼 피연산자도 같은 규칙을 따릅니다([다른 컬럼·표현식과 비교하기](#다른-컬럼·표현식과-비교하기) 참고).
 
-## 타입 변환 — `.stringValue()` / `.intValue()` / `.longValue()` / `.floatValue()` / `.booleanValue()`
+## 타입 변환: `.stringValue()` / `.intValue()` / `.longValue()` / `.floatValue()` / `.booleanValue()`
 
 컬럼이나 스칼라 표현식을 다른 SQL 타입으로 CAST합니다. 드라이버마다 받는 타입 이름이 다릅니다. 예를 들어 MySQL은 `INTEGER` 대신 `SIGNED`를 쓰고 SQLite는 `BOOLEAN` 대신 `INTEGER`를 씁니다. 타입 이름은 내부에서 변환하므로 메서드 이름만 기억하면 됩니다.
 
@@ -537,7 +537,7 @@ CAST 헬퍼는 `ColumnExpression`과 `ScalarExpression`에 모두 있습니다. 
 
 `.bigintValue()`는 `.longValue()`와 완전히 같은 SQL을 생성합니다. 이름만 다릅니다. JS의 `bigint`를 기대한다는 의도를 코드를 읽는 사람에게 드러내고 싶을 때 씁니다. 드라이버가 결과를 문자열로 반환할 때가 있습니다. 그래서 JS 쪽에서 `BigInt(row.col)`로 감싸면 안전합니다.
 
-## 날짜 · 시각 컴포넌트 — `.year()` / `.month()` / `.day()` / `.hour()` / …
+## 날짜 · 시각 컴포넌트: `.year()` / `.month()` / `.day()` / `.hour()` / …
 
 날짜나 타임스탬프 컬럼에서 연, 월, 일, 시 같은 성분만 뽑아냅니다. 메서드는 `year`, `month`, `day`(= `dayOfMonth`), `hour`, `minute`, `second`, `dayOfWeek`, `dayOfMonth`, `dayOfYear`, `week`의 열 개입니다. 결과는 `ScalarExpression`입니다. 그래서 SELECT, WHERE, HAVING 어디에든 쓰고 `.as()`, 캐스팅, coalesce로 이어 붙입니다.
 
@@ -568,7 +568,7 @@ qb.select([e.startsAt.year().as("yr"), e.id.count().as("total")])
 
 `dayOfWeek`와 `week`는 드라이버마다 값의 인코딩이 조금 다르므로 주의해야 합니다. MySQL의 `DAYOFWEEK`는 일요일이 1이고 토요일이 7입니다. PostgreSQL의 `DOW`는 일요일이 0이고 토요일이 6입니다. SQLite의 `%w`는 PostgreSQL과 같습니다. 리포트의 이식성이 중요하면 애플리케이션 계층에서 값을 한 번 정규화하거나 드라이버별 raw SQL을 쓰는 편이 안전합니다.
 
-## 서브쿼리 비교 — `.in(subquery)` / `.eq(subquery)` / `exists` / `notExists`
+## 서브쿼리 비교: `.in(subquery)` / `.eq(subquery)` / `exists` / `notExists`
 
 `ColumnExpression.in()`과 `.notIn()`은 값 배열뿐 아니라 `SelectQueryBuilder`도 받습니다. 서브쿼리를 넘기면 `col IN (SELECT …)` 형태를 생성합니다. 서브쿼리 안의 파라미터 바인딩도 그대로 보존됩니다. `.eq`, `.neq`, `.gt`, `.gte`, `.lt`, `.lte`도 값 하나를 반환하는 서브쿼리를 받습니다. 그리고 `col <op> (SELECT …)`를 만듭니다.
 
@@ -606,7 +606,7 @@ qb.where(exp.exists(em.createQueryBuilder(Post, "p")
 
 `ExistsCondition.not()`은 전체를 `NOT (…)`으로 감싸지 않습니다. 대신 내부의 `EXISTS`와 `NOT EXISTS` 플래그만 뒤집습니다. 그래서 생성되는 SQL이 깔끔합니다.
 
-## Row-value 튜플 — `Expressions.tuple(...).in(...)` / `.notIn(...)` / `.eq(...)`
+## Row-value 튜플: `Expressions.tuple(...).in(...)` / `.notIn(...)` / `.eq(...)`
 
 `Expressions.tuple(c1, c2, …)`는 SQL row value `(c1, c2, …)`를 만듭니다. 이 값으로 여러 컬럼을 한 번에 비교합니다. 복합 기본 키 조회에 잘 맞습니다. `(a = ? AND b = ?) OR (a = ? AND b = ?)`로 풀어 쓰지 않고 `(a, b) IN ((?, ?), (?, ?))` 하나로 씁니다.
 
@@ -630,7 +630,7 @@ qb.where(Expressions.tuple(m.tenantId, m.userId).eq([1, "alice"]));
 
 PostgreSQL, MySQL, SQLite 3.15 이상은 모두 row value 비교를 자체적으로 지원합니다. 그래서 식별자 따옴표만 빼면 어느 다이얼렉트에서나 SQL이 같습니다. 컬럼에는 `qAlias()` 표현식이나 `"alias.prop"` 문자열을 씁니다. 결과인 `TupleCondition`은 `Expressions.and`, `.or`, `.not`으로 합성할 수 있습니다.
 
-## 문자열 / 숫자 / 수학 — JS와 같은 이름
+## 문자열 / 숫자 / 수학: JS와 같은 이름
 
 문자열, 숫자, 수학 헬퍼는 JavaScript 개발자에게 이미 익숙한 이름을 그대로 씁니다. `String.prototype`의 메서드, 산술 연산자, `Math.*`의 이름입니다. 결과는 모두 `ScalarExpression`입니다. 그래서 `.as()`, 캐스팅, coalesce, 비교, 논리 결합에 바로 이어집니다.
 
@@ -664,7 +664,7 @@ qb.select([
 
 인자에는 평범한 값과 다른 컬럼이나 스칼라 표현식을 모두 넘길 수 있습니다. 평범한 값은 파라미터로 바인딩됩니다. `p.price.add(p.discount)`처럼 컬럼끼리 계산해도 되고 `p.name.concat(" (", p.sku, ")")`처럼 값과 컬럼을 섞어도 됩니다.
 
-## 날짜 산술 — `.addDays()` / `.addMonths()` / …, `dateDiff`, `random`
+## 날짜 산술: `.addDays()` / `.addMonths()` / …, `dateDiff`, `random`
 
 날짜 산술 헬퍼를 쓰면 리포트 쿼리에서 raw SQL을 쓸 일이 줄어듭니다. 헬퍼는 다음과 같습니다.
 
@@ -694,7 +694,7 @@ qb.select([
 
 SQLite에서 연 단위와 월 단위 차이는 각각 365.25와 30.4375로 나눠 근사합니다. 정확한 달력 차이가 필요하면 MySQL의 `TIMESTAMPDIFF`나 PostgreSQL의 `age()`를 쓰세요.
 
-## 윈도우 함수 — `aggregate.over()` + `WindowBuilder`
+## 윈도 함수: `aggregate.over()` + `WindowBuilder`
 
 집계(`count`, `sum`, `avg`, `min`, `max`, `countDistinct`)에는 `.over()`가 있습니다. 체인으로 PARTITION BY, ORDER BY, 프레임(`rowsBetween` 또는 `rangeBetween`)을 지정합니다. 그리고 `.as(alias)`로 마무리합니다.
 
@@ -723,7 +723,7 @@ qb.select([
 
 `"UNBOUNDED PRECEDING"`, `"CURRENT ROW"`, `"5 PRECEDING"` 같은 프레임 문자열은 SQL에 그대로 들어갑니다. 그러므로 사용자 입력을 이 자리에 넘기지 마세요. 누적 집계에는 `rowsBetween("UNBOUNDED PRECEDING", "CURRENT ROW")`를 가장 흔히 씁니다. 시간 범위로 집계하려면 `rangeBetween(...)`을 씁니다.
 
-### 실전 — 팀별 리더보드
+### 실전: 팀별 리더보드
 
 팀 단위 시계열 이벤트에서 자주 필요한 리포트가 두 가지 있습니다. 하나는 누적 점수입니다. 다른 하나는 같은 팀 평균보다 점수가 높은 이벤트입니다. 두 번째 리포트는 `.toScalar()`로 윈도 결과를 서브쿼리처럼 `WHERE`에 넣는 패턴입니다.
 
@@ -750,7 +750,7 @@ const aboveAvg = await em.createQueryBuilder(Event, "e")
 // WHERE "e"."score" > AVG("e"."score") OVER (PARTITION BY "e"."teamId")
 ```
 
-## TypeScript 친화 이스케이프 해치 — `Expressions.raw<T>()` / `.bigintValue()` / `qb.selectSchema(...)`
+## TypeScript 친화 탈출구: `Expressions.raw<T>()` / `.bigintValue()` / `qb.selectSchema(...)`
 
 타입 있는 빌더가 아직 지원하지 않는 기능에는 다음 세 가지 장치를 씁니다.
 
@@ -770,7 +770,7 @@ qb.select([epoch.as("epoch_s")])
   .where(epoch.gt(1700000000));
 ```
 
-템플릿 안의 파라미터 바인딩은 끝까지 보존됩니다. 드라이버 고유 함수나 전문 검색 연산자처럼 타입 있는 빌더가 지원하지 않는 기능에 이스케이프 해치로 씁니다.
+템플릿 안의 파라미터 바인딩은 끝까지 보존됩니다. 드라이버 고유 함수나 전문 검색 연산자처럼 타입 있는 빌더가 지원하지 않는 기능에 탈출구로 씁니다.
 
 **`.bigintValue()`**: `.longValue()`와 이름만 다른 메서드입니다. JS의 `bigint`를 다룬다는 의도를 코드를 읽는 사람에게 드러낼 때 씁니다. 생성하는 SQL 타입은 드라이버에 따라 `BIGINT`, `SIGNED`, `INTEGER`입니다. 드라이버가 결과를 문자열로 반환할 때가 있습니다. 그래서 JS 쪽에서 `BigInt(row.col)`로 감싸면 됩니다.
 
@@ -791,7 +791,7 @@ const rows = await em
 
 SELECT 목록은 호출하는 쪽에서 `.select([...])`나 `.as("alias")`로 원하는 대로 지정합니다. `selectSchema`는 여기에 런타임 검증과 타입 추론만 더합니다. 두 단계로 나눠 쓰려면 `.select(...).validate(schema)`를 씁니다. 검증 효과는 같습니다. 하지만 이때는 결과 타입을 좁히지 않습니다.
 
-## 조건 묶기 — `.and()` / `.or()` / `.not()`
+## 조건 묶기: `.and()` / `.or()` / `.not()`
 
 조건은 AND나 OR로 묶을 수 있고 부정할 수도 있습니다.
 
@@ -837,7 +837,7 @@ qb.where(
 
 AND나 OR을 연달아 쓰면 출력 SQL에서 괄호를 한 번만 칩니다. 그래서 `a.and(b).and(c).and(d)`는 `(a AND b AND c AND d)`로 평평하게 펼쳐집니다.
 
-## 문자열 매칭 — `.startsWith` / `.endsWith` / `.contains`
+## 문자열 매칭: `.startsWith` / `.endsWith` / `.contains`
 
 `.startsWith`, `.endsWith`, `.contains`는 LIKE 패턴을 대신 만드는 메서드입니다. 이 메서드가 왜 필요한지는 다음 코드에서 드러납니다.
 
@@ -867,7 +867,7 @@ qb.where(u.name.endsWith("son"));     // "son"으로 끝남
 qb.where(u.name.contains("lic"));     // 중간에 "lic" 포함
 ```
 
-## 대소문자 무시 — `*IgnoreCase`
+## 대소문자 무시: `*IgnoreCase`
 
 문자열 매칭 메서드에는 `IgnoreCase` 버전이 있습니다. 이 버전은 문자열을 매칭할 때 대소문자를 구분하지 않습니다.
 
@@ -893,7 +893,7 @@ const user = await em.createQueryBuilder(User, "u")
   .getOne();
 ```
 
-## 정규식 — `.matches(pattern)`
+## 정규식: `.matches(pattern)`
 
 `.matches()`는 정규식 조건을 만듭니다. 인자는 패턴 문자열이나 JS `RegExp`입니다. 패턴은 항상 파라미터로 바인딩되므로 SQL 인젝션이 들어올 곳이 없습니다.
 
@@ -917,7 +917,7 @@ qb.where(u.slug.matches(/^[a-z0-9-]+$/).not());
 - MySQL `REGEXP`는 바이너리가 아닌 콜레이션에서 기본적으로 대소문자를 구분하지 않습니다. 그래서 플래그 없는 `.matches("^a")`도 MySQL에서는 `A...`에 매칭됩니다. MySQL에서 대소문자를 구분하려면 바이너리 콜레이션을 써야 합니다. PostgreSQL `~`와 SQLite UDF는 `i` 플래그가 없으면 대소문자를 구분합니다.
 - SQLite에는 내장 정규식 엔진이 없습니다. 그래서 커넥터가 연결할 때 `regexp` UDF를 등록하고 JS `RegExp`로 실행합니다. 악의적인 패턴은 ReDoS를 일으킬 수 있습니다. 그러므로 사용자가 입력한 패턴은 검증한 뒤에 쓰세요.
 
-## 전문 검색 — `.matchAgainst(query, options?)`
+## 전문 검색: `.matchAgainst(query, options?)`
 
 `.matchAgainst()`는 `find({ search })`에 대응하는 `qAlias()` 메서드입니다. 컬럼 하나에 거는 전문 검색 조건을 만듭니다. query는 파라미터로 바인딩됩니다.
 
@@ -940,7 +940,7 @@ qb.where(a.body.matchAgainst("spam").not());
 
 `options.language`는 PostgreSQL 전용이고 `options.mode`는 MySQL 전용입니다. 그래서 각 다이얼렉트는 다른 쪽 옵션을 무시합니다. 여러 컬럼을 매칭하려면 `Conditions.fullTextSearch([c1, c2], query, dialect, options)`를 씁니다. 결과 조건은 `.and()`, `.or()`, `.not()`으로 합성할 수 있습니다.
 
-## 배열 연산자 (PostgreSQL) — `.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`
+## 배열 연산자 (PostgreSQL): `.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`
 
 PostgreSQL `array` 컬럼에 쓰는 연산자입니다. JSON 경로 DSL과 대칭을 이룹니다. 배열 포함 연산 세 가지를 제공합니다.
 
@@ -991,39 +991,39 @@ qb.where(u.tags.arrayContains(["admin"]).not());       // NOT (...)
 | 안전한 prefix/suffix/포함 | `.startsWith`, `.endsWith`, `.contains` (LIKE 특수문자 자동 이스케이프) |
 | 대소문자 무시 매칭 | 위 이름 뒤에 `IgnoreCase`, 그리고 `.equalsIgnoreCase`, `.likeIgnoreCase` |
 
-## Dialect 지원 매트릭스
+## 다이얼렉트 지원 매트릭스
 
 현재 다이얼렉트에 대응하는 형태가 없는 표현식이면 렌더러가 `OrmError(OrmErrorCode.UNSUPPORTED_OPERATION)`을 던집니다. 에러 메시지에는 다음 내용이 들어갑니다.
 
 - 기능 이름
 - 실패한 다이얼렉트
 - 지원하지 않는 이유
-- 구체적인 대안. 에뮬레이션 방법이나 이스케이프 해치를 안내합니다.
+- 구체적인 대안. 에뮬레이션 방법이나 탈출구를 안내합니다.
 
 다이얼렉트마다 빠진 기능을 미리 알아 두려면 아래 매트릭스를 참고하세요.
 
 | 표현식 | PostgreSQL | MySQL | SQLite | 비고 |
 |--------|------------|-------|--------|------|
-| 집계 (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | 네이티브 | 네이티브 | 네이티브 | — |
+| 집계 (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | 네이티브 | 네이티브 | 네이티브 | 없음 |
 | 조건부 집계 (`.filter()`, `countIf`, `sumIf`) | 네이티브 `FILTER (WHERE …)` | `FUNC(CASE WHEN … THEN … END)`로 변환 | 네이티브 `FILTER (WHERE …)` (3.30+) | MySQL에서 `COUNT(*)`는 `COUNT(CASE WHEN … THEN 1 END)`가 됨. NULL을 다루는 방식은 다이얼렉트 간에 같음. |
 | Row-value 튜플 (`Expressions.tuple().in/notIn/eq`) | 네이티브 | 네이티브 | 네이티브 (3.15+) | 식별자 따옴표 외에는 다이얼렉트 간 SQL이 같음. |
 | 정규식 매칭 (`.matches()`) | 네이티브 `~` (ARE) | 네이티브 `REGEXP` (ICU, 기본 대소문자 무시) | 커넥터가 등록한 `regexp` UDF로 `REGEXP` 실행 | 패턴은 파라미터로 바인딩. `i` 플래그는 이식성 있음, `m`/`s`는 엔진별로 다름. MySQL에서 대소문자를 구분하려면 바이너리 콜레이션 필요. |
 | 배열 연산자 (`.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`) | 네이티브 `@>` / `&&` / `<@` | 미지원: `UNSUPPORTED_DATABASE`를 던짐 | 미지원: `UNSUPPORTED_DATABASE`를 던짐 | MySQL/SQLite는 네이티브 배열 타입이 없음. JSON 배열(JSON 경로 DSL)이나 정션 테이블로 모델링. 값 배열은 파라미터 하나로 바인딩. |
-| `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 | — |
+| `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 | 없음 |
 | `greatest` / `least` | 네이티브 `GREATEST` / `LEAST`. NULL 인자 무시 | 네이티브 `GREATEST` / `LEAST`. 인자 중 하나라도 NULL이면 결과 NULL | `MAX(a, b)` / `MIN(a, b)` 스칼라 형태. 인자 중 하나라도 NULL이면 결과 NULL | NULL 처리는 보정하지 않습니다. 이식성이 필요하면 nullable 인자를 `coalesce()`로 감싸세요. |
 | upsert `excluded` 참조 (`qExcluded`) | `EXCLUDED."col"` | MySQL 8.0.19+는 행 별칭으로 `` `new`.`__col` ``, MariaDB와 이전 MySQL은 `` VALUES(`col`) `` | `excluded."col"` | `createInsertBuilder()` 안에서만 씁니다. |
-| 윈도 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) | — |
+| 윈도 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) | 없음 |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregate | 네이티브 (`WITHIN GROUP`) | 미지원: `UNSUPPORTED_OPERATION`을 던짐 | 미지원: `UNSUPPORTED_OPERATION`을 던짐 | MySQL: CTE와 `ROW_NUMBER() OVER (ORDER BY x)`로 에뮬레이션하고 `rn = CEIL(N * p)`인 행을 고름. [cookbook 레시피](./cookbook.md#cycle-time-percentile-report) 참고. |
 | `dateTrunc` (year/quarter/month/week/day/hour/minute/second) | 네이티브 `DATE_TRUNC` | 단위별로 같은 뜻의 함수 (`DATE`, `DATE_FORMAT`, ISO 월요일 `WEEKDAY` 계산) | `date(..., 'start of …')` / `strftime` | 세 다이얼렉트 모두 ISO 월요일 기준 주를 만듦. |
 | `dateDiff(a, b, unit)`: year / month | `age()`로 달력 기준 계산 | `TIMESTAMPDIFF(YEAR/MONTH, ...)`로 달력 기준 계산 | 근사: julianday / 365.25 (year), / 30.4375 (month) | SQLite는 10년 기준 약 0.07% 오차. |
 | `dateDiff(a, b, unit)`: day / hour / minute / second | `EXTRACT(EPOCH ...)` 기반 epoch 초 | `TIMESTAMPDIFF(...)` | `julianday()` × factor | 세 다이얼렉트 모두 정확. |
-| `dateAdd(value, n, unit)` | `value + INTERVAL 'N unit'` | `DATE_ADD(value, INTERVAL N unit)` | `datetime(value, '+N unit')` 수식자 | — |
+| `dateAdd(value, n, unit)` | `value + INTERVAL 'N unit'` | `DATE_ADD(value, INTERVAL N unit)` | `datetime(value, '+N unit')` 수식자 | 없음 |
 | `random()` | `random()` `[0, 1)` 반환 | `RAND()` `[0, 1)` 반환 | `RANDOM()` 64-bit signed integer 반환 | SQLite에서 `[0, 1)` 범위가 필요하면 직접 정규화. |
 | Full-text search (`.matchAgainst()` / `Conditions.fullTextSearch`) | `to_tsvector / @@` (tsvector 파이프라인) | `MATCH() AGAINST(...)` (FULLTEXT 인덱스 필요) | DSL 미지원: `UNSUPPORTED_DATABASE`를 던짐 | SQLite는 FTS5 가상 테이블과 `em.query()`를 사용. |
 | `jsonContains`: object/array 값 | 네이티브 `@>` containment | 네이티브 `JSON_CONTAINS` | object/array 미지원: `UNSUPPORTED_DATABASE`를 던짐 | SQLite는 경로의 스칼라 동등 비교만 지원. `metadata.profile.role.eq('admin')` 형태나 raw SQL 사용. |
-| `jsonExtract` / `jsonHasKey` / `jsonArrayLength` / `jsonTypeOf` | 네이티브 (`->`, `?`, `jsonb_array_length`, `jsonb_typeof`) | 네이티브 (`JSON_EXTRACT`, `JSON_CONTAINS_PATH`, `JSON_LENGTH`, `JSON_TYPE`) | 네이티브 (`json_extract`, `json_array_length`, `json_type`) | — |
-| `ilike` (case-insensitive LIKE) | 네이티브 `ILIKE` | `*_ci` 콜레이션에서는 기본 `LIKE`가 대소문자 무시, `*_bin`은 `LOWER()`로 대체 | `LIKE`는 ASCII만 대소문자 무시, ASCII 밖의 유니코드는 ICU 확장 필요 | — |
-| 숫자 / 문자열 헬퍼 (`.abs`, `.floor`, `.ceil`, `.round`, `.length`, `.substring`, `.trim`, …) | 네이티브 | 네이티브 | 네이티브 | — |
+| `jsonExtract` / `jsonHasKey` / `jsonArrayLength` / `jsonTypeOf` | 네이티브 (`->`, `?`, `jsonb_array_length`, `jsonb_typeof`) | 네이티브 (`JSON_EXTRACT`, `JSON_CONTAINS_PATH`, `JSON_LENGTH`, `JSON_TYPE`) | 네이티브 (`json_extract`, `json_array_length`, `json_type`) | 없음 |
+| `ilike` (case-insensitive LIKE) | 네이티브 `ILIKE` | `*_ci` 콜레이션에서는 기본 `LIKE`가 대소문자 무시, `*_bin`은 `LOWER()`로 대체 | `LIKE`는 ASCII만 대소문자 무시, ASCII 밖의 유니코드는 ICU 확장 필요 | 없음 |
+| 숫자 / 문자열 헬퍼 (`.abs`, `.floor`, `.ceil`, `.round`, `.length`, `.substring`, `.trim`, …) | 네이티브 | 네이티브 | 네이티브 | 없음 |
 
 `UNSUPPORTED_OPERATION` 에러의 `suggestion` 필드에는 에뮬레이션 방법이나 대안을 알려 주는 한 줄 힌트가 있습니다. 그래서 UI에 그대로 표시하기 좋습니다. 전체 메시지에는 관련 문서 절을 가리키는 `See: docs/...` 포인터도 들어 있습니다.
 

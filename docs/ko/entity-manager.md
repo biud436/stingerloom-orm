@@ -1,4 +1,4 @@
-# EntityManager -- CRUD 기본
+# EntityManager: CRUD 기본
 
 Stingerloom에서 데이터베이스를 다루는 작업은 모두 **EntityManager**를 거칩니다. 생성, 조회, 수정, 삭제가 모두 이 클래스 하나에서 일어납니다.
 
@@ -12,7 +12,7 @@ CRUD 외의 기능은 다른 페이지에 있습니다. 페이지네이션과 �
 
 ---
 
-## 연결하기 -- register()
+## 연결하기: register()
 
 ### register()가 필요한 이유
 
@@ -121,7 +121,7 @@ synchronize: {
 }
 ```
 
-### Named connections (멀티 DB)
+### 이름 있는 연결 (멀티 DB)
 
 두 번째 인자로 연결 이름을 넘기면 여러 데이터베이스를 동시에 사용할 수 있습니다.
 
@@ -140,7 +140,7 @@ await analyticsEm.register({ type: "mysql", /* ... */ entities: [Event] }, "anal
 
 ---
 
-## 저장하기 -- save()
+## 저장하기: save()
 
 ### save()는 "스마트 upsert"
 
@@ -235,7 +235,7 @@ WHERE `id` = ?
 5. **캐스케이드**: `cascade: true`로 표시한 관련 엔티티를 재귀적으로 저장합니다.
 6. **이벤트 발생**: `afterInsert`와 `afterUpdate` 이벤트가 발생합니다.
 
-### 부분 업데이트
+### 부분 갱신
 
 `save()`는 넘긴 컬럼만 수정합니다. 생략한 컬럼은 그대로 유지됩니다.
 
@@ -256,13 +256,13 @@ UPDATE `user` SET `name` = ? WHERE `id` = ?
 
 ---
 
-## 조회하기 -- find()와 findOne()
+## 조회하기: find()와 findOne()
 
-### 왜 메서드가 두 개일까
+### 메서드가 두 개인 이유
 
 `find()`는 목록을 반환하고 `findOne()`은 행 하나나 `null`을 반환합니다. `findOne()`의 SQL에는 `LIMIT 1`이 자동으로 붙습니다. 그래서 데이터베이스는 첫 번째로 매칭되는 행을 찾자마자 스캔을 끝냅니다. 천만 행짜리 테이블이라면 이 차이 하나로 쿼리 시간이 크게 달라집니다.
 
-### 목록 조회 -- find()
+### 목록 조회: find()
 
 `find()`는 항상 `T[]`를 반환합니다. 빈 테이블이면 `[]`를 반환합니다. `null`이나 `undefined`는 절대 반환하지 않습니다.
 
@@ -347,7 +347,7 @@ ORDER BY `name` ASC
 
 OR, 서브쿼리, raw 조건 등 복잡한 쿼리는 [Query Builder](./query-builder.md)를 사용하세요.
 
-### 단건 조회 -- findOne()
+### 단건 조회: findOne()
 
 `findOne()`은 `T | null`을 반환합니다. 결과를 사용하기 전에 반드시 `null`인지 확인하세요.
 
@@ -377,7 +377,7 @@ LIMIT 1
 
 `LIMIT 1`은 자동으로 추가됩니다. 1천만 행이 있는 테이블에서도 첫 번째로 매칭되는 행에서 스캔을 멈춥니다.
 
-### 결과 보장 -- findOneOrFail()
+### 결과 보장: findOneOrFail()
 
 행이 반드시 있어야 하고 `null` 확인을 직접 하고 싶지 않다면 `findOneOrFail()`을 사용하세요. `findOne()`과 똑같이 동작합니다. 다만 결과가 없으면 `EntityNotFoundError`를 던집니다.
 
@@ -447,7 +447,7 @@ WHERE "post_tags"."postId" = $1
 
 select, distinct, 잠금, 페이지네이션, 집계의 자세한 내용은 [Querying & Pagination](./entity-manager-querying.md)을 참고하세요.
 
-### 편의 메서드 -- findByPK(), findByPKs(), findByPKsMap(), exists(), pluck()
+### 편의 메서드: findByPK(), findByPKs(), findByPKsMap(), exists(), pluck()
 
 자주 쓰는 조회 패턴에서 `{ where: { id: ... } }`를 직접 쓰지 않아도 되게 해 주는 단축 메서드입니다.
 
@@ -504,7 +504,7 @@ const titles = await em.pluck(Post, "title");
 const ids = await userRepo.pluck("id", { active: true });
 ```
 
-### 엔티티 구성 -- create(), merge(), preload()
+### 엔티티 구성: create(), merge(), preload()
 
 이 헬퍼는 엔티티 인스턴스를 메모리에서 만들거나 준비합니다. 스스로 저장하지는 않습니다. 숨은 Unit of Work나 변경 추적도 없으므로 즉시 실행 모델은 그대로입니다. 쓸 준비가 되면 결과를 `save()`에 넘기세요.
 
@@ -547,7 +547,7 @@ const patched = await userRepo.preload({ id: 1, name: "New name" });
 
 ---
 
-## 삭제하기 -- delete()
+## 삭제하기: delete()
 
 ### delete()에 조건이 필수인 이유
 
@@ -597,9 +597,9 @@ await em.delete(User, {});
 
 ---
 
-## Soft Delete -- softDelete()와 restore()
+## 소프트 삭제: softDelete()와 restore()
 
-### Soft delete를 쓰는 이유
+### 소프트 삭제를 쓰는 이유
 
 행을 실제로 삭제하지 않고 삭제된 것처럼 다뤄야 할 때가 있습니다. 파일을 영구 삭제하지 않고 휴지통으로 옮기는 것과 같습니다. 자주 쓰는 경우는 다음과 같습니다.
 
@@ -629,7 +629,7 @@ class Post {
 }
 ```
 
-### Soft delete 실행
+### 소프트 삭제 실행
 
 ```typescript
 await em.softDelete(Post, { id: 1 });
@@ -696,9 +696,9 @@ UPDATE `post` SET `deletedAt` = NULL WHERE `id` = ?
 
 ---
 
-## 테이블 비우기 -- clear()
+## 테이블 비우기: clear()
 
-### clear()가 있는 이유와 쓸 때
+### clear()가 필요한 이유와 사용 시점
 
 `clear()`는 호출한 쪽에서 보이는 엔티티의 모든 행을 삭제합니다. 테스트 사이의 정리 작업이나 시드 데이터 초기화에 쓰세요. 프로덕션에서는 정말로 테이블을 비우려는 것이 아니라면 쓰지 마세요.
 

@@ -1,4 +1,4 @@
-# Query Builder — 편의 패턴
+# 쿼리 빌더: 편의 패턴
 
 서비스 레이어에서 쿼리 빌더를 쓰다 보면 같은 모양의 코드가 반복됩니다. 크게 세 가지입니다.
 
@@ -8,7 +8,7 @@
 
 Stingerloom의 쿼리 빌더에는 이런 반복을 줄이는 헬퍼가 있습니다. 조건부 빌딩(`when`), 합성할 수 있는 변환(`pipe` / `scope`), 관계 기반 쿼리(`whereHas` / `withCount`), 서브쿼리 통합(`whereInSubquery` 등)이 그 예입니다.
 
-## 조건부 빌딩 — `when()`
+## 조건부 빌딩: `when()`
 
 쿼리 빌더에서 가장 흔한 보일러플레이트는 선택적 필터용 `if/else` 블록입니다. `when()`을 쓰면 이 블록이 필요 없습니다.
 
@@ -35,7 +35,7 @@ const users = await em
 
 `when()`은 어떤 분기가 실행되든 `this`를 반환합니다. 그래서 체이닝이 끊기지 않습니다.
 
-## 그룹 조건 — `andWhereGroup()` / `orWhereGroup()`
+## 그룹 조건: `andWhereGroup()` / `orWhereGroup()`
 
 `WHERE status = 'active' OR (role = 'admin' AND verified = true)` 같은 괄호 그룹이 필요할 때가 있습니다. 그룹이 없으면 연산자 우선순위가 틀어집니다. `andWhereGroup()`과 `orWhereGroup()`이 이 문제를 해결합니다.
 
@@ -62,7 +62,7 @@ qb.where("active", true)
 
 그룹 빌더는 `whereIn()`, `whereNull()`, `whereNotNull()`, `whereBetween()`, `whereLike()` 등 메인 빌더와 같은 WHERE 헬퍼를 모두 지원합니다.
 
-## 재사용 가능한 변환 — `pipe()`
+## 재사용 가능한 변환: `pipe()`
 
 `pipe()`를 쓰면 쿼리 로직을 독립 함수로 꺼내 합성할 수 있습니다.
 
@@ -89,7 +89,7 @@ const users = await repo
 
 ## 관계 기반 쿼리
 
-### `whereHas()` / `whereNotHas()` — 관계 존재 필터
+### `whereHas()` / `whereNotHas()`: 관계 존재 필터
 
 `whereHas()`는 엔티티의 관계 메타데이터에서 `EXISTS` 서브쿼리를 자동으로 만듭니다. SQL을 직접 쓸 필요가 없습니다.
 
@@ -130,7 +130,7 @@ const drafts = await em
 
 > 주의: `@ManyToMany`는 `whereHas` / `whereNotHas`의 대상이 아닙니다. `@ManyToMany` 관계를 넘기면 `OrmError`를 던집니다. `@ManyToMany` 관계는 중간 테이블을 문자열 조인으로 직접 잇거나 `whereInSubquery()`로 풀어 쓰세요. `leftJoinRelation`도 `@ManyToMany`를 지원하지 않습니다([관계 조인](./query-builder-joins.md)).
 
-### `withCount()` — 관계 카운트 컬럼
+### `withCount()`: 관계 카운트 컬럼
 
 관계 카운트를 스칼라 서브쿼리로 SELECT 절에 추가합니다.
 
@@ -150,7 +150,7 @@ const users = await em
 
 개수를 엔티티에 직접 담으려면 `find()`의 `withCount` 옵션으로 조회하세요. [관련 행 개수 세기](./relations.md#관련-행-개수-세기-withcount)를 참고하세요.
 
-### `loadRelation()` — 간결한 관계 로딩
+### `loadRelation()`: 간결한 관계 로딩
 
 `leftJoinRelationAndSelect()`의 단축 메서드입니다. 두 번째 인자로 별칭을 지정할 수 있습니다. 생략하면 관계 이름이 그대로 별칭이 됩니다.
 
@@ -203,7 +203,7 @@ const bigSpenders = await em
   .getMany();
 ```
 
-### `addSelectSubquery()` — SELECT 절 스칼라 서브쿼리
+### `addSelectSubquery()`: SELECT 절 스칼라 서브쿼리
 
 상관 서브쿼리를 계산 컬럼으로 추가합니다.
 
@@ -222,7 +222,7 @@ const posts = await em
 // SELECT "p".*, (SELECT ... LIMIT 1) AS "latestComment" FROM ...
 ```
 
-### 상관 서브쿼리 — `(outer) => subQb` 팩토리
+### 상관 서브쿼리: `(outer) => subQb` 팩토리
 
 `addSelectSubquery()`, `whereExistsSubquery()`, `whereNotExistsSubquery()`는 팩토리 `(outer) => subQb`도 받습니다. `outer("alias.prop")` 리졸버는 바깥 쿼리 컬럼의 식별자를 이스케이프해서 `Sql` 조각으로 반환합니다. 그래서 서브쿼리는 타입 있는 API로 바깥 행을 참조할 수 있습니다. `sql` 문자열에 다이얼렉트별 식별자를 직접 적을 필요가 없습니다. 그리고 상관 조건 안에서도 NamingStrategy와 `@Column({ name })` 매핑이 그대로 동작합니다.
 
@@ -253,7 +253,7 @@ const nodes = await em
 
 `outer()`는 `Sql` 조각을 반환하므로 `.between()`을 비롯한 모든 조건 값에 바로 넣을 수 있습니다. `sql` 템플릿은 필요 없습니다. `outer()`는 바깥 행의 컬럼에만 쓰세요. 서브쿼리 자신의 별칭은 그 서브쿼리의 `qAlias`로 해석하세요. 그래야 양쪽이 각자 올바른 레지스트리를 거쳐 매핑됩니다.
 
-### 중첩 집합 트리 — depth와 breadcrumb를 raw SQL 없이
+### 중첩 집합 트리: depth와 breadcrumb를 raw SQL 없이
 
 같은 `onBetween()` 셀프 조인에 SELECT 절의 집계 산술을 더하면 중첩 집합의 고전적인 "depth = 조상 수 − 1" 쿼리를 타입 있는 빌더로 표현할 수 있습니다.
 
@@ -307,7 +307,7 @@ const usersWithBigOrders = await em
   .getMany();
 ```
 
-## Scope — 이름 붙은 쿼리 조각
+## Scope: 이름 붙은 쿼리 조각
 
 스코프는 엔티티의 static 속성으로 정의합니다.
 
@@ -343,7 +343,7 @@ const users = await repo
 
 없는 스코프 이름으로 `applyScope()`를 호출하면 사용할 수 있는 스코프 목록이 담긴 `OrmError`를 던집니다.
 
-### 실전 — 워커 큐에서 안전하게 한 건 집기
+### 실전: 워커 큐에서 안전하게 한 건 집기
 
 스코프를 잠금과 함께 쓰면 백그라운드 워커 패턴이 한 줄로 정리됩니다. `forUpdateSkipLocked()`는 다른 워커가 잠근 행을 건너뜁니다. 그래서 여러 워커가 경합 없이 같은 테이블에서 작업을 꺼내 쓸 수 있습니다.
 
@@ -371,7 +371,7 @@ async function claimNext(): Promise<Job | null> {
 
 이 쿼리는 트랜잭션 안에서 실행해야 잠금이 의미가 있습니다. 잠금 옵션의 드라이버 호환성은 [실행 & 결과 → NOWAIT과 SKIP LOCKED](./query-builder-execution.md#nowait과-skip-locked)를 참고하세요.
 
-## 베이스 쿼리 복제 — `clone()`
+## 베이스 쿼리 복사: `clone()`
 
 같은 베이스 쿼리에서 여러 갈래의 쿼리를 만든다면 베이스 쿼리를 한 번 만들어 두고 갈래마다 `clone()`을 씁니다.
 

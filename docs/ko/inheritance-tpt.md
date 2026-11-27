@@ -1,4 +1,4 @@
-# Joined / Table Per Type Inheritance (TPT) -- 심층 가이드
+# Joined / Table Per Type Inheritance (TPT): 심층 가이드
 
 Joined 상속은 공유 컬럼을 루트 테이블에 저장하고 자식 고유 컬럼을 자식마다 별도의 테이블에 저장하는 전략입니다. Table Per Type, 줄여서 TPT라고도 부릅니다. 자식 테이블은 기본 키에 건 외래 키로 루트 테이블과 연결됩니다. 가족이 거실은 함께 쓰고 침실은 각자 따로 쓰는 집과 비슷합니다. 거실이 루트 테이블이고 침실이 자식 테이블입니다. 한 사람의 모든 것을 알려면 두 방을 모두 둘러봐야 합니다. 이 과정이 JOIN입니다.
 
@@ -122,7 +122,7 @@ await em.register({
 
 ORM은 루트 테이블을 먼저 생성하고 그다음 자식 테이블을 생성합니다. 마지막으로 각 자식의 `id`가 루트의 `id`를 참조하는 외래 키 제약 조건을 추가합니다.
 
-## 3. INSERT -- 2단계 삽입
+## 3. INSERT: 2단계 삽입
 
 자식 엔티티를 저장하면 ORM은 데이터를 두 테이블로 나눠 INSERT 문 두 개를 실행합니다.
 
@@ -198,7 +198,7 @@ VALUES (2, 'SWIFT-ABCD');
 // instanceof BankTransferPayment === true
 ```
 
-## 4. SELECT -- 자식 엔티티 조회
+## 4. SELECT: 자식 엔티티 조회
 
 `em.find()`로 자식 엔티티를 조회하면 ORM이 자동으로 자식 테이블과 루트 테이블을 JOIN해서 완전한 엔티티를 만듭니다.
 
@@ -257,7 +257,7 @@ WHERE "amount" >= 100;
 
 루트에 선언한 `@DeletedAt` 조건도 이 모든 읽기에서 루트 테이블을 기준으로 적용됩니다. `withDeleted`와 `onlyDeleted`는 다른 엔티티와 똑같이 동작합니다.
 
-## 5. SELECT -- 다형성 쿼리 (루트 엔티티)
+## 5. SELECT: 다형성 쿼리 (루트 엔티티)
 
 루트 엔티티를 조회하면 모든 결제 타입을 반환합니다. 각 행은 알맞은 서브클래스로 역직렬화됩니다.
 
@@ -363,7 +363,7 @@ WHERE "credit_card_payment"."cardNumber" LIKE $1
 
 커서 페이지는 서브클래스 하나만 선언한 컬럼으로 정렬할 수 있습니다. 여러 서브클래스가 선언한 컬럼에는 모든 행을 담은 단일 컬럼이 없습니다. 그래서 이런 컬럼을 정렬 기준으로 쓰면 거부됩니다. 루트에 대한 쓰기(`delete()`, `updateMany()`)는 여전히 루트 컬럼만 받습니다.
 
-## 6. SELECT -- 관계와 함께
+## 6. SELECT: 관계와 함께
 
 루트 엔티티에 정의한 관계는 모든 자식이 상속합니다. 아래는 루트 `Payment` 엔티티에 `@ManyToOne` 관계가 있는 예제입니다.
 
@@ -507,7 +507,7 @@ LEFT JOIN (SELECT "payment"."id", "payment"."amount", "payment"."dtype", ...,
   ON "refund"."payment_id" = "payment"."id"
 ```
 
-## 7. SELECT -- findOne 사용
+## 7. SELECT: findOne 사용
 
 `findOne`은 `find`와 똑같이 동작합니다. 다만 엔티티 하나나 `null`을 반환합니다.
 
@@ -570,7 +570,7 @@ INNER JOIN "payment"
 WHERE "payment"."amount" = 100;
 ```
 
-## 8. SELECT -- QueryBuilder 사용
+## 8. SELECT: QueryBuilder 사용
 
 `SelectQueryBuilder`는 TPT 상속 로직을 자동으로 적용합니다. `em.createQueryBuilder()`에 자식 엔티티를 넘기면 부모 테이블이 자동으로 JOIN됩니다. 그리고 부모 컬럼과 자식 컬럼을 합친 명시적 SELECT 목록이 만들어집니다. 루트 엔티티를 조회하면 모든 자식 테이블을 LEFT JOIN합니다. 그리고 다형성 역직렬화로 알맞은 서브클래스 인스턴스를 반환합니다.
 
@@ -637,7 +637,7 @@ LEFT JOIN "bank_transfer_payment"
 
 접두사 제거와 서브클래스 인스턴스 생성은 `ResultTransformer.toTPTPolymorphicEntities()` 메서드가 처리합니다. `em.find()`와 같은 방식입니다. 모든 QueryBuilder 메서드(`getMany()`, `getOne()`, `getCount()`, `exists()`)가 TPT 다형성 역직렬화를 지원합니다.
 
-## 9. SELECT -- WriteBuffer와 함께
+## 9. SELECT: WriteBuffer와 함께
 
 WriteBuffer 플러그인(Unit of Work)은 TPT 상속을 별도 설정 없이 지원합니다. 모든 쿼리가 EntityManager에 위임되므로 TPT JOIN과 2단계 쓰기가 자동으로 처리됩니다.
 
@@ -696,7 +696,7 @@ console.log(result.updates); // 1
 ]
 ```
 
-## 10. UPDATE -- 테이블 간 분리
+## 10. UPDATE: 테이블 간 분리
 
 TPT 자식 엔티티를 갱신하면 ORM은 변경 사항을 UPDATE 문 두 개로 나눕니다. 하나는 루트 테이블 컬럼용이고 다른 하나는 자식 테이블 컬럼용입니다.
 
@@ -737,7 +737,7 @@ ORM은 각 컬럼을 알맞은 테이블로 라우팅합니다. `amount` 같은 
 
 > 힌트: `@UpdateTimestamp` 필드와 `@Version` 필드는 루트 테이블의 UPDATE 문으로 라우팅됩니다. 이런 메타데이터 컬럼은 보통 루트 엔티티에 정의하기 때문입니다.
 
-### 조건 기반 업데이트
+### 조건 기반 갱신
 
 자식에 호출한 `updateMany()`, `update()`, `increment()`, `decrement()`, `softDelete()`, `restore()`는 `delete()`와 같은 경로로 실행됩니다(11절). 먼저 루트를 JOIN해서 조건에 맞는 기본 키를 조회합니다. 그다음 그 키로 각 테이블에 그 테이블의 컬럼 할당만 보냅니다.
 
@@ -775,7 +775,7 @@ UPDATE "credit_card_payment" SET "cardNumber" = 'void' WHERE "id" IN (4, 9);
 
 `createUpdateBuilder()`에는 이 방식이 적용되지 않습니다. `where()` 조건이 이미 렌더링된 SQL로 들어오기 때문입니다. 그래서 여전히 자식 테이블에 UPDATE 문 하나를 보냅니다. 그리고 자식 고유 컬럼만 다룰 수 있습니다.
 
-## 11. DELETE -- 키를 먼저 찾고, 자식 테이블부터 삭제
+## 11. DELETE: 키를 먼저 조회한 뒤 자식 테이블부터 삭제
 
 TPT 행은 두 테이블에 나뉘어 있습니다. 그리고 조건은 어느 쪽 컬럼이든 가리킬 수 있습니다. 그래서 ORM은 조건에 맞는 기본 키를 먼저 조회합니다. 그다음 그 키로 자식 테이블과 루트 테이블의 행을 차례로 삭제합니다.
 
@@ -844,7 +844,7 @@ ORM은 모든 자식 테이블의 행을 루트 테이블의 행보다 먼저 �
 | 자식 타입을 추가해도 기존 테이블을 변경하지 않습니다 | 스키마가 STI보다 조금 더 복잡합니다 |
 | 자식 수와 관계없이 루트 테이블이 좁게 유지됩니다 | WHERE 절을 알맞은 테이블로 라우팅해야 합니다 |
 
-## 13. 언제 TPT를 사용할까
+## 13. TPT를 사용해야 하는 경우
 
 다음 경우에는 Joined(TPT) 상속을 사용하세요.
 

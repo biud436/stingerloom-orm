@@ -2,7 +2,7 @@
 
 자주 발생하는 문제와 그 해결 방법입니다.
 
-## 연결 오류
+## 연결 에러
 
 ### "Database not connected"
 
@@ -39,7 +39,7 @@ mysqladmin ping -h localhost -P 3306
 ls ./mydb.sqlite
 ```
 
-### 데이터베이스가 재시작된 뒤 로그에 "A pooled ... connection was lost"가 찍힘
+### 데이터베이스 재시작 뒤의 "A pooled ... connection was lost" 로그
 
 ```
 WARN A pooled PostgreSQL connection was lost. terminating connection due to administrator command
@@ -61,7 +61,7 @@ await em.register({
 
 3.0.0 이하 버전은 PostgreSQL에서 이 에러를 처리하지 않았습니다. 에러는 uncaught exception으로 프로세스까지 올라갔고 애플리케이션이 종료됐습니다. 이때 메시지는 `terminating connection due to administrator command`나 `Connection terminated unexpectedly`였습니다. 데이터베이스를 재시작할 때 프로세스도 함께 종료된다면 업그레이드하세요.
 
-### 잘못된 설정 오류
+### 잘못된 설정 에러
 
 v0.9.x부터 `register()`는 연결하기 전에 옵션을 검증합니다. 검증에 실패하면 아래처럼 `ORM_INVALID_CONFIG` 에러가 납니다.
 
@@ -80,7 +80,7 @@ OrmError [ORM_INVALID_CONFIG]: Invalid database configuration:
 { port: parseInt(process.env.DB_PORT || "5432", 10) }
 ```
 
-## 엔티티 & 데코레이터 오류
+## 엔티티 & 데코레이터 에러
 
 ### "Entity metadata not found"
 
@@ -189,7 +189,7 @@ class User {
 
 엔티티가 선언하지 않은 키가 쓰기에 들어오면 ORM이 이를 보고합니다. `save()`를 비롯한 삽입 계열 메서드는 엔티티와 키마다 한 번 `[WriteInput] Unknown key "bio" in the data passed to save() for entity "User"` 로그를 남깁니다. 비슷한 이름이 있으면 `Did you mean` 제안도 붙습니다. 이런 쓰기를 아예 거부하려면 연결 옵션에 `unknownWriteKeys: "throw"`를 지정하세요. 아래 `"Unknown column"` 항목과 쓰기 가이드의 *쓰기 페이로드의 미지 키* 절도 참고하세요.
 
-## 쿼리 오류
+## 쿼리 에러
 
 ### N+1 쿼리 문제
 
@@ -391,7 +391,7 @@ InvalidQueryError: Invalid where for entity "Post": unknown operator "lik" on
 
 값이 `undefined`나 `null`인 옵션은 설정하지 않은 것으로 봅니다. 그래서 `take: null`은 모든 행을 조회합니다. 일부 컬럼에서는 연산자가 아닌 키가 하나라도 있는 객체를 비교할 값으로 취급합니다(`where: { settings: { theme: "dark" } }`). `json`, `jsonb`, `array` 컬럼, 커스텀 타입이나 `transformer`가 붙은 컬럼, `@ComputedColumn`이 여기에 해당합니다. 이런 컬럼에서는 연산자로만 이루어진 객체만 검사합니다.
 
-## 관계 오류
+## 관계 에러
 
 ### 관계 데이터가 로드되지 않음
 
@@ -419,7 +419,7 @@ author!: User;
 
 OneToMany와 ManyToMany 컬렉션에는 `eager` 옵션이 없습니다. 이런 관계는 `relations`에 이름을 적어서 로드하세요.
 
-### `select`와 함께 쓰면 관계가 `[]`(또는 `null`)로 돌아올 때
+### `select`와 함께 쓰면 관계가 `[]`(또는 `null`)로 반환될 때
 
 ```typescript
 const users = await em.find(User, { select: ["name"], relations: ["posts"] });
@@ -520,7 +520,7 @@ OrmError: Invalid relation mapping (connection "default"):
 - `"throw"`이면 `InvalidQueryError`로 거부합니다.
 - `"ignore"`이면 아무것도 남기지 않습니다.
 
-### 순환 관계 오류
+### 순환 관계 에러
 
 두 엔티티가 서로를 참조할 때는 `() => Entity`처럼 함수로 대상을 참조하세요.
 
@@ -556,7 +556,7 @@ await em.register({
 });
 ```
 
-## 마이그레이션 오류
+## 마이그레이션 에러
 
 ### "Migration table already exists"
 

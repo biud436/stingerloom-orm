@@ -1,4 +1,4 @@
-# Write Buffer -- 기본편
+# Write Buffer: 기본편
 
 ## 즉시 저장의 문제점
 
@@ -15,7 +15,7 @@ UPDATE가 2번 실행되고 라운드 트립과 트랜잭션도 2번씩 생깁�
 
 **Unit of Work** 패턴은 이 문제를 해결합니다. 변경 사항을 바로 실행하지 않고 메모리에 모아 둡니다. 그리고 나중에 트랜잭션 하나로 한 번에 실행합니다. Stingerloom의 `WriteBuffer`는 이 패턴을 필요할 때만 쓰도록 제공하는 플러그인입니다.
 
-## Setup
+## 설정
 
 WriteBuffer는 직접 켜야 하는(opt-in) 플러그인입니다. EntityManager에 추가하면 됩니다.
 
@@ -51,7 +51,7 @@ const buf = em.buffer({ maxIdentityMapSize: 1000 });
 
 ## 핵심 개념
 
-### Identity Map -- "같은 행, 같은 객체"
+### Identity Map: "같은 행, 같은 객체"
 
 Identity Map이 없으면 다음과 같은 미묘한 버그가 생길 수 있습니다.
 
@@ -103,7 +103,7 @@ const buf = em.buffer({ maxIdentityMapSize: 500 });
 
 빠진 엔티티는 `EntityState.DETACHED`가 됩니다. 현재 크기는 `buf.size().identityMap`으로 확인합니다.
 
-### Dirty Checking -- "변경된 것만 업데이트"
+### 변경 추적: "변경된 것만 갱신"
 
 버퍼로 엔티티를 조회하면 그 시점의 모든 컬럼 값을 깊은 복사(deep clone)한 **스냅샷**(snapshot)을 만듭니다. `flush()` 시점에는 현재 상태와 스냅샷을 비교해서 실제로 변경된 컬럼만 담은 UPDATE를 생성합니다.
 
@@ -142,7 +142,7 @@ UPDATE "user" SET "email" = $1 WHERE "id" = $2
 
 비교에는 깊은 동등성(deep equality)을 사용합니다. `Date`는 timestamp로 비교하고 중첩 객체는 값으로 비교합니다. `null`과 `undefined`는 구분합니다.
 
-### Entity States -- 라이프사이클
+### 엔티티 상태: 생명주기
 
 버퍼가 추적하는 모든 엔티티 인스턴스에는 생명주기 상태가 있습니다.
 
@@ -207,7 +207,7 @@ SELECT * FROM "post" WHERE "authorId" = $1
 
 일반 `em.find()`의 `FindOption` 속성을 그대로 쓸 수 있습니다. `where`, `select`, `orderBy`, `relations` 등을 모두 지원합니다.
 
-### getReference -- 쿼리 없이 FK 참조하기
+### getReference: 쿼리 없이 외래 키 참조하기
 
 엔티티 전체를 조회하지 않고 외래 키 참조만 필요할 때가 있습니다. 예를 들어 Post를 만들면서 `authorId`를 설정해야 하고 사용자 ID는 이미 알고 있는 경우입니다.
 
@@ -257,7 +257,7 @@ INSERT INTO "post" ("title", "authorId") VALUES ($1, $2)
 
 - **하이드레이트하기 전의 스칼라 컬럼은 `undefined`로 읽힙니다.** 참조는 하이드레이트되기 전까지 기본 키만 가진 객체입니다. 이때 `ref.title`을 읽으면 숨은 쿼리 없이 `undefined`가 반환됩니다. 스칼라 값을 읽으려면 먼저 하이드레이트하세요. `await buf.findOne(Post, { where: { id: 10 } })`가 같은 인스턴스를 그 자리에서 채웁니다.
 
-### track -- 엔티티 수동 등록
+### track: 엔티티 수동 등록
 
 `buf`가 아니라 `em`으로 조회한 엔티티를 버퍼에서 추적하고 싶을 때 사용합니다.
 
@@ -278,7 +278,7 @@ UPDATE "user" SET "name" = $1 WHERE "id" = $2
 
 ## 데이터 쓰기
 
-### persist -- 인스턴스 기반 INSERT
+### persist: 인스턴스 기반 INSERT
 
 `persist()`는 새 엔티티 인스턴스를 INSERT 대기열에 추가합니다. 기본 키는 아직 없거나 `undefined`나 `null`이어야 합니다. flush가 끝나면 데이터베이스가 생성한 기본 키가 원본 객체에 다시 기록됩니다.
 
@@ -310,7 +310,7 @@ INSERT INTO "user" ("name", "email") VALUES ($1, $2) RETURNING "id"
 
 애플리케이션이 정하는 키는 다릅니다. `@PrimaryColumn()` 키나 `@PrimaryGeneratedColumn("uuid")` 엔티티에 직접 넣은 uuid는 새 인스턴스에도 이미 들어 있습니다. 버퍼가 이미 추적하는 인스턴스가 아니면 `persist()`는 이 인스턴스를 큐에 넣습니다. 그리고 flush가 그 키의 행이 있는지 확인합니다. 행이 없으면 INSERT합니다. 행이 있으면 UPDATE하고 update로 집계합니다. 이때 키가 아닌 모든 컬럼을 변경 데이터로 담은 `preUpdate`와 `postUpdate` 이벤트가 발생합니다. `preview()`는 데이터베이스를 읽지 않으므로 이런 인스턴스를 INSERT로 표시합니다.
 
-### save -- 일반 객체 INSERT
+### save: 일반 객체 INSERT
 
 엔티티 인스턴스가 필요 없는 간단한 삽입입니다.
 
@@ -324,7 +324,7 @@ INSERT INTO "user" ("name", "email") VALUES ($1, $2)
 -- parameters: ['Bob', 'bob@example.com']
 ```
 
-### remove -- 인스턴스 기반 DELETE
+### remove: 인스턴스 기반 DELETE
 
 추적 중인 엔티티를 삭제 대상으로 표시합니다.
 
@@ -341,7 +341,7 @@ DELETE FROM "user" WHERE "id" = $1
 
 `persist()`했지만 아직 flush하지 않은 엔티티를 `remove()`하면 대기 중인 INSERT를 취소하는 것으로 끝납니다. 데이터베이스에 행이 없으므로 DELETE가 필요 없습니다.
 
-### delete -- 조건 기반 DELETE
+### delete: 조건 기반 DELETE
 
 엔티티를 먼저 조회하지 않고 조건으로 삭제합니다.
 
@@ -357,7 +357,7 @@ DELETE FROM "user" WHERE "id" = $1
 
 ---
 
-## Flush -- 실행의 순간
+## Flush: 실행의 순간
 
 모든 작업은 `flush()`에서 실행됩니다. 대기열에 쌓인 insert, update, delete가 트랜잭션 하나로 실행됩니다.
 
@@ -394,7 +394,7 @@ flush는 다음 순서로 실행합니다.
 6. **Bulk UPDATE**: `updateMany()` 연산
 7. **Bulk DELETE**: `deleteMany()` 연산
 
-### 순서가 왜 중요한가요?
+### 순서가 중요한 이유
 
 User를 참조하는 외래 키가 있는 Post를 삽입한다고 해 봅시다. Post가 User보다 먼저 삽입되면 외래 키 대상이 아직 없으므로 데이터베이스가 거부합니다.
 
@@ -405,7 +405,7 @@ User를 참조하는 외래 키가 있는 Post를 삽입한다고 해 봅시다.
 
 의존성 그래프에 순환이 있으면 이를 감지하고 에러 없이 원래 순서로 넘어갑니다.
 
-### 외래 키는 관계에서 읽습니다
+### 관계에서 외래 키 값 읽기
 
 행의 `@ManyToOne` 키와 소유 측 `@OneToOne` 키는 인스턴스가 가진 값으로 기록합니다. 우선순위는 `save()`와 같습니다.
 
@@ -425,7 +425,7 @@ await buf.flush();         // author INSERT 후 UPDATE post SET author_id = <새
 
 관련 인스턴스에 아직 키가 없으면 flush가 그 행을 INSERT한 뒤에 키를 기록합니다. 대상이 행보다 늦게 큐에 들어간 자기 참조도 마찬가지입니다. flush가 그 인스턴스를 끝내 기록하지 않으면 행을 키 없이 저장하지 않습니다. 대신 `flush()`가 `InvalidQueryError`를 던지고 롤백합니다. 관련 인스턴스를 `persist()`하거나 먼저 저장하세요.
 
-### Atomicity -- 전부 성공하거나, 전부 실패하거나
+### 원자성: 전부 성공하거나 전부 실패하거나
 
 하나라도 실패하면 전체 트랜잭션이 롤백됩니다.
 
@@ -439,7 +439,7 @@ try {
 }
 ```
 
-### preview -- Dry run
+### preview: 드라이 런
 
 flush하기 전에 데이터베이스를 건드리지 않고 어떤 연산이 실행될지 미리 볼 수 있습니다.
 
@@ -465,7 +465,7 @@ const preview = buf.preview();
 - **데이터베이스가 생성하는 기본 키 값.** 아직 생성되지 않은 기본 키에서 파생되는 외래 키 값과 피벗 값은 항목 데이터에 없습니다. 연산 자체는 나열됩니다. 소유 측 `@OneToOne`의 외래 키 보정 UPDATE도 나열되지 않습니다.
 - **dirty로 추적된 부모의 자식 cascade 재저장.** 이 작업은 나열되지 않습니다.
 
-### size -- 대기열 상태
+### size: 대기열 상태
 
 대기 중인 작업량을 확인합니다.
 
@@ -480,7 +480,7 @@ const s = buf.size();
 
 `cascade: true`이면 버퍼는 엔티티 관계를 따라 연산을 자동으로 전파합니다(기본값). 부모를 persist하면 자식도 자동으로 insert됩니다. 부모를 remove하면 자식도 자동으로 delete됩니다.
 
-### Cascade persist -- "부모와 자식을 한 번에 INSERT"
+### Cascade persist: "부모와 자식을 한 번에 INSERT"
 
 부모 엔티티에 `cascade: ["insert"]`가 설정된 `@OneToMany` 자식이 있으면 부모를 persist할 때 자식도 함께 insert됩니다.
 
@@ -516,7 +516,7 @@ COMMIT;
 
 추적 중인 부모가 dirty 상태로 flush되면 cascade는 로드된 관계를 순회합니다. 하지만 실제로 변경된 자식만 씁니다. 변경되지 않은 자식은 완전히 건너뜁니다. UPDATE도, 생명주기 이벤트도, `@UpdateTimestamp` 갱신도 없습니다. dirty 자식은 정확히 한 번만 기록됩니다. 그리고 `preUpdate`와 `postUpdate` flush 이벤트도 한 쌍만 발생합니다. flush 결과에서 이런 cascade UPDATE는 `updates`로 집계됩니다. 새 자식의 cascade INSERT는 여전히 `inserts`로 집계됩니다.
 
-### Cascade delete -- "부모와 자식을 한 번에 DELETE"
+### Cascade delete: "부모와 자식을 한 번에 DELETE"
 
 `cascade: ["delete"]`가 설정되어 있으면 부모를 remove할 때 자식도 함께 삭제됩니다.
 

@@ -111,7 +111,7 @@ main().catch((e) => {
 });
 ```
 
-#### register()가 내부에서 하는 일
+#### register()의 내부 동작
 
 순서가 중요합니다. 어느 단계에서 실패하든 서버가 listen을 시작하기 전에 프로세스를 멈춰야 하기 때문입니다.
 
@@ -172,7 +172,7 @@ usersRouter.post("/", async (req, res) => {
 });
 ```
 
-## 환경 변수로 설정 구성하기
+## 환경 변수 기반 설정
 
 ORM은 `process.env`를 읽지 않고 `DATABASE_URL` 파싱도 제공하지 않습니다. 옵션 객체는 직접 만들어야 합니다. 대신 `validateDatabaseClientOptions()`를 제공합니다. 이 함수를 쓰면 부팅할 때 읽기 쉬운 메시지로 바로 실패합니다. 그래서 `NaN` 포트가 몇 분 뒤에 소켓 에러로 드러나는 일이 없습니다.
 
@@ -336,7 +336,7 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
 ```
 
-#### propagateShutdown()이 내부에서 하는 일
+#### propagateShutdown()의 내부 동작
 
 다음 순서로 진행합니다.
 
@@ -347,7 +347,7 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 5. 레플리카 헬스 체크를 멈춥니다.
 6. `closeConnections: true`를 넘겼을 때만 연결 풀을 닫습니다.
 
-::: warning 기본값 두 개를 조심하세요
+::: warning 주의할 기본값 두 가지
 **`closeConnections`의 기본값은 `false`입니다.** 이 옵션 없이 호출하면 내부의 `mysql2`, `pg` 풀이 닫히지 않습니다. 그러면 열린 소켓이 이벤트 루프를 계속 붙잡습니다. 그래서 프로세스가 종료되지 않고 멈춰 있습니다. Express 시그널 핸들러에서는 거의 항상 `{ closeConnections: true }`가 필요합니다.
 
 **`gracefulTimeoutMs`는 쿼리 추적이 켜져 있지 않으면 아무 효과가 없습니다.** 이 대기는 `QueryTracker`가 구현합니다. 그런데 트래커는 `logging`이 `nPlusOne`이나 `slowQueryMs`를 포함한 객체일 때만 생성됩니다. `logging: true`이거나 `logging`이 아예 없으면 `propagateShutdown({ gracefulTimeoutMs: 5000 })`은 즉시 반환합니다. 위 예제처럼 HTTP 서버를 먼저 닫는 편이 설정과 상관없이 확실합니다.
@@ -383,7 +383,7 @@ app.get("/readyz", async (_req, res) => {
 
 `runTestSql()`은 풀의 자체 쿼리 경로로 `SELECT 1 + 1` 하나만 보냅니다. 트랜잭션도 없고 명시적인 연결 체크아웃도 없습니다. `hasConnection()` 가드는 꼭 필요합니다. 풀이 아예 없으면 `runTestSql()`이 그냥 성공으로 끝나기 때문입니다. 그래서 가드가 없으면 한 번도 연결한 적 없는 프로세스가 스스로를 정상이라고 보고합니다.
 
-::: tip 프로브로 em.query("SELECT 1")을 쓰지 마세요
+::: tip 프로브에는 em.query("SELECT 1")를 쓰지 마세요
 `em.query()`는 트랜잭션 경로를 전부 거칩니다. 연결 체크아웃, `BEGIN`, 실제 SQL 문, `COMMIT`, 반납까지 왕복이 네 번쯤 됩니다. 반면 `runTestSql()`은 한 번이면 끝납니다. 동작이 틀린 것은 아닙니다. 하지만 몇 초마다 실행하는 프로브로는 과합니다. 커넥터 인터페이스에서 `runTestSql()`의 반환 타입은 `void`로 선언돼 있습니다. 하지만 모든 드라이버가 async로 구현하므로 `await`하는 것이 맞습니다.
 :::
 
@@ -570,7 +570,7 @@ const rows = await em.query<{ authorId: number; total: number }>`
 const rows = await em.query<Post>("SELECT * FROM posts WHERE author_id = $1", [authorId]);
 ```
 
-::: warning Raw SQL은 테넌트 스코프를 우회합니다
+::: warning Raw SQL은 테넌트 범위를 우회합니다
 멀티테넌트 앱에서 `em.query()`는 테넌트 조건을 주입하지 않습니다. ORM은 이런 호출을 감지하면 경고를 남깁니다. PostgreSQL 스키마 전략에서는 연결 수준의 `search_path`가 격리를 강제하므로 격리가 그대로 유지됩니다. 하지만 테넌트 컬럼 전략에서는 raw SQL이 테넌트 경계를 넘어 조회합니다. 이 경우에는 조건을 직접 넣거나 쿼리 빌더를 쓰세요.
 :::
 
@@ -653,13 +653,13 @@ export class TransferService {
 
 데코레이터가 받는 옵션은 `isolationLevel`, `propagation`, `connectionName`이 전부입니다. 데드락 재시도는 `em.transaction()`에만 있습니다. 그래서 재시도가 필요하면 콜백 형태를 쓰세요.
 
-::: warning @Transactional()은 항상 기본 커넥션을 엽니다
+::: warning @Transactional()은 항상 기본 연결을 엽니다
 데코레이터는 내부에서 호출하는 `em`이 아니라 전역 레지스트리에서 연결을 찾습니다. 다른 연결에 묶인 매니저는 그 트랜잭션에 합류하지 않습니다. 그 매니저의 SQL 문은 자기 연결에서 실행하고 쓰기마다 각자의 트랜잭션으로 커밋합니다. 매니저가 이름 있는 연결에 묶여 있다면 `@Transactional({ connectionName: "analytics" })`처럼 연결을 명시하세요. 아니면 매니저 자신의 연결을 여는 `em.transaction(cb)`를 쓰세요. 자세한 내용은 [여러 연결에 걸친 트랜잭션](./transactions.md#transactions-on-more-than-one-connection)에 있습니다.
 
 그리고 `propagation: NESTED`는 감싸는 트랜잭션이 없으면 평범한 트랜잭션으로 바뀝니다. 중첩할 대상이 없으므로 세이브포인트가 아무것도 보호하지 못합니다.
 :::
 
-### 요청 전체를 하나의 트랜잭션으로 묶어도 될까
+### 요청 단위 트랜잭션
 
 모든 요청을 `em.transaction()`으로 감싸는 미들웨어를 두면 핸들러가 트랜잭션을 신경 쓰지 않아도 될 것처럼 보입니다. 하지만 일반적인 용도로는 권장하지 않습니다. 요청이 끝날 때까지 풀의 연결을 붙잡고 있기 때문입니다. 여기에는 템플릿 렌더링, 외부 HTTP 호출, 느린 클라이언트를 기다리는 시간이 모두 포함됩니다. 부하가 걸릴 때 풀을 고갈시키는 가장 빠른 방법입니다. 트랜잭션은 요청 전체가 아니라 원자성이 필요한 쓰기 구간에만 여세요.
 
@@ -762,7 +762,7 @@ await em.find(Post, { where: { authorId: 7 }, onlyDeleted: true });   // 삭제�
 
 ---
 
-## 커넥션 풀링 {#connection-pooling}
+## 연결 풀링 {#connection-pooling}
 
 ```typescript
 pool: {
@@ -786,7 +786,7 @@ pool: {
 `pool.leakDetectionThresholdMs` 옵션은 선언되어 있고 `ConnectionLeakDetector` 클래스도 export되어 있습니다. 하지만 ORM 내부에 이 둘을 잇는 코드가 없습니다. 그래서 지금은 값을 설정해도 효과가 없습니다. 연결 누수를 찾으려면 느린 쿼리 로깅과 데이터베이스 쪽 풀 지표를 사용하세요.
 :::
 
-## 로깅, 슬로우 쿼리, N+1 감지
+## 로깅, 느린 쿼리, N+1 감지
 
 ```typescript
 logging: {
@@ -833,7 +833,7 @@ for (const p of posts) p.author = await em.findOne(User, { where: { id: p.author
 const posts = await em.find(Post, { relations: ["author"] });
 ```
 
-## 읽기 리플리카
+## 읽기 레플리카
 
 ```typescript
 replication: {
@@ -854,7 +854,7 @@ await em.findOne(User, { where: { id }, useMaster: true });
 
 `useMaster`는 `findWithPage`와 `findWithCursor` 옵션에도 있습니다.
 
-::: tip 리플리카마다 풀 하나
+::: tip 레플리카마다 풀 하나
 레플리카마다 연결 풀이 하나씩 생깁니다. 그 레플리카로 가는 첫 읽기가 풀을 엽니다. 이후 읽기는 모두 그 풀을 함께 씁니다. 그리고 `propagateShutdown()`이 풀을 닫습니다. 이름 있는 연결에서도 리플리케이션이 동작합니다. 이때 레플리카는 그 연결의 옵션을 받습니다. 다운된 레플리카는 [헬스 체크](./configuration.md#replica-health-checks)가 로테이션에서 뺄 때까지 자기에게 온 읽기를 계속 실패시킵니다. 그래서 프로덕션에서는 `healthCheck`를 설정하세요.
 :::
 
@@ -915,7 +915,7 @@ npx stingerloom migrate:rollback
 
 `migrations`는 import한 마이그레이션 클래스의 배열이어야 합니다. glob 패턴은 지원하지 않습니다. 배열이 아닌 값을 넣으면 명확한 설정 에러로 실패합니다. `connection` 래퍼 없는 평면 `DatabaseClientOptions` 객체도 그대로 받습니다.
 
-::: tip 마이그레이션은 부팅이 아니라 배포 단계에서 실행하세요
+::: tip 마이그레이션은 부팅이 아니라 배포 단계에서 실행합니다
 `MigrationRunner.runAll()`은 애플리케이션 코드에서 호출해도 안전합니다. 데이터베이스 어드바이저리 잠금을 사용하므로 인스턴스 여러 개가 동시에 시작해도 중복 적용되지 않습니다. 다만 프로세스 전역 `DatabaseClient` 싱글턴을 쓰고 끝나면 그 싱글턴을 닫습니다. 그래서 실행 중인 앱 매니저의 연결까지 함께 끊깁니다. 마이그레이션은 별도 명령으로 실행하세요. 쿠버네티스 init 컨테이너, 릴리스 단계, CI의 `npm run migrate`가 그 예입니다. 그리고 앱은 스키마가 최신이라고 가정하게 하세요.
 :::
 
@@ -1012,7 +1012,7 @@ app.get("/admin/report", requireAdmin, (req, res, next) => {
 - 테넌트 프로비저닝(`PostgresTenantMigrationRunner`)은 PostgreSQL 전용입니다. MySQL과 SQLite 러너는 에러를 던집니다.
 - 요청 단위 컨텍스트 구성을 대규모로 운영하는 방법과 수백 개 테넌트가 연결 풀을 공유하는 전략은 [운영 가이드](./production-guide.md)의 「HTTP 요청별 테넌트 컨텍스트 설정」에 있습니다.
 
-## 라이프사이클 훅과 서브스크라이버
+## 생명주기 훅과 구독자
 
 감사 로그, 캐시 무효화, 아웃박스 행처럼 쓰기 전반에 걸치는 관심사는 구독자로 분리하세요. 그러면 모든 서비스에서 그 로직이 빠집니다. 구독자는 DI 컨테이너 없이 평범한 `EntityManager`에 등록하면 됩니다.
 
@@ -1166,7 +1166,7 @@ it("creates a user", async () => {
 | 끊긴 연결 | `onConnectionError`를 메트릭이나 로거에 연결 |
 | 비밀 정보 | `suggestion`과 스택 트레이스는 로그에만, 클라이언트 응답에는 절대 포함하지 않기 |
 
-## Next Steps
+## 다음 단계
 
 - [설정](./configuration.md): 연결 옵션 전체
 - [트랜잭션](./transactions.md): 격리 수준, 세이브포인트, 전파 방식

@@ -1,4 +1,4 @@
-# Query Builder — JOIN
+# 쿼리 빌더: JOIN
 
 `find()`로도 관계를 따라 즉시 로딩할 수 있습니다. 다만 `@ManyToOne` / `@OneToMany` / `@OneToOne`으로 선언해 둔 경로만 따라갈 수 있습니다.
 
@@ -8,7 +8,7 @@
 
 > 참고: 이 페이지에서 쓰는 컬럼 참조 헬퍼는 `alias()`와 `qAlias()`입니다. 두 헬퍼의 전체 설명은 [QueryDSL 표현식](./query-builder-querydsl.md)에 있습니다.
 
-## `alias()` — 타입 안전한 컬럼 참조
+## `alias()`: 타입 안전한 컬럼 참조
 
 테이블을 조인하면 `"p.authorId"`, `"u.firstName"`처럼 여러 엔티티의 컬럼을 함께 참조하게 됩니다. 이런 문자열은 자동완성이 되지 않습니다. `alias()`가 이 문제를 해결합니다.
 
@@ -27,7 +27,7 @@ u.col("typo");       // ✗ 컴파일 에러: "typo"는 User의 키가 아님
 
 `alias()` 참조는 `where()`, `selectRaw()`, `addOrderBy()`, `whereIn()`, `JoinOnBuilder.on()` 등 어디서든 쓸 수 있습니다.
 
-## `qAlias()` — 연산자까지 타입드
+## `qAlias()`: 연산자까지 타입 안전
 
 더 직관적인 API가 필요하면 `qAlias()`를 쓰세요. `qAlias()`로는 엔티티 속성에 바로 접근하고 그 뒤에 조건 메서드를 이어 붙일 수 있습니다. `qAlias()`는 코드 생성 단계 없이 런타임 프록시로 동작합니다.
 
@@ -122,7 +122,7 @@ qb.leftJoin(User, "u", (join) =>
 );
 ```
 
-### Null 및 IN 조건 — `onNull()`, `onNotNull()`, `onIn()`
+### Null 및 IN 조건: `onNull()`, `onNotNull()`, `onIn()`
 
 아래 `JoinOnBuilder` 메서드 세 개를 쓰면 빌더를 벗어나지 않고 JOIN 범위를 더 좁힐 수 있습니다.
 
@@ -155,7 +155,7 @@ const orphaned = await em
   .getMany();
 ```
 
-### 범위 포함 ON — `onBetween()`
+### 범위 포함 ON: `onBetween()`
 
 중첩 집합(nested set)이나 인터벌 트리 같은 범위 포함(range containment) 셀프 조인에는 `onBetween(ref, lowRef, highRef)`를 씁니다. `onBetween()`은 컬럼 값이 다른 컬럼 참조 두 개 사이에 있는지 비교합니다. `onValBetween(ref, low, high)`는 리터럴 경계값을 받아 파라미터로 바인딩합니다.
 
@@ -205,9 +205,9 @@ const users = await em
 
 관계 조인은 조인한 엔티티의 소프트 삭제 필터를 ON 절에 함께 붙입니다. `User`에 `@DeletedAt`이 있으면 `leftJoinRelation("author", "u")`는 `ON p.author_id = u.id AND u.deleted_at IS NULL`로 렌더링됩니다. 그래서 소프트 삭제된 작성자는 LEFT JOIN에서는 `null`로 하이드레이트되고 INNER JOIN에서는 게시물째 결과에서 빠집니다. `find(Post, { relations: ["author"] })`와 같은 결과입니다. `withDeleted()`는 루트 필터와 함께 이 필터도 걷어냅니다. 명시적인 `leftJoin(User, "u", on => ...)`에는 이 필터를 붙이지 않습니다. 이때 ON 절은 작성한 그대로 실행됩니다. 그래서 소프트 삭제된 행을 감사하는 쿼리(`onNotNull("u.deletedAt")`)도 그대로 쓸 수 있습니다.
 
-> `@ManyToMany`는 `leftJoinRelation` / `innerJoinRelation`의 대상이 아닙니다. ORM은 중간 테이블을 자동으로 두 번 조인하지 않습니다. 그래서 `@ManyToMany` 관계를 조인하려면 중간 테이블을 문자열 조인으로 직접 잇거나 서브쿼리로 풀어 쓰세요. 같은 이유로 `whereHas`도 `@ManyToMany`를 지원하지 않습니다. 자세한 내용은 [편의 패턴 → `whereHas`](./query-builder-patterns.md#wherehas-wherenothas-—-관계-존재-필터)를 참고하세요.
+> `@ManyToMany`는 `leftJoinRelation` / `innerJoinRelation`의 대상이 아닙니다. ORM은 중간 테이블을 자동으로 두 번 조인하지 않습니다. 그래서 `@ManyToMany` 관계를 조인하려면 중간 테이블을 문자열 조인으로 직접 잇거나 서브쿼리로 풀어 쓰세요. 같은 이유로 `whereHas`도 `@ManyToMany`를 지원하지 않습니다. 자세한 내용은 [편의 패턴 → `whereHas`](./query-builder-patterns.md#wherehas-wherenothas-관계-존재-필터)를 참고하세요.
 
-## JoinAndSelect — 조인과 SELECT를 한 번에
+## JoinAndSelect: 조인과 SELECT를 한 번에
 
 조인한 엔티티의 모든 컬럼을 결과에 포함하려면 `*AndSelect` 변형을 쓰세요. 조인한 다음 컬럼을 일일이 SELECT하는 작업을 호출 한 번으로 줄여 줍니다. 그리고 엔티티 조회에서는 조인한 컬럼이 관계 속성으로 하이드레이트됩니다.
 
@@ -233,7 +233,7 @@ const posts = await em
 
 조인한 컬럼은 모두 `alias_column` 형태의 AS 별칭으로 선택됩니다(`` `u`.`id` AS `u_id` ``). 동시에 루트의 `alias.*`도 `alias_column` 형태의 별칭을 단 명시적 컬럼(`p_id`, `p_title`, …)으로 펼쳐집니다. 모든 컬럼에 고유한 접두사가 붙습니다. 그래서 조인한 컬럼이 같은 이름의 루트 컬럼을 덮어쓰는 일은 원천적으로 일어나지 않습니다. 양쪽 테이블에 모두 `id`가 있어도 문제없습니다.
 
-### getMany() / getOne() — 관계 하이드레이션
+### getMany() / getOne(): 관계 하이드레이트
 
 엔티티 조회는 접두사가 붙은 컬럼을 관계 속성으로 다시 조립합니다.
 
@@ -249,7 +249,7 @@ const users = await em
 // User는 조인된 행마다 하나가 아니라 행 그룹마다 하나씩 생깁니다
 ```
 
-### getRawMany() — 접두사 키
+### getRawMany(): 접두사 키
 
 raw 조회는 접두사를 그대로 드러냅니다. 조인한 컬럼은 `u_id`, `u_username`, … 키로 들어옵니다. 루트 `*`가 펼쳐졌다면 루트 컬럼도 `p_id`, `p_title`, … 키로 들어옵니다.
 
@@ -298,7 +298,7 @@ const results = await em
   .getRawMany();
 ```
 
-## 실전 — B2B 매출 리포트 (3단 조인 + 집계)
+## 실전: B2B 매출 리포트 (3단 조인 + 집계)
 
 조인을 두 개 이상 쓰는 전형적인 경우는 리포트용 쿼리입니다. 예를 들어 "2026년 이후 주문 가운데 총 주문 수량이 50개를 넘는 고객을 수량 내림차순으로" 조회한다고 해 봅시다. 이 쿼리에는 조인과 집계가 함께 들어갑니다.
 

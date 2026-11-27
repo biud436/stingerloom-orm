@@ -87,7 +87,7 @@ SQLite는 모든 데이터를 파일 하나에 저장합니다. 연결할 서버
 
 ## synchronize 옵션
 
-### 이 옵션이 존재하는 이유
+### 이 옵션이 필요한 이유
 
 엔티티에 새 `@Column()`을 추가하거나 새 엔티티 클래스를 만들어도 데이터베이스는 이 변경을 자동으로 알지 못합니다. 누군가 `ALTER TABLE`이나 `CREATE TABLE`을 실행해야 합니다. `synchronize` 옵션은 개발 중에 이 과정을 자동화합니다. 그래서 엔티티를 바꿀 때마다 DDL을 직접 작성하지 않아도 됩니다.
 
@@ -179,7 +179,7 @@ INFO [SchemaRegistrar] [dry-run] Would ALTER TYPE post_status_enum ADD VALUE IF 
 
 MySQL과 SQLite에는 이 과정이 없습니다. MySQL은 컬럼 자체의 `ENUM(...)` 타입에 값을 담고 SQLite는 `TEXT`로 저장하기 때문입니다. 다만 MySQL과 MariaDB에서 diff는 타입 이름만 비교하고 그 안의 값 목록은 보지 않습니다. 그래서 기존 컬럼의 값 목록을 바꿔도 동기화되지 않습니다. 값 목록은 마이그레이션으로 바꾸세요.
 
-### synchronize가 손대지 않는 것
+### synchronize가 적용하지 않는 변경
 
 synchronize는 이미 있는 테이블의 컬럼을 비교합니다. 그리고 엔티티에 새로 생긴 인덱스와 외래 키를 만듭니다. 하지만 다음 항목은 비교하지 않으므로 수정해도 적용되지 않습니다. 컬럼 `default`, `onDelete`와 `onUpdate`, 제거하거나 다시 정의한 인덱스, `@ComputedColumn` 표현식입니다. 이미 있던 테이블이 있으면 부팅할 때마다 엔티티가 쓰는 항목을 한 줄로 알려 줍니다.
 
@@ -187,13 +187,13 @@ synchronize는 이미 있는 테이블의 컬럼을 비교합니다. 그리고 �
 INFO [SchemaRegistrar] [sync] synchronize does not apply these to existing tables: changed column defaults, removed or redefined indexes. Write a migration for them (see docs/migrations.md#what-the-schema-diff-does-not-compare).
 ```
 
-항목별로 `migrate:generate`가 하는 일까지 담은 전체 표는 [Schema Diff가 비교하지 않는 것](./migrations.md#schema-diff가-비교하지-않는-것)에 있습니다.
+항목별로 `migrate:generate`가 하는 일까지 담은 전체 표는 [Schema Diff가 비교하지 않는 것](./migrations.md#schema-diff가-비교하지-않는-항목)에 있습니다.
 
 ---
 
-## 커넥션 풀링
+## 연결 풀링
 
-### 커넥션 풀링이 중요한 이유
+### 연결 풀링이 중요한 이유
 
 새 데이터베이스 연결을 여는 비용은 큽니다. 연결마다 TCP 핸드셰이크, 인증, SSL 협상이 필요합니다. 대부분의 시스템에서 30~80밀리초가 걸립니다. 작아 보이지만 초당 요청 200개를 처리하는 API 서버를 생각해 보세요. 모든 요청이 연결을 열고 닫으면 연결 오버헤드에만 초당 6~16초를 씁니다. 물리적으로 불가능한 일입니다.
 
@@ -420,7 +420,7 @@ const users = await em.find(User, {
 });
 ```
 
-### 데이터베이스 수준에서 일어나는 일
+### 데이터베이스 수준의 동작
 
 Stingerloom은 JavaScript `setTimeout`으로 쿼리를 끊지 않습니다. 그렇게 하면 클라이언트 쪽 대기만 취소됩니다. 쿼리는 서버에서 계속 실행되며 DB 리소스를 낭비합니다. 대신 DB 자체의 타임아웃 메커니즘을 씁니다.
 
@@ -437,9 +437,9 @@ MySQL의 `max_execution_time`은 밀리초 단위이고 SELECT 문에 적용됩�
 
 ---
 
-## Read Replica (읽기/쓰기 분리)
+## 읽기 레플리카 (읽기/쓰기 분리)
 
-### Read Replica가 중요한 이유
+### 읽기 레플리카가 중요한 이유
 
 대부분의 앱에서는 읽기가 쓰기보다 훨씬 많습니다. 일반적인 웹 앱은 쿼리의 80~90%가 SELECT입니다. INSERT, UPDATE, DELETE는 10~20%뿐입니다. 이 모든 쿼리를 DB 서버 한 대가 처리하면 트래픽이 늘 때 병목이 됩니다.
 
@@ -643,7 +643,7 @@ export class AnalyticsService {
 
 ---
 
-## Naming Strategy
+## 네이밍 전략
 
 `namingStrategy` 옵션은 TypeScript 클래스 이름과 속성 이름에서 DB 식별자를 만드는 방식을 제어합니다. DB 식별자는 테이블 이름, 컬럼 이름, 외래 키 이름, 인덱스 이름입니다. 전략을 지정하지 않으면 ORM은 `DefaultNamingStrategy`를 씁니다. 이 전략은 컬럼 이름을 원래 그대로 두고 외래 키 이름은 SHA1 해시로 만듭니다.
 

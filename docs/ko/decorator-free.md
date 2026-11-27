@@ -2,7 +2,7 @@
 
 Stingerloom의 모든 기능은 데코레이터 없이 사용할 수 있습니다. 아래에는 데코레이터마다 데코레이터를 쓰지 않는 대안과 실행 가능한 예제가 있습니다. 데코레이터로*만* 쓸 수 있는 기능을 발견했다면 버그이므로 이슈로 등록해 주세요.
 
-## 왜 필요한가
+## 필요한 이유
 
 TypeScript 데코레이터는 `emitDecoratorMetadata` 컴파일러 옵션에 의존합니다. esbuild, SWC, TypeScript 5의 *표준* 데코레이터, Vite 기본 트랜스포머 같은 일부 툴체인은 이 메타데이터를 생성하지 않습니다. 그래서 데코레이터 기반 엔티티는 경고 없이 컬럼 타입을 잃습니다. 툴링 문제와 별개로 많은 팀은 도메인 클래스에 프레임워크 어노테이션을 붙이지 않는 "순수 클래스(plain class)" 철학을 선호합니다.
 
@@ -14,7 +14,7 @@ Stingerloom은 데코레이터와 완전히 같은 메타데이터를 등록하�
 | 작업 단위를 트랜잭션으로 감싸기 | `@Transactional` | [`em.transaction()`](#transactional-없이-트랜잭션) |
 | NestJS 의존성 주입 | `@InjectRepository`, `@InjectEntityManager` | [순수 프로바이더 / `em.getRepository()`](#데코레이터-없이-nestjs-주입) |
 
-::: tip `defineEntity`로 시작하세요
+::: tip 새 코드는 `defineEntity`로 시작합니다
 새 코드에는 플루언트 빌더 API를 쓰세요. 자세한 내용은 [엔티티 정의하기](./define-entity.md)에 있습니다. 이 API를 쓰면 엔티티 타입이 스키마에서 추론됩니다(`InferEntity`). 그래서 클래스도 별도의 인터페이스도 작성하지 않아도 됩니다. 아래의 `EntitySchema` 형식은 이 빌더의 기반이 되는 더 낮은 수준의 객체 리터럴 API입니다. 모든 것을 직접 제어해야 하거나 데코레이터를 일대일로 옮길 때 사용하세요.
 :::
 

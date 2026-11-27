@@ -39,7 +39,7 @@ const top = await em
 
 `find`, `findOne`, `findBy`, `findOneBy`, `findOneOrFail`, `findAndCount`, `findWithPage`, `findWithCursor`는 `cache` 옵션을 받습니다. `SelectQueryBuilder`에서는 `.cache()`로 켭니다. `.cache()`는 `getMany`, `getOne`, `getRawMany`, `getPartialMany`, `getCount`, 집계 스칼라, `exists`에 적용됩니다.
 
-## 정확히 무엇이 캐시되는가
+## 캐시 대상
 
 캐시에는 엔티티 인스턴스가 아니라 원시 행 집합을 저장합니다. 캐시 히트가 나면 저장된 행을 평소의 하이드레이트 파이프라인에 다시 통과시킵니다. 그래서 히트든 미스든 호출할 때마다 새 엔티티 인스턴스를 반환합니다. 컬럼 트랜스포머와 `afterLoad` 구독자도 실행되고 지연 로딩 프록시도 설치됩니다. 데이터베이스를 읽었을 때와 정확히 같습니다. 반환된 엔티티를 수정해도 캐시는 오염되지 않습니다.
 
@@ -114,7 +114,7 @@ await em.register({
 
 `cache: false`는 kill switch입니다. 쿼리마다 넘긴 `cache` 요청을 모두 무시합니다. 호출부를 고치지 않고 테스트 환경에서 캐시를 끌 때 유용합니다.
 
-### 커스텀 스토어
+### 커스텀 저장소
 
 기본 저장소는 엔트리마다 TTL을 두는 인메모리 LRU입니다. 이 저장소는 그 `EntityManager`만 사용합니다. Redis처럼 여러 프로세스가 공유하는 캐시를 쓰려면 `QueryCacheStore`를 구현하세요.
 
@@ -152,7 +152,7 @@ await em.register({
 
 무효화 범위는 일부러 더 넓게 잡았습니다. 쓰기는 그 연결의 모든 테넌트에서 영향받는 테이블을 무효화합니다. 그래서 테넌트 A의 쓰기가 같은 테이블을 읽은 테넌트 B의 엔트리까지 삭제합니다. 필요 이상으로 무효화하지만 항상 안전한 방향입니다.
 
-## 언제 쓰면 좋은가
+## 사용 시점
 
 캐시가 잘 맞는 쿼리는 아래와 같습니다.
 

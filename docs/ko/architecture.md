@@ -1,4 +1,4 @@
-# Architecture
+# 아키텍처
 
 `em.find()`나 `em.save()`를 쓰면서 내부에서 무슨 일이 일어나는지 궁금했다면 Stingerloom ORM의 내부 구조부터 살펴보세요. 그 전에 [Getting Started](./getting-started.md) 가이드를 읽기를 권합니다.
 
@@ -12,13 +12,13 @@ const users = await em.find(User, { where: { isActive: true }, relations: ["post
 
 ORM 내부에서는 어떤 일이 일어날까요?
 
-### Step 1: 엔티티 정의 조회
+### 1단계: 엔티티 정의 조회
 
 애플리케이션이 시작될 때 `User` 클래스의 `@Entity()`와 `@Column()` 데코레이터는 테이블 이름, 컬럼 목록, 관계 정의 같은 메타데이터를 메타데이터 저장소에 등록했습니다. 이제 ORM은 그 메타데이터를 다시 읽어야 합니다.
 
 이 조회는 `RelationMetadataResolver` 모듈이 담당합니다. 이 모듈은 "`User`는 어느 테이블에 매핑되는가?", "ManyToOne 관계는 무엇인가?" 같은 질문에 답합니다.
 
-### Step 2: SQL 빌드
+### 2단계: SQL 빌드
 
 쿼리 빌더는 메타데이터와 `FindOption`을 받아 파라미터화된 SQL 쿼리를 조립합니다. Stingerloom에는 쿼리 빌더가 두 가지 있습니다.
 
@@ -38,7 +38,7 @@ SELECT "id", "name", "email" FROM "user" WHERE "isActive" = $1
 
 애플리케이션이 멀티테넌트 컨텍스트에서 실행 중이라면 `TenantQueryStrategy`가 테이블 이름을 바꿀 수 있습니다. `schema_qualified` 전략에서는 `"user"`가 `"acme_corp"."user"`가 됩니다. 기본 전략인 `search_path`에서는 테이블 이름을 그대로 둡니다. 대신 ORM이 트랜잭션 안에서 `search_path`를 설정합니다.
 
-### Step 3: 실행 방식 결정
+### 3단계: 실행 방식 결정
 
 모든 쿼리에 트랜잭션이 필요한 것은 아닙니다. EntityManager는 다음 기준으로 판단합니다.
 
@@ -51,19 +51,19 @@ SELECT "id", "name", "email" FROM "user" WHERE "isActive" = $1
 
 이 기준에 따라 테넌트 컨텍스트 없이 단순한 `em.find(User)`를 실행하면 트랜잭션을 아예 건너뜁니다. 그만큼 네트워크 라운드 트립이 여러 번 줄어듭니다.
 
-### Step 4: 결과 변환
+### 4단계: 결과 변환
 
 데이터베이스는 `{ id: 1, name: "Alice", isActive: true }` 같은 raw 행을 반환합니다. ORM은 이 행을 제대로 된 `User` 인스턴스로 만들어야 합니다.
 
 이 일은 `ResultTransformer`가 처리합니다. `ResultTransformer`는 행을 타입이 있는 객체로 역직렬화합니다. 그리고 JOIN 결과로 즉시 로딩 관계를 채웁니다. 지연 로딩 관계는 처음 접근할 때 데이터를 로드하는 프록시 객체로 감쌉니다.
 
-### Step 5: 반환
+### 5단계: 반환
 
 결과로 타입이 완전히 지정된 `User[]` 배열을 받습니다. 관계는 채워져 있고 지연 로딩에 쓸 프록시도 준비되어 있습니다.
 
 > 힌트: 쓰기 연산(`save`, `delete`, `upsert`)은 항상 트랜잭션 안에서 실행됩니다. 쓰기에는 경량 경로가 없습니다.
 
-## 왜 코드가 모듈로 분리되어 있나요
+## 코드를 모듈로 나눈 이유
 
 ORM은 데이터베이스 연결, SQL 생성, 트랜잭션 관리, 관계 로딩, DDL 생성, 멀티테넌시 처리처럼 많은 일을 합니다. 이 모든 코드가 파일 하나에 있다면 읽을 수도 테스트할 수도 없습니다.
 
@@ -82,7 +82,7 @@ Stingerloom은 이런 관심사를 `src/` 아래 디렉토리로 나눕니다. �
 
 레이어를 나누면 MySQL 관련 버그를 고칠 때 `src/dialects/mysql/`만 보면 됩니다. 새 데코레이터를 추가할 때는 `src/decorators/`와 `src/scanner/`에서 작업하면 됩니다. 이처럼 레이어가 변경 범위를 좁혀 줍니다.
 
-## EntityManager는 모놀리스가 아니에요
+## 모놀리스가 아닌 EntityManager
 
 처음 작성했을 때 EntityManager는 쿼리, 관계, cascade, 집계, 스키마 동기화를 모두 처리했습니다. 기능이 늘어나면서 EntityManager는 너무 커져 파악하기 어려워졌습니다.
 
@@ -123,7 +123,7 @@ MySQL, PostgreSQL, SQLite는 저마다 다르게 동작합니다. Stingerloom은
 
 > 힌트: 새 데이터베이스를 지원하려면 `src/dialects/` 아래 새 하위 폴더에 `ISqlDriver`를 구현하면 됩니다. 이 인터페이스는 DDL 연산, 타입 매핑, upsert 문법, 식별자 이스케이프, EXPLAIN 출력을 다룹니다.
 
-### SQL Injection 방지 방법
+### SQL 인젝션 방지 방법
 
 모든 쿼리는 두 가지 안전 규칙을 따릅니다.
 
@@ -160,7 +160,7 @@ SaaS 애플리케이션에서는 고객마다 데이터를 완전히 분리해�
 
 그 위에는 테넌트마다 자기 **테넌트 레이어**가 있습니다. ORM은 메타데이터를 읽을 때 테넌트 레이어를 먼저 확인합니다. 찾지 못하면 public 레이어로 넘어갑니다. 쓰기는 항상 테넌트 레이어에 기록됩니다(Copy-on-Write).
 
-### 왜 AsyncLocalStorage를 쓰나요?
+### AsyncLocalStorage를 쓰는 이유
 
 웹 서버에서는 같은 Node.js 프로세스 안에서 많은 요청이 동시에 실행됩니다. 현재 테넌트를 전역 변수에 저장하면 테넌트가 "acme"인 Request A와 테넌트가 "globex"인 Request B가 서로의 값을 덮어씁니다.
 
@@ -211,7 +211,7 @@ async transferFunds(fromId: number, toId: number, amount: number) {
 
 데드락은 두 트랜잭션이 상대의 잠금을 서로 기다리는 상황입니다. 트랜잭션이 데드락에 걸리면 데이터베이스가 둘 중 하나를 종료합니다. `TransactionOptions`에서 `retryOnDeadlock: true`를 설정하면 ORM이 데드락 에러를 잡아서 콜백 전체를 다시 실행합니다. 전체 가이드는 [Transactions](./transactions.md)를 참고하세요.
 
-## Schema Sync와 Migrations
+## 스키마 동기화와 마이그레이션
 
 `em.register()`를 호출하면 `SchemaRegistrar`가 엔티티 정의를 실제 데이터베이스와 비교합니다. 그리고 설정에 따라 스키마를 갱신합니다.
 
@@ -226,7 +226,7 @@ async transferFunds(fromId: number, toId: number, amount: number) {
 
 프로덕션에서는 `SchemaDiff`가 실제 DB 스키마를 엔티티 메타데이터와 비교해서 마이그레이션 파일을 생성합니다. 마이그레이션을 검토한 뒤 명시적으로 적용하면 됩니다. 그러면 프로덕션 데이터베이스에 적용될 변경을 완전히 제어할 수 있습니다.
 
-## NestJS Integration
+## NestJS 통합
 
 NestJS 모듈은 익숙한 `forRoot` / `forFeature` 패턴을 따릅니다.
 
@@ -247,7 +247,7 @@ StingerloomOrmModule.forFeature([Event], "analytics")     // binds to "analytics
 
 > 힌트: `connectionName`을 생략하면 기본값 `"default"`가 쓰입니다. 기존 단일 DB 코드는 바꾸지 않아도 동작합니다.
 
-## Directory Map
+## 디렉토리 구조
 
 ```
 src/
