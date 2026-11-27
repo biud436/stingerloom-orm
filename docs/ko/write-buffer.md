@@ -125,7 +125,7 @@ UPDATE "user" SET "name" = $1 WHERE "id" = $2
 -- NOTE: email and age are NOT in the SET clause — they didn't change
 ```
 
-조회한 `user`를 `em.save()`로 저장하면 인스턴스가 가진 모든 컬럼이 변경 여부와 관계없이 UPDATE에 담깁니다. `save()`는 넘겨받은 속성을 그대로 쓰기 때문입니다. 반면 변경 추적(dirty checking)은 변경된 컬럼만 보내므로 더 효율적입니다.
+조회한 `user`를 `em.save()`로 저장하면 인스턴스가 가진 모든 컬럼이 변경 여부와 관계없이 UPDATE에 담깁니다. `save()`는 넘겨받은 속성을 모두 저장하기 때문입니다.
 
 flush가 성공하면 스냅샷이 현재 값으로 갱신됩니다. 그 뒤에 다시 변경하고 flush할 수 있습니다.
 
@@ -388,7 +388,7 @@ flush는 다음 순서로 실행합니다.
 
 1. **UPDATE**: dirty로 추적된 엔티티 (부모 먼저, 자식 나중)
 2. **INSERT**: persist된 인스턴스와 대기 중인 save (부모 먼저, 자식 나중)
-3. **Collection diff**: OneToMany의 orphan removal, ManyToMany의 피벗 테이블 동기화
+3. **Collection diff**: OneToMany의 orphan removal, ManyToMany의 조인 테이블 동기화
 4. **Cascade DELETE**: 재귀적으로 수집한 자식
 5. **DELETE**: 대기 중인 remove (자식 먼저, 부모 나중)
 6. **Bulk UPDATE**: `updateMany()` 연산
@@ -455,7 +455,7 @@ const preview = buf.preview();
 
 - 항목은 실행 순서대로 나열됩니다.
 - read-only 엔티티는 제외됩니다. `DEFERRED_EXPLICIT` 변경 추적에서 dirty로 표시하지 않은 엔티티도 제외됩니다.
-- 컬렉션 변경도 포함합니다. `@OneToMany` 배열에 추가한 자식의 cascade INSERT, orphan removal DELETE, `@ManyToMany` 피벗 테이블의 INSERT와 DELETE, `persist()`한 인스턴스의 cascade 자식이 모두 들어갑니다. 다른 부모로 옮긴 자식은 orphan removal DELETE에서 제외됩니다.
+- 컬렉션 변경도 포함합니다. `@OneToMany` 배열에 추가한 자식의 cascade INSERT, orphan removal DELETE, `@ManyToMany` 조인 테이블의 INSERT와 DELETE, `persist()`한 인스턴스의 cascade 자식이 모두 들어갑니다. 다른 부모로 옮긴 자식은 orphan removal DELETE에서 제외됩니다.
 
 `preview()`는 엔티티를 절대 변경하지 않습니다.
 

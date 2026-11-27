@@ -205,7 +205,7 @@ const users = await em
 
 관계 조인은 조인한 엔티티의 소프트 삭제 필터를 ON 절에 함께 붙입니다. `User`에 `@DeletedAt`이 있으면 `leftJoinRelation("author", "u")`는 `ON p.author_id = u.id AND u.deleted_at IS NULL`로 렌더링됩니다. 그래서 소프트 삭제된 작성자는 LEFT JOIN에서는 `null`로 하이드레이트되고 INNER JOIN에서는 게시물째 결과에서 빠집니다. `find(Post, { relations: ["author"] })`와 같은 결과입니다. `withDeleted()`는 루트 필터와 함께 이 필터도 걷어냅니다. 명시적인 `leftJoin(User, "u", on => ...)`에는 이 필터를 붙이지 않습니다. 이때 ON 절은 작성한 그대로 실행됩니다. 그래서 소프트 삭제된 행을 감사하는 쿼리(`onNotNull("u.deletedAt")`)도 그대로 쓸 수 있습니다.
 
-> `@ManyToMany`는 `leftJoinRelation` / `innerJoinRelation`의 대상이 아닙니다. ORM은 중간 테이블을 자동으로 두 번 조인하지 않습니다. 그래서 `@ManyToMany` 관계를 조인하려면 중간 테이블을 문자열 조인으로 직접 잇거나 서브쿼리로 풀어 쓰세요. 같은 이유로 `whereHas`도 `@ManyToMany`를 지원하지 않습니다. 자세한 내용은 [편의 패턴 → `whereHas`](./query-builder-patterns.md#wherehas-wherenothas-관계-존재-필터)를 참고하세요.
+> `@ManyToMany`는 `leftJoinRelation` / `innerJoinRelation`의 대상이 아닙니다. ORM은 조인 테이블을 자동으로 두 번 조인하지 않습니다. 그래서 `@ManyToMany` 관계를 조인하려면 조인 테이블을 문자열 조인으로 직접 잇거나 서브쿼리로 풀어 쓰세요. 같은 이유로 `whereHas`도 `@ManyToMany`를 지원하지 않습니다. 자세한 내용은 [편의 패턴 → `whereHas`](./query-builder-patterns.md#wherehas-wherenothas-관계-존재-필터)를 참고하세요.
 
 ## JoinAndSelect: 조인과 SELECT를 한 번에
 

@@ -26,7 +26,7 @@
 | eager loading | 즉시 로딩 | eager 로딩 | 옵션 이름 `eager`는 그대로 씁니다. |
 | lazy loading | 지연 로딩 | lazy 로딩 | |
 | soft delete | 소프트 삭제 | soft delete, 논리 삭제 | |
-| primary key | 기본 키 | PK, 프라이머리 키 | 복합 기본 키도 같습니다. |
+| primary key | 기본 키 | PK, 프라이머리 키 | composite primary key는 복합 기본 키입니다. |
 | foreign key | 외래 키 | FK | |
 | unique index | 고유 인덱스 | 유니크 인덱스 | |
 | error | 에러 | 오류 | |
@@ -37,7 +37,7 @@
 | lock | 잠금 | 락 | advisory lock은 어드바이저리 잠금입니다. |
 | dialect | 다이얼렉트 | 방언 | |
 | driver | 드라이버 | | |
-| option | 옵션 | | `register()`에 넘기는 각 항목입니다. |
+| option | 옵션 | | 설정에 넘기는 항목 하나하나입니다. `register()`에 넘기는 각 항목이 그 예입니다. |
 | configuration | 설정 | 구성 | 옵션 전체를 묶어 말할 때 씁니다. |
 | callback | 콜백 | | |
 | decorator | 데코레이터 | | |
@@ -65,7 +65,7 @@
 | deadlock | 데드락 | 교착 상태 | |
 | SQL fragment | SQL 조각 | 프래그먼트 | |
 | raw SQL | raw SQL | 원시 SQL | |
-| hydrate | 하이드레이트 | 수화 | 조회한 행을 엔티티 인스턴스로 채우는 일입니다. |
+| hydrate | 하이드레이트 | 수화 | 조회한 행의 값으로 엔티티 인스턴스를 채우는 일입니다. |
 | user | 사용자 | 유저 | 애플리케이션의 최종 사용자를 말합니다. |
 | predicate | 조건 | 술어, 프레디킷 | WHERE에 들어가는 조건식입니다. |
 | named connection | 이름 있는 연결 | 명명된 연결, 네임드 커넥션 | 처음 나올 때 원어를 붙입니다. |
@@ -78,13 +78,13 @@
 | owning side | 소유 측 | 주인 쪽, 오너 사이드 | 외래 키를 가진 쪽의 관계입니다. |
 | inverse side | 역방향 측 | 반대편, 인버스 사이드 | |
 | round trip | 라운드 트립 | 왕복 | 데이터베이스와 한 번 주고받는 일입니다. |
-| hard delete | 하드 삭제 | 물리 삭제 | 소프트 삭제와 대비할 때 씁니다. |
+| hard delete | 하드 삭제 | 물리 삭제 | 소프트 삭제와 구분해야 할 때 씁니다. |
 | tenant scope | 테넌트 범위 | 테넌트 스코프 | |
 | full-text search | 전문 검색 | 풀텍스트 검색 | |
 | single-valued relation | 단일 값 관계 | | ManyToOne과 OneToOne처럼 대상이 하나인 관계입니다. |
 | placeholder | 플레이스홀더 | 자리표시자 | |
 | circuit breaker | 서킷 브레이커 | 회로 차단기 | |
-| time window | 윈도 | 윈도우, 구간 | 시간 구간을 말합니다. |
+| time window | 윈도 | 윈도우, 구간 | 일정한 길이의 시간 범위를 말합니다. |
 | runner | 러너 | 실행기 | `MigrationRunner` 같은 이름은 그대로 씁니다. |
 | query runner | 쿼리 러너 | | |
 | replication | 복제 | 레플리케이션 | 복제된 서버는 레플리카입니다. |
@@ -102,11 +102,11 @@
 | allowlist | 허용 목록 | 화이트리스트 | |
 | topological sort | 위상 정렬 | | |
 | deep clone | 깊은 복사 | 딥 클론 | |
-| dirty tracking | 변경 추적 | 더티 트래킹 | |
+| dirty tracking, dirty checking | 변경 추적 | 더티 트래킹, 더티 체킹 | |
 | set operation | 집합 연산 | | |
 | tracking table | 추적 테이블 | | 마이그레이션 실행 기록을 담는 테이블입니다. |
 | side effect | 부수 효과 | 부작용, 사이드 이펙트 | |
-| pessimistic locking, optimistic locking | 비관적 잠금, 낙관적 잠금 | 비관적 락 | |
+| pessimistic locking, optimistic locking | 비관적 잠금, 낙관적 잠금 | 비관적 락, 낙관적 락 | |
 | connection name | 연결 이름 | 커넥션 이름 | |
 | cross-cutting concern | 횡단 관심사 | | 처음 나올 때 원어를 붙입니다. |
 | phantom read | 팬텀 리드 | 유령 읽기 | 처음 나올 때 원어를 붙입니다. |
@@ -117,14 +117,14 @@
 | slow query | 느린 쿼리 | 슬로우 쿼리 | 옵션 이름 `slowQueryMs`는 그대로 씁니다. |
 | concrete subclass | 구체 서브클래스 | | |
 | copy (`clone()`의 결과) | 복사본 | 복제본 | 복제본은 레플리카와 헷갈립니다. |
-| Git repository | Git 저장소 | Git 리포지토리 | 리포지토리 패턴과 구분하려고 항상 "Git"을 붙입니다. |
+| Git repository | Git 저장소 | Git 리포지토리 | store를 가리키는 저장소와 구분하려고 항상 "Git"을 붙입니다. |
 | global listener | 전역 리스너 | global listener | |
 | created at | 생성 일시 | 생성 시각, 처음 넣은 시각 | |
 | updated at | 수정 일시 | 수정 시각, 갱신 시각 | |
 | deleted at | 삭제 일시 | 삭제 시각 | |
-| lazy proxy | 지연 로딩 프록시 | lazy proxy | 처음 나올 때 원어를 붙이고 문맥이 분명하면 "프록시"로 줄입니다. |
-| pivot table | 피벗 테이블 | pivot 테이블 | ManyToMany의 중간 테이블입니다. |
-| escape (identifier) | 이스케이프 | escape 처리 | 식별자를 따옴표로 감싸는 일입니다. |
+| lazy proxy | 지연 로딩 프록시 | lazy proxy | 처음 나올 때 원어를 붙입니다. 문맥이 분명하면 "프록시"로 줄입니다. |
+| join table | 조인 테이블 | 중간 테이블, 피벗 테이블, 정션 테이블 | ManyToMany 관계를 잇는 테이블입니다. |
+| escape (identifier) | 이스케이프 | escape 처리 | 식별자를 큰따옴표나 백틱으로 감싸는 일입니다. |
 | escape hatch | 탈출구 | 비상구 | raw SQL로 내려가는 API를 말합니다. |
 | canonical store | 기준 저장소 | canonical store | 데코레이터가 메타데이터를 처음 기록하는 저장소입니다. |
 | public layer, tenant layer | public 레이어, 테넌트 레이어 | Public layer, tenant layer | 레이어드 메타데이터의 레이어입니다. |
@@ -151,4 +151,5 @@
 | validate | 검증합니다 | |
 | load (relation) | 로드합니다 | 불러옵니다 |
 | skip | 건너뜁니다 | 스킵합니다 |
-| fire (event, hook) | 발생합니다 | 발화합니다, 트리거됩니다 |
+| fire (event) | 발생합니다 | 발화합니다, 트리거됩니다 |
+| fire (hook) | 실행됩니다 | 발생합니다, 발화합니다, 트리거됩니다 |

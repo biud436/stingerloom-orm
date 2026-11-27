@@ -385,7 +385,7 @@ App                                    PostgreSQL
  │◄── OK ───────────────────────────────── │
 ```
 
-테넌트 읽기 한 번에 연결 외에 라운드 트립이 4번 필요합니다. BEGIN, SET LOCAL, SELECT, COMMIT입니다. `SET LOCAL`은 search_path 변경이 이 트랜잭션에만 적용되도록 보장합니다. 그래서 다른 연결에는 영향을 주지 않습니다.
+테넌트 읽기 한 번에 라운드 트립이 4번 필요합니다. BEGIN, SET LOCAL, SELECT, COMMIT입니다. 여기에 연결을 얻는 과정이 더해집니다. `SET LOCAL`로 바꾼 search_path는 이 트랜잭션 안에서만 적용됩니다. 그래서 다른 연결에는 영향을 주지 않습니다.
 
 장점: PostgreSQL에서 잘 정립된 패턴입니다. pg_dump나 모니터링 같은 기존 도구가 그대로 동작합니다.
 

@@ -228,7 +228,7 @@ settings: t.json<{ theme: string }>().nullable(),
 
 PostgreSQL에서 `jsonb`는 분해한 바이너리 형식으로 저장됩니다. 쓰기는 느리지만 쿼리는 훨씬 빠릅니다. 그리고 `WHERE settings->>'theme' = 'dark'` 같은 조건에 쓸 인덱스는 `jsonb`에만 만들 수 있습니다. JSON 문서 안을 쿼리한다면 언제나 `jsonb`를 고르세요.
 
-Stingerloom은 `json`/`jsonb` 컬럼에 기본 왕복 변환을 적용합니다. 쓸 때는 문자열이 아닌 값을 드라이버에 넘기기 전에 `JSON.stringify`합니다. 읽을 때는 드라이버가 반환한 문자열을 `JSON.parse`합니다. 그래서 평범한 JS 값을 그대로 할당하면 됩니다.
+Stingerloom은 `json`/`jsonb` 컬럼에 기본 라운드 트립 변환을 적용합니다. 쓸 때는 문자열이 아닌 값을 드라이버에 넘기기 전에 `JSON.stringify`합니다. 읽을 때는 드라이버가 반환한 문자열을 `JSON.parse`합니다. 그래서 평범한 JS 값을 그대로 할당하면 됩니다.
 
 ```typescript
 await em.save(Issue, { customFields: { priority: "high", labels: ["bug"] } });

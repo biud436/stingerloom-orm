@@ -66,7 +66,7 @@ console.log(post.author.name);  // "Alice" — works directly
 | `@ManyToOne` | Promise → 단일 부모 엔티티 |
 | `@OneToMany` | Promise → 자식 엔티티 배열 |
 | `@OneToOne` | Promise → 단일 관련 엔티티 |
-| `@ManyToMany` | Promise → 관련 엔티티 배열 (피벗 테이블을 먼저 조회) |
+| `@ManyToMany` | Promise → 관련 엔티티 배열 (조인 테이블을 먼저 조회) |
 
 ### Promise 함정: 첫 번째 접근만 해당
 
@@ -633,7 +633,7 @@ try {
 | `retainAfterFlush` | `boolean` | `true` | flush 후 추적 엔티티의 스냅샷을 갱신합니다. 그래서 축적-flush 사이클을 쓸 수 있습니다 |
 | `cascade` | `boolean \| BufferCascadeOptions` | `true` | 관계 메타데이터를 따라 persist/remove/merge/detach를 전파합니다. `{ persist, merge, remove, refresh }` 객체로 지정하면 작업별로 켜고 끌 수 있습니다 |
 | `orphanRemoval` | `boolean` | `false` | 컬렉션 배열에서 제거된 `@OneToMany` 자식을 자동으로 삭제합니다 |
-| `manyToManySync` | `boolean` | `true` | 컬렉션이 바뀌면 `@ManyToMany` 피벗 테이블의 행을 자동으로 동기화합니다 |
+| `manyToManySync` | `boolean` | `true` | 컬렉션이 바뀌면 `@ManyToMany` 조인 테이블의 행을 자동으로 동기화합니다 |
 | `flushMode` | `FlushMode` | `MANUAL` | 쿼리 전 자동 flush 시점: `MANUAL`, `AUTO`, `ALWAYS` ([Flush Modes](#flush-모드) 참고) |
 | `autoFlush` | `boolean` | `false` | `FlushMode.AUTO`의 단축 옵션 |
 | `changeTracking` | `ChangeTrackingPolicy` | `DEFERRED_IMPLICIT` | 엔티티의 변경 여부를 검사하는 시점 |

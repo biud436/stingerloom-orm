@@ -10,9 +10,9 @@ EntityManager로 여러 행을 한 번에 쓰는 배치 연산, upsert, 트랜�
 
 ### insertMany()가 필요한 이유
 
-사용자 1,000명을 생성해야 한다고 생각해 보세요. `save()`를 루프에서 호출하면 `INSERT` 문을 1,000개 실행합니다. 네트워크 왕복과 커밋(commit)도 1,000번씩 일어납니다. 그래서 매우 느립니다.
+사용자 1,000명을 생성해야 한다고 생각해 보세요. `save()`를 루프에서 호출하면 `INSERT` 문을 1,000개 실행합니다. 네트워크 라운드 트립과 커밋(commit)도 1,000번씩 일어납니다. 그래서 매우 느립니다.
 
-`insertMany()`는 모든 행을 `INSERT INTO ... VALUES (...), (...), (...)` SQL 문 하나로 묶어서 보냅니다. 왕복과 파싱과 커밋은 한 번씩만 일어납니다. 실제 벤치마크에서는 행을 하나씩 삽입할 때보다 보통 10~50배 빠릅니다.
+`insertMany()`는 모든 행을 `INSERT INTO ... VALUES (...), (...), (...)` SQL 문 하나로 묶어서 보냅니다. 라운드 트립과 파싱과 커밋은 한 번씩만 일어납니다. 실제 벤치마크에서는 행을 하나씩 삽입할 때보다 보통 10~50배 빠릅니다.
 
 ```typescript
 await em.insertMany(User, [
@@ -426,11 +426,11 @@ WHERE "isActive" = $4
 -- Parameters: [false, '2026-03-22 12:00:00', '2026-03-22 12:00:00', true]
 ```
 
-SET 절에 `"updatedAt"` 컬럼이 자동으로 들어갔습니다. ORM은 일괄 갱신에서도 `@UpdateTimestamp` 컬럼을 자동으로 주입합니다.
+SET 절에 `"updatedAt"` 컬럼이 들어 있습니다. ORM은 일괄 갱신에서도 `@UpdateTimestamp` 컬럼을 자동으로 주입합니다.
 
 ### 기본으로 제외되는 소프트 삭제된 행
 
-엔티티에 `@DeletedAt` 컬럼이 있으면 `updateMany()`는 소프트 삭제되지 않은 행만 갱신합니다. `updateMany()`에 위임하는 `update()`, `increment()`, `decrement()`도 같습니다. 어느 메서드든 `find()`와 똑같이 `WHERE`에 `"deletedAt" IS NULL`을 덧붙입니다. 그래서 일괄 갱신은 소프트 삭제된 행의 데이터를 바꾸지 않습니다.
+엔티티에 `@DeletedAt` 컬럼이 있으면 `updateMany()`는 소프트 삭제되지 않은 행만 갱신합니다. `updateMany()`에 위임하는 `update()`, `increment()`, `decrement()`도 같습니다. 어느 메서드든 `find()`와 똑같이 `WHERE`에 `"deletedAt" IS NULL`을 덧붙입니다. 그래서 일괄 갱신은 소프트 삭제된 행의 데이터를 갱신하지 않습니다.
 
 소프트 삭제된 행까지 포함하려면 `withDeleted: true`를 넘깁니다.
 
@@ -590,7 +590,7 @@ await productRepo.decrement({ id: 9 }, "stock");
 2. 행이 있으면 기본 키를 넣어 `save()`로 UPDATE합니다.
 3. 행이 없으면 기본 키 없이 `save()`로 INSERT합니다.
 
-이 방식은 왕복이 세 번 필요합니다. 경쟁 상태도 생깁니다. 두 요청이 동시에 행이 없다고 확인하고 둘 다 INSERT를 시도하면 중복 키 에러가 납니다. upsert는 원자적인 SQL 문 하나로 두 문제를 모두 해결합니다.
+이 방식은 라운드 트립이 세 번 필요합니다. 경쟁 상태도 생깁니다. 두 요청이 동시에 행이 없다고 확인하고 둘 다 INSERT를 시도하면 중복 키 에러가 납니다. upsert는 원자적인 SQL 문 하나로 두 문제를 모두 해결합니다.
 
 ### 기본 키 기준
 
@@ -969,7 +969,7 @@ await em.createInsertBuilder(Reading)
   WHERE "readings"."taken_at" < EXCLUDED."taken_at"
 ```
 
-조건을 통과하지 못한 행은 그대로 남습니다. 그래서 오래된 배치를 다시 실행해도 데이터가 과거 값으로 돌아가지 않습니다. 읽기-수정-쓰기 왕복 없이도 쓰기가 멱등이 됩니다.
+조건을 통과하지 못한 행은 그대로 남습니다. 그래서 오래된 배치를 다시 실행해도 데이터가 과거 값으로 돌아가지 않습니다. 읽기-수정-쓰기 라운드 트립 없이도 쓰기가 멱등이 됩니다.
 
 `doUpdateWhere()`는 PostgreSQL과 SQLite 전용입니다. `ON DUPLICATE KEY UPDATE`에는 `WHERE`가 없습니다. 그래서 MySQL에서는 이 조건을 무시하지 않고 에러를 던집니다. MySQL에서 같은 의도를 표현하려면 `iff()`로 조건을 각 대입 값 안에 넣으세요. `iff()`는 `CASE` 식으로 렌더링되므로 세 다이얼렉트에서 모두 동작합니다.
 

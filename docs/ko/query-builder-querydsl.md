@@ -955,7 +955,7 @@ qb.where(u.tags.arrayContains(["admin"]).not());       // NOT (...)
 
 값 배열은 파라미터 하나로 바인딩됩니다. node-postgres가 이 값을 PostgreSQL 배열 리터럴로 직렬화합니다. 그리고 엔진이 컬럼에서 원소 타입을 추론합니다. 그래서 `ARRAY[...]`를 구성하거나 빈 배열을 캐스트하지 않아도 됩니다. 결과인 `ColumnCondition`은 `.and()`, `.or()`, `.not()`으로 합성할 수 있습니다.
 
-배열 연산자는 PostgreSQL 전용입니다. MySQL과 SQLite에는 네이티브 배열 컬럼 타입이 없으므로 `OrmError(UNSUPPORTED_DATABASE)`를 던집니다. 에러 메시지는 데이터를 JSON 배열이나 정션 테이블로 모델링하라고 안내합니다. JSON 배열은 JSON 경로 DSL로 다룹니다. 이 메서드는 엔티티 속성의 타입이 원시 타입 배열인 `qAlias()` 컬럼에만 있습니다. `string[]`, `number[]`가 그 예입니다. 객체 배열은 JSON 경로 표현식으로 매핑됩니다.
+배열 연산자는 PostgreSQL 전용입니다. MySQL과 SQLite에는 네이티브 배열 컬럼 타입이 없으므로 `OrmError(UNSUPPORTED_DATABASE)`를 던집니다. 에러 메시지는 데이터를 JSON 배열이나 조인 테이블로 모델링하라고 안내합니다. JSON 배열은 JSON 경로 DSL로 다룹니다. 이 메서드는 엔티티 속성의 타입이 원시 타입 배열인 `qAlias()` 컬럼에만 있습니다. `string[]`, `number[]`가 그 예입니다. 객체 배열은 JSON 경로 표현식으로 매핑됩니다.
 
 ## 한눈에 보기
 
@@ -1004,26 +1004,26 @@ qb.where(u.tags.arrayContains(["admin"]).not());       // NOT (...)
 
 | 표현식 | PostgreSQL | MySQL | SQLite | 비고 |
 |--------|------------|-------|--------|------|
-| 집계 (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | 네이티브 | 네이티브 | 네이티브 | 없음 |
+| 집계 (`count`, `sum`, `avg`, `min`, `max`, `countDistinct`) | 네이티브 | 네이티브 | 네이티브 |  |
 | 조건부 집계 (`.filter()`, `countIf`, `sumIf`) | 네이티브 `FILTER (WHERE …)` | `FUNC(CASE WHEN … THEN … END)`로 변환 | 네이티브 `FILTER (WHERE …)` (3.30+) | MySQL에서 `COUNT(*)`는 `COUNT(CASE WHEN … THEN 1 END)`가 됨. NULL을 다루는 방식은 다이얼렉트 간에 같음. |
 | Row-value 튜플 (`Expressions.tuple().in/notIn/eq`) | 네이티브 | 네이티브 | 네이티브 (3.15+) | 식별자 따옴표 외에는 다이얼렉트 간 SQL이 같음. |
 | 정규식 매칭 (`.matches()`) | 네이티브 `~` (ARE) | 네이티브 `REGEXP` (ICU, 기본 대소문자 무시) | 커넥터가 등록한 `regexp` UDF로 `REGEXP` 실행 | 패턴은 파라미터로 바인딩. `i` 플래그는 이식성 있음, `m`/`s`는 엔진별로 다름. MySQL에서 대소문자를 구분하려면 바이너리 콜레이션 필요. |
-| 배열 연산자 (`.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`) | 네이티브 `@>` / `&&` / `<@` | 미지원: `UNSUPPORTED_DATABASE`를 던짐 | 미지원: `UNSUPPORTED_DATABASE`를 던짐 | MySQL/SQLite는 네이티브 배열 타입이 없음. JSON 배열(JSON 경로 DSL)이나 정션 테이블로 모델링. 값 배열은 파라미터 하나로 바인딩. |
-| `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 | 없음 |
+| 배열 연산자 (`.arrayContains` / `.arrayOverlaps` / `.arrayContainedBy`) | 네이티브 `@>` / `&&` / `<@` | 미지원: `UNSUPPORTED_DATABASE`를 던짐 | 미지원: `UNSUPPORTED_DATABASE`를 던짐 | MySQL/SQLite는 네이티브 배열 타입이 없음. JSON 배열(JSON 경로 DSL)이나 조인 테이블로 모델링. 값 배열은 파라미터 하나로 바인딩. |
+| `coalesce` / `nullif` | 네이티브 | 네이티브 | 네이티브 |  |
 | `greatest` / `least` | 네이티브 `GREATEST` / `LEAST`. NULL 인자 무시 | 네이티브 `GREATEST` / `LEAST`. 인자 중 하나라도 NULL이면 결과 NULL | `MAX(a, b)` / `MIN(a, b)` 스칼라 형태. 인자 중 하나라도 NULL이면 결과 NULL | NULL 처리는 보정하지 않습니다. 이식성이 필요하면 nullable 인자를 `coalesce()`로 감싸세요. |
 | upsert `excluded` 참조 (`qExcluded`) | `EXCLUDED."col"` | MySQL 8.0.19+는 행 별칭으로 `` `new`.`__col` ``, MariaDB와 이전 MySQL은 `` VALUES(`col`) `` | `excluded."col"` | `createInsertBuilder()` 안에서만 씁니다. |
-| 윈도 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) | 없음 |
+| 윈도 함수 (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, aggregate `OVER()`) | 네이티브 | 네이티브 (8.0+) | 네이티브 (3.25+) |  |
 | `percentile_cont` / `percentile_disc` / `mode` ordered-set aggregate | 네이티브 (`WITHIN GROUP`) | 미지원: `UNSUPPORTED_OPERATION`을 던짐 | 미지원: `UNSUPPORTED_OPERATION`을 던짐 | MySQL: CTE와 `ROW_NUMBER() OVER (ORDER BY x)`로 에뮬레이션하고 `rn = CEIL(N * p)`인 행을 고름. [cookbook 레시피](./cookbook.md#cycle-time-percentile-report) 참고. |
 | `dateTrunc` (year/quarter/month/week/day/hour/minute/second) | 네이티브 `DATE_TRUNC` | 단위별로 같은 뜻의 함수 (`DATE`, `DATE_FORMAT`, ISO 월요일 `WEEKDAY` 계산) | `date(..., 'start of …')` / `strftime` | 세 다이얼렉트 모두 ISO 월요일 기준 주를 만듦. |
 | `dateDiff(a, b, unit)`: year / month | `age()`로 달력 기준 계산 | `TIMESTAMPDIFF(YEAR/MONTH, ...)`로 달력 기준 계산 | 근사: julianday / 365.25 (year), / 30.4375 (month) | SQLite는 10년 기준 약 0.07% 오차. |
 | `dateDiff(a, b, unit)`: day / hour / minute / second | `EXTRACT(EPOCH ...)` 기반 epoch 초 | `TIMESTAMPDIFF(...)` | `julianday()` × factor | 세 다이얼렉트 모두 정확. |
-| `dateAdd(value, n, unit)` | `value + INTERVAL 'N unit'` | `DATE_ADD(value, INTERVAL N unit)` | `datetime(value, '+N unit')` 수식자 | 없음 |
+| `dateAdd(value, n, unit)` | `value + INTERVAL 'N unit'` | `DATE_ADD(value, INTERVAL N unit)` | `datetime(value, '+N unit')` 수식자 |  |
 | `random()` | `random()` `[0, 1)` 반환 | `RAND()` `[0, 1)` 반환 | `RANDOM()` 64-bit signed integer 반환 | SQLite에서 `[0, 1)` 범위가 필요하면 직접 정규화. |
 | Full-text search (`.matchAgainst()` / `Conditions.fullTextSearch`) | `to_tsvector / @@` (tsvector 파이프라인) | `MATCH() AGAINST(...)` (FULLTEXT 인덱스 필요) | DSL 미지원: `UNSUPPORTED_DATABASE`를 던짐 | SQLite는 FTS5 가상 테이블과 `em.query()`를 사용. |
 | `jsonContains`: object/array 값 | 네이티브 `@>` containment | 네이티브 `JSON_CONTAINS` | object/array 미지원: `UNSUPPORTED_DATABASE`를 던짐 | SQLite는 경로의 스칼라 동등 비교만 지원. `metadata.profile.role.eq('admin')` 형태나 raw SQL 사용. |
-| `jsonExtract` / `jsonHasKey` / `jsonArrayLength` / `jsonTypeOf` | 네이티브 (`->`, `?`, `jsonb_array_length`, `jsonb_typeof`) | 네이티브 (`JSON_EXTRACT`, `JSON_CONTAINS_PATH`, `JSON_LENGTH`, `JSON_TYPE`) | 네이티브 (`json_extract`, `json_array_length`, `json_type`) | 없음 |
-| `ilike` (case-insensitive LIKE) | 네이티브 `ILIKE` | `*_ci` 콜레이션에서는 기본 `LIKE`가 대소문자 무시, `*_bin`은 `LOWER()`로 대체 | `LIKE`는 ASCII만 대소문자 무시, ASCII 밖의 유니코드는 ICU 확장 필요 | 없음 |
-| 숫자 / 문자열 헬퍼 (`.abs`, `.floor`, `.ceil`, `.round`, `.length`, `.substring`, `.trim`, …) | 네이티브 | 네이티브 | 네이티브 | 없음 |
+| `jsonExtract` / `jsonHasKey` / `jsonArrayLength` / `jsonTypeOf` | 네이티브 (`->`, `?`, `jsonb_array_length`, `jsonb_typeof`) | 네이티브 (`JSON_EXTRACT`, `JSON_CONTAINS_PATH`, `JSON_LENGTH`, `JSON_TYPE`) | 네이티브 (`json_extract`, `json_array_length`, `json_type`) |  |
+| `ilike` (case-insensitive LIKE) | 네이티브 `ILIKE` | `*_ci` 콜레이션에서는 기본 `LIKE`가 대소문자 무시, `*_bin`은 `LOWER()`로 대체 | `LIKE`는 ASCII만 대소문자 무시, ASCII 밖의 유니코드는 ICU 확장 필요 |  |
+| 숫자 / 문자열 헬퍼 (`.abs`, `.floor`, `.ceil`, `.round`, `.length`, `.substring`, `.trim`, …) | 네이티브 | 네이티브 | 네이티브 |  |
 
 `UNSUPPORTED_OPERATION` 에러의 `suggestion` 필드에는 에뮬레이션 방법이나 대안을 알려 주는 한 줄 힌트가 있습니다. 그래서 UI에 그대로 표시하기 좋습니다. 전체 메시지에는 관련 문서 절을 가리키는 `See: docs/...` 포인터도 들어 있습니다.
 

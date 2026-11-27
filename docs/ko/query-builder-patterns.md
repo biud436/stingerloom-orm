@@ -128,7 +128,7 @@ const drafts = await em
 
 관련 엔티티에 `@DeletedAt`이 있으면 소프트 삭제된 행은 서브쿼리에서 제외됩니다. 그래서 댓글이 모두 소프트 삭제된 게시물은 `whereHas("comments")`에 걸리지 않습니다. 이 필터를 걷어내려면 `whereHas()`를 호출하기 전에 빌더에서 `withDeleted()`를 호출하세요. 그 관계에서만 걷어내려면 콜백에서 `sub.withDeleted()`를 호출하면 됩니다. `withCount()`도 같은 규칙을 따릅니다.
 
-> 주의: `@ManyToMany`는 `whereHas` / `whereNotHas`의 대상이 아닙니다. `@ManyToMany` 관계를 넘기면 `OrmError`를 던집니다. `@ManyToMany` 관계는 중간 테이블을 문자열 조인으로 직접 잇거나 `whereInSubquery()`로 풀어 쓰세요. `leftJoinRelation`도 `@ManyToMany`를 지원하지 않습니다([관계 조인](./query-builder-joins.md)).
+> 주의: `@ManyToMany`는 `whereHas` / `whereNotHas`의 대상이 아닙니다. `@ManyToMany` 관계를 넘기면 `OrmError`를 던집니다. `@ManyToMany` 관계는 조인 테이블을 문자열 조인으로 직접 연결하거나 `whereInSubquery()`로 풀어 쓰세요. `leftJoinRelation`도 `@ManyToMany`를 지원하지 않습니다([관계 조인](./query-builder-joins.md)).
 
 ### `withCount()`: 관계 카운트 컬럼
 
