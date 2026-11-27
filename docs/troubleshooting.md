@@ -39,6 +39,28 @@ mysqladmin ping -h localhost -P 3306
 ls ./mydb.sqlite
 ```
 
+### The database restarted and the log says "A pooled ... connection was lost"
+
+```
+WARN A pooled PostgreSQL connection was lost. terminating connection due to administrator command
+```
+
+The server closed a connection the pool was holding: a restart, a failover, an administrator ending the session, or a firewall dropping an idle connection. The pool has already discarded it and opens a new one for the next query, so there is nothing to repair. A transaction that was running on that connection fails; run it again.
+
+To count these or send them to your own logger instead of the warning, pass `onConnectionError` ([Connections Lost After Startup](./configuration.md#connections-lost-after-startup)):
+
+```typescript
+await em.register({
+  // ...
+  onConnectionError: (error) => {
+    // error.code === "ORM_CONNECTION_LOST", error.cause is the driver error
+    logger.warn(error.message);
+  },
+});
+```
+
+Versions through 3.0.0 did not handle this error on PostgreSQL. It reached the process as an uncaught exception (`terminating connection due to administrator command`, `Connection terminated unexpectedly`) and ended the application. If a database restart takes your process down, upgrade.
+
 ### Invalid configuration errors
 
 Since v0.9.x, `register()` validates options before connecting. If you see `ORM_INVALID_CONFIG`:

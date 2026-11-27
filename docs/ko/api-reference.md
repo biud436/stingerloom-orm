@@ -706,6 +706,7 @@ interface DatabaseClientOptions {
   queryTimeout?: number;
   pool?: PoolOptions;
   retry?: RetryOptions;
+  onConnectionError?: (error: OrmError) => void; // 구문 밖에서 끊긴 풀 연결 (PostgreSQL, MySQL/MariaDB)
   logging?: boolean | LoggingOptions;
   replication?: ReplicationConfig;
   plugins?: StingerloomPlugin[];  // Auto-install plugins on register()
@@ -1211,6 +1212,8 @@ try {
 | `TransactionError` | `ORM_TRANSACTION_FAILED` | deprecated. ORM 어디에서도 던지지 않으므로 `instanceof TransactionError`는 맞는 경우가 없습니다. 롤백 실패는 `ORM_TRANSACTION_ROLLBACK_FAILED` 코드의 `OrmError`입니다 |
 
 `register()`도 열지 못한 연결을 `ORM_CONNECTION_FAILED` 코드의 `OrmError`로 알립니다. `DatabaseConnectionFailedError`와 `NotSupportedDatabaseTypeError`는 예전에는 별도의 `Exception` 클래스를 상속했고 `code`가 없었어요. `Exception`은 지금도 export되지만, 이를 상속하는 ORM 에러는 없습니다.
+
+`ORM_CONNECTION_LOST`는 던져지지 않는 유일한 코드입니다. 아무 구문도 돌고 있지 않은 풀 연결을 서버가 닫으면 그 에러를 받을 호출자가 없어요. 그래서 이 `OrmError`는 [`onConnectionError`](./configuration.md#시작-이후-끊긴-연결) 옵션으로 전달되고, 옵션이 없으면 경고 로그로 남습니다. 드라이버 에러는 `cause`에 담깁니다.
 
 ### 제약 조건 위반
 

@@ -101,7 +101,7 @@ Internal implementation by DB driver:
 
 ### Retry Options
 
-Automatically recovers from DB server restarts and temporary network disconnections.
+Retries the connection `register()` opens, so the application can start while the database is still coming up or the network is briefly unreachable.
 
 ```typescript
 await em.register({
@@ -113,15 +113,32 @@ await em.register({
 });
 ```
 
-Exponential backoff wait times:
+The wait follows a failed attempt, so five attempts wait four times:
 
-| Attempt | Wait Time |
-|---------|-----------|
+| After attempt | Wait Time |
+|---------------|-----------|
 | 1st | 500ms |
 | 2nd | 1000ms |
 | 3rd | 2000ms |
 | 4th | 4000ms |
-| 5th | 8000ms |
+
+When the last attempt fails, `register()` throws `ORM_CONNECTION_FAILED`.
+
+### Connections Lost After Startup
+
+`retry` ends when `register()` returns. After that the pool replaces a connection the server closes (a restart, a failover, an idle connection a firewall drops) on its own, and the application keeps running. What is left to you is to see it happen. Send the event to your metrics:
+
+```typescript
+await em.register({
+  // ...
+  onConnectionError: (error) => {
+    // error.code === "ORM_CONNECTION_LOST"; error.cause is the driver error
+    metrics.increment("db.connection_lost");
+  },
+});
+```
+
+One lost connection is one call. A burst of calls means the database restarted or failed over; a steady trickle usually means something between the application and the database closes idle connections, and on PostgreSQL `pool.idleTimeoutMs` should be shorter than that timeout. Without the option each event is a warning in the log. See [Connections Lost After Startup](./configuration.md#connections-lost-after-startup).
 
 ---
 
@@ -748,6 +765,9 @@ import { User, Post, Comment } from "./entities";
       retry: {
         maxAttempts: 5,
         backoffMs: 500,
+      },
+      onConnectionError: (error) => {
+        metrics.increment("db.connection_lost");
       },
       logging: {
         queries: false,
