@@ -706,6 +706,7 @@ interface DatabaseClientOptions {
   queryTimeout?: number;
   pool?: PoolOptions;
   retry?: RetryOptions;
+  onConnectionError?: (error: OrmError) => void; // A pooled connection lost outside a statement (PostgreSQL, MySQL/MariaDB)
   logging?: boolean | LoggingOptions;
   replication?: ReplicationConfig;
   plugins?: StingerloomPlugin[];  // Auto-install plugins on register()
@@ -1213,6 +1214,8 @@ try {
 | `TransactionError` | `ORM_TRANSACTION_FAILED` | Deprecated: nothing in the ORM throws it, so `instanceof TransactionError` never matches. A rollback that fails is an `OrmError` with `ORM_TRANSACTION_ROLLBACK_FAILED` |
 
 `register()` reports a connection it cannot open as an `OrmError` with `ORM_CONNECTION_FAILED` too. `DatabaseConnectionFailedError` and `NotSupportedDatabaseTypeError` used to extend a separate `Exception` class and had no `code`; `Exception` is still exported, but no ORM error extends it.
+
+`ORM_CONNECTION_LOST` is the one code that is never thrown. A pooled connection the server closes while no statement is running on it has no caller to reject, so the `OrmError` goes to the [`onConnectionError`](./configuration.md#connections-lost-after-startup) option, or to a warning in the log when the option is not set; the driver error is its `cause`.
 
 ### Constraint violations
 

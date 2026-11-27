@@ -305,6 +305,8 @@ Every other error a statement gets from the database (a NOT NULL or CHECK violat
 
 A query that cannot get a connection throws `DatabaseConnectionFailedError` (code `ORM_CONNECTION_FAILED`) with the driver's error as `cause`, which the 503 branch above handles. Earlier versions threw it as a plain `Error` with no `code`, and a query before `register()` came back wrapped in it instead of as `DatabaseNotConnectedError`. The final `console.error(err)` fallback is for everything else: the remaining driver errors and your own.
 
+One database error never reaches this middleware, because no request is waiting on it: a pooled connection the server closes while it sits idle. Pass `onConnectionError` to `register()` to receive it ([Connections Lost After Startup](./configuration.md#connections-lost-after-startup)); without the option it is a warning in the log. The pool replaces the connection either way.
+
 Without an error middleware, Express's default handler returns an HTML page that includes the stack trace — fine in development, not something to ship.
 
 ## Graceful shutdown
@@ -1154,6 +1156,7 @@ Remember that SQLite differs from your production database in ways tests can hid
 | Shutdown | `SIGTERM` handler: `server.close()` then `propagateShutdown({ closeConnections: true })` |
 | Probes | `/healthz` with no I/O; `/readyz` calling `runTestSql()` behind a `hasConnection()` guard |
 | Errors | Error middleware mapping `OrmError` subclasses, constraint violations included, to status codes |
+| Lost connections | `onConnectionError` wired to your metrics or logger |
 | Secrets | `suggestion` and stack traces logged, never serialized to clients |
 
 ## Next Steps

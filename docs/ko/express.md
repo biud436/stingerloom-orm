@@ -305,6 +305,8 @@ export function errorHandler(
 
 연결을 얻지 못한 쿼리는 드라이버 에러를 `cause`에 담은 `DatabaseConnectionFailedError`(코드 `ORM_CONNECTION_FAILED`)를 던지고, 위 미들웨어의 503 분기가 이를 처리합니다. 이전 버전에서는 이 에러가 `code` 없는 평범한 `Error`였고, `register()` 전에 들어온 쿼리도 `DatabaseNotConnectedError` 대신 이 에러에 감싸여 올라왔어요. 마지막 `console.error(err)` 분기는 그 밖의 에러, 즉 나머지 드라이버 에러와 애플리케이션 자체 에러를 받습니다.
 
+이 미들웨어까지 오지 않는 데이터베이스 에러가 하나 있습니다. 풀에서 쉬고 있던 연결을 서버가 닫은 경우로, 그 에러를 기다리는 요청이 없기 때문이에요. `register()`에 `onConnectionError`를 넘기면 받을 수 있고([시작 이후 끊긴 연결](./configuration.md#시작-이후-끊긴-연결)), 옵션이 없으면 경고 로그로 남습니다. 어느 쪽이든 풀이 연결을 교체합니다.
+
 에러 미들웨어가 없으면 Express 기본 핸들러가 스택 트레이스가 그대로 담긴 HTML 페이지를 돌려줍니다. 개발 중에는 편하지만 운영 환경에 내보낼 응답은 아니죠.
 
 ## 안전한 종료
@@ -1154,6 +1156,7 @@ it("creates a user", async () => {
 | 종료 | `SIGTERM` 핸들러에서 `server.close()` 후 `propagateShutdown({ closeConnections: true })` |
 | 프로브 | I/O 없는 `/healthz`, `hasConnection()` 가드 뒤에서 `runTestSql()`을 호출하는 `/readyz` |
 | 에러 | 제약 조건 위반을 포함한 `OrmError` 하위 클래스를 상태 코드로 매핑하는 에러 미들웨어 |
+| 끊긴 연결 | `onConnectionError`를 메트릭이나 로거에 연결 |
 | 비밀 정보 | `suggestion`과 스택 트레이스는 로그에만, 클라이언트 응답에는 절대 포함하지 않기 |
 
 ## Next Steps

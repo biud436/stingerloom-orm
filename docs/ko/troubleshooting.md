@@ -39,6 +39,28 @@ mysqladmin ping -h localhost -P 3306
 ls ./mydb.sqlite
 ```
 
+### 데이터베이스가 재시작된 뒤 로그에 "A pooled ... connection was lost"가 찍힘
+
+```
+WARN A pooled PostgreSQL connection was lost. terminating connection due to administrator command
+```
+
+풀이 들고 있던 연결을 서버가 닫았다는 뜻입니다. 재시작, 페일오버, 관리자의 세션 종료, 방화벽의 유휴 연결 차단이 흔한 원인이에요. 풀은 이미 그 연결을 버렸고 다음 쿼리 때 새 연결을 엽니다. 따로 복구할 것은 없습니다. 그 연결에서 돌던 트랜잭션은 실패하니 다시 실행하세요.
+
+경고 로그 대신 직접 집계하거나 자체 로거로 보내려면 `onConnectionError`를 넘깁니다([시작 이후 끊긴 연결](./configuration.md#시작-이후-끊긴-연결)).
+
+```typescript
+await em.register({
+  // ...
+  onConnectionError: (error) => {
+    // error.code === "ORM_CONNECTION_LOST", error.cause는 드라이버 에러
+    logger.warn(error.message);
+  },
+});
+```
+
+3.0.0까지는 PostgreSQL에서 이 에러를 처리하지 않았습니다. 에러가 uncaught exception(`terminating connection due to administrator command`, `Connection terminated unexpectedly`)으로 프로세스까지 올라가 애플리케이션이 종료됐어요. 데이터베이스 재시작에 프로세스가 같이 죽는다면 업그레이드하세요.
+
 ### 잘못된 설정 오류
 
 v0.9.x부터 `register()`는 연결 전에 옵션을 검증합니다. `ORM_INVALID_CONFIG`가 보인다면:

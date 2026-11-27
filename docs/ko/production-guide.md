@@ -101,7 +101,7 @@ DB 드라이버별 내부 구현:
 
 ### Retry 옵션
 
-DB 서버 재시작이나 일시적인 네트워크 끊김에서 자동으로 복구해요.
+`register()`가 여는 연결을 다시 시도합니다. 데이터베이스가 아직 올라오는 중이거나 네트워크가 잠깐 닿지 않아도 애플리케이션이 시작할 수 있어요.
 
 ```typescript
 await em.register({
@@ -113,15 +113,32 @@ await em.register({
 });
 ```
 
-Exponential backoff 대기 시간:
+대기는 실패한 시도 뒤에 오므로, 다섯 번 시도하면 네 번 기다립니다.
 
-| 시도 | 대기 시간 |
-|------|-----------|
+| 실패한 시도 | 대기 시간 |
+|-------------|-----------|
 | 1회 | 500ms |
 | 2회 | 1000ms |
 | 3회 | 2000ms |
 | 4회 | 4000ms |
-| 5회 | 8000ms |
+
+마지막 시도까지 실패하면 `register()`가 `ORM_CONNECTION_FAILED`를 던집니다.
+
+### 시작 이후 끊긴 연결
+
+`retry`는 `register()`가 끝나면 역할이 끝납니다. 그 뒤로 서버가 닫은 연결(재시작, 페일오버, 방화벽이 끊은 유휴 연결)은 풀이 알아서 교체하고, 애플리케이션은 계속 돕니다. 남은 일은 그 사실을 관측하는 것뿐이에요. 이벤트를 메트릭으로 보내세요.
+
+```typescript
+await em.register({
+  // ...
+  onConnectionError: (error) => {
+    // error.code === "ORM_CONNECTION_LOST", error.cause는 드라이버 에러
+    metrics.increment("db.connection_lost");
+  },
+});
+```
+
+끊긴 연결 하나가 호출 한 번입니다. 호출이 한꺼번에 몰리면 데이터베이스가 재시작됐거나 페일오버된 것입니다. 꾸준히 조금씩 들어온다면 대개 애플리케이션과 데이터베이스 사이의 무언가가 유휴 연결을 닫고 있는 것이니, PostgreSQL이라면 `pool.idleTimeoutMs`를 그 타임아웃보다 짧게 잡으세요. 옵션을 주지 않으면 이벤트마다 경고 로그가 남습니다. 자세한 내용은 [시작 이후 끊긴 연결](./configuration.md#시작-이후-끊긴-연결)을 참고하세요.
 
 ---
 
@@ -748,6 +765,9 @@ import { User, Post, Comment } from "./entities";
       retry: {
         maxAttempts: 5,
         backoffMs: 500,
+      },
+      onConnectionError: (error) => {
+        metrics.increment("db.connection_lost");
       },
       logging: {
         queries: false,
