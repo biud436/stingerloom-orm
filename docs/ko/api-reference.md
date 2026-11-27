@@ -1194,7 +1194,7 @@ try {
 
 | Error | 코드 | 던지는 경우 |
 |-------|------|-------------|
-| `OrmError` | 전부 | 기본 클래스. 하위 클래스가 없는 코드는 이 클래스로 직접 던집니다 |
+| `OrmError` | 전부 | 기본 클래스. 서브클래스가 없는 코드는 이 클래스로 직접 던집니다 |
 | `ValidationError` | `ORM_VALIDATION_FAILED` | 검증 데코레이터가 값을 거부할 때 (`actual`, `expected` 포함) |
 | `InvalidQueryError` | `ORM_INVALID_QUERY` | 쿼리 옵션이 없는 컬럼을 가리키거나 형식이 잘못됐을 때 |
 | `EntityNotFoundError` | `ORM_ENTITY_NOT_FOUND` | `findOneOrFail()` 등이 행을 찾지 못했을 때 |

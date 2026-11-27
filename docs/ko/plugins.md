@@ -269,7 +269,7 @@ interface QueryInfo {
 }
 ```
 
-`beforeQuery`에서 수정한 `QueryInfo`를 반환하면 쿼리를 변환할 수 있습니다. `afterQuery`는 결과와 실행 시간(ms)을 받습니다. 그래서 슬로우 쿼리 경고나 메트릭 수집에 쓸 수 있습니다.
+`beforeQuery`에서 수정한 `QueryInfo`를 반환하면 쿼리를 변환할 수 있습니다. `afterQuery`는 결과와 실행 시간(ms)을 받습니다. 그래서 느린 쿼리 경고나 메트릭 수집에 쓸 수 있습니다.
 
 ### 트랜잭션 훅 -- beforeTransaction / afterTransaction
 

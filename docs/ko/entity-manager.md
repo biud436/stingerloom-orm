@@ -136,7 +136,7 @@ const analyticsEm = new EntityManager();
 await analyticsEm.register({ type: "mysql", /* ... */ entities: [Event] }, "analytics");
 ```
 
-연결 풀, 재시도, 레플리케이션, 쿼리 타임아웃 같은 연결 옵션의 전체 목록은 [Configuration Guide](./configuration.md)를 참고하세요.
+연결 풀, 재시도, 복제, 쿼리 타임아웃 같은 연결 옵션의 전체 목록은 [Configuration Guide](./configuration.md)를 참고하세요.
 
 ---
 

@@ -783,7 +783,7 @@ pool: {
 `validateOnBorrow: true`는 연결을 쓰기 전에 ping하고 실패하면 한 번 재시도합니다. 덕분에 데이터베이스가 재시작돼도 앱을 함께 재시작하지 않고 버팁니다. 대신 체크아웃마다 왕복이 한 번 더 듭니다.
 
 ::: warning leakDetectionThresholdMs는 현재 아무 동작도 하지 않습니다
-`pool.leakDetectionThresholdMs` 옵션은 선언되어 있고 `ConnectionLeakDetector` 클래스도 export되어 있습니다. 하지만 ORM 내부에 이 둘을 잇는 코드가 없습니다. 그래서 지금은 값을 설정해도 효과가 없습니다. 연결 누수를 찾으려면 슬로우 쿼리 로깅과 데이터베이스 쪽 풀 지표를 사용하세요.
+`pool.leakDetectionThresholdMs` 옵션은 선언되어 있고 `ConnectionLeakDetector` 클래스도 export되어 있습니다. 하지만 ORM 내부에 이 둘을 잇는 코드가 없습니다. 그래서 지금은 값을 설정해도 효과가 없습니다. 연결 누수를 찾으려면 느린 쿼리 로깅과 데이터베이스 쪽 풀 지표를 사용하세요.
 :::
 
 ## 로깅, 슬로우 쿼리, N+1 감지
@@ -804,7 +804,7 @@ logging: {
 [N+1 WARNING] Entity "Post" queried 12+ times in 100ms. Consider using eager loading or relations option.
 ```
 
-`logging: true`만 켜면 SQL 로깅만 활성화됩니다. 트래커를 생성하지 않으므로 슬로우 쿼리 경고와 N+1 경고도 없습니다. 종료할 때 `gracefulTimeoutMs`도 동작하지 않습니다. 이런 신호가 필요한 환경에서는 객체 형태를 쓰세요.
+`logging: true`만 켜면 SQL 로깅만 활성화됩니다. 트래커를 생성하지 않으므로 느린 쿼리 경고와 N+1 경고도 없습니다. 종료할 때 `gracefulTimeoutMs`도 동작하지 않습니다. 이런 신호가 필요한 환경에서는 객체 형태를 쓰세요.
 
 운영 환경에서는 보통 콘솔 출력보다 구조화된 이벤트가 필요합니다. 트래커는 이벤트 이미터입니다.
 
@@ -1159,10 +1159,10 @@ it("creates a user", async () => {
 | 스키마 변경 | `synchronize: false`, 마이그레이션은 별도 배포 단계에서 실행 |
 | 풀 크기 | `pool.max`는 데이터베이스 최대 연결 수를 인스턴스 수로 나눈 값 기준 |
 | 쿼리 타임아웃 | `queryTimeout` 설정 + HTTP 계층 타임아웃. 풀 큐가 무한한 MySQL에서는 특히 필수 |
-| 슬로우 쿼리 | `logging: { slowQueryMs: 200 }`을 `getQueryTracker()`로 로거에 연결 |
+| 느린 쿼리 | `logging: { slowQueryMs: 200 }`을 `getQueryTracker()`로 로거에 연결 |
 | 종료 | `SIGTERM` 핸들러에서 `server.close()` 후 `propagateShutdown({ closeConnections: true })` |
 | 프로브 | I/O 없는 `/healthz`, `hasConnection()` 가드 뒤에서 `runTestSql()`을 호출하는 `/readyz` |
-| 에러 | 제약 조건 위반을 포함한 `OrmError` 하위 클래스를 상태 코드로 매핑하는 에러 미들웨어 |
+| 에러 | 제약 조건 위반을 포함한 `OrmError` 서브클래스를 상태 코드로 매핑하는 에러 미들웨어 |
 | 끊긴 연결 | `onConnectionError`를 메트릭이나 로거에 연결 |
 | 비밀 정보 | `suggestion`과 스택 트레이스는 로그에만, 클라이언트 응답에는 절대 포함하지 않기 |
 
