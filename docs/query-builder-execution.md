@@ -564,11 +564,11 @@ Supported type tags: `"number"`, `"bigint"`, `"string"`, `"date"`, `"json"`, `"b
 | `getAvg(column)` | `number` | `AVG(column)` over the same scope; 0 on empty |
 | `getMin(column)` | `number` | `MIN(column)` over the same scope; 0 on empty |
 | `getMax(column)` | `number` | `MAX(column)` over the same scope; 0 on empty |
-| `explain()` | `ExplainResult` | Query plan for the built SELECT (MySQL / PostgreSQL only) |
+| `explain()` | `ExplainResult` | Query plan for the built SELECT (MySQL / PostgreSQL / SQLite) |
 
 All aggregate terminals (`getSum`, `getAvg`, `getMin`, `getMax`, `getCount`) rebuild the SELECT clause from scratch, so `addSelect()` projections are ignored — only the WHERE / JOIN / soft-delete / tenant scope carry over. `getCount()` additionally honors GROUP BY / HAVING and then returns the number of groups (see [above](#getcount-with-group-by-counts-groups)); the scalar aggregates ignore GROUP BY / HAVING because they return a single value.
 
-`explain()` mirrors `EntityManager.explain()` — it prefixes the built SQL with the driver's `EXPLAIN` syntax and returns the same `ExplainResult` shape (`rows`, `type`, `possibleKeys`, `key`, `cost`). Throws `InvalidQueryError` when called against SQLite, which does not support `EXPLAIN`.
+`explain()` mirrors `EntityManager.explain()` — it prefixes the built SQL with the driver's `EXPLAIN` syntax and returns the same `ExplainResult` shape (`rows`, `type`, `possibleKeys`, `key`, `cost`). MySQL, PostgreSQL and SQLite (`EXPLAIN QUERY PLAN`) support it; any other driver throws `InvalidQueryError`.
 
 ```typescript
 // Existence check — get* style
@@ -643,7 +643,7 @@ A column is considered **required** if all of these are true:
 | Aggregates / computed columns | `getRawMany()` | `addSelect(sql`COUNT(*)`, "cnt")` can't be typed as `Pick` |
 | Quick existence check | `exists()` | Boolean — no data fetched |
 
-Note that `em.find()` also supports a `select` option, but it does **not** narrow the return type — `find()` always returns `T[]` regardless. If type safety on projections matters, use the query builder's `getPartialMany()` method instead.
+`em.find()` with a `select` option narrows its return type the same way ([What about unselected columns?](./entity-manager-querying.md#what-about-unselected-columns)), so a typed projection does not need the query builder.
 
 ## Compiling Repeated Queries — `prepare()`
 
