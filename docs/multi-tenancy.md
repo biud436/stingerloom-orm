@@ -326,7 +326,7 @@ export class TenantProvisioningService implements OnModuleInit {
 ```
 
 ::: info
-Schema-based multi-tenancy is currently only supported on PostgreSQL. MySQL doesn't have a schema concept separate from databases, and SQLite doesn't support schemas at all. Using `TenantMigrationRunner` with MySQL or SQLite returns `UnsupportedError`.
+Schema-based multi-tenancy is currently only supported on PostgreSQL. MySQL doesn't have a schema concept separate from databases, and SQLite doesn't support schemas at all. Calling a `TenantMigrationRunner` method on MySQL or SQLite throws an `OrmError` with code `ORM_UNSUPPORTED_DATABASE`.
 :::
 
 ---
@@ -385,7 +385,7 @@ App                                    PostgreSQL
  │◄── OK ───────────────────────────────── │
 ```
 
-That's 4 round-trips for a single tenant read (connect + BEGIN + SET LOCAL + SELECT + COMMIT). The `SET LOCAL` ensures the search_path change is scoped to this transaction only — it doesn't leak to other connections.
+That's 4 round-trips for a single tenant read (BEGIN + SET LOCAL + SELECT + COMMIT), plus the connection. The `SET LOCAL` ensures the search_path change is scoped to this transaction only — it doesn't leak to other connections.
 
 **Pros:** Well-established PostgreSQL pattern. All existing tools (pg_dump, monitoring) work naturally.
 

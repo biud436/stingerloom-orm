@@ -68,6 +68,23 @@
 | hydrate | 하이드레이트 | 수화 | 조회한 행을 엔티티 인스턴스로 채우는 일입니다. |
 | user | 사용자 | 유저 | 애플리케이션의 최종 사용자를 말합니다. |
 | predicate | 조건 | 술어, 프레디킷 | WHERE에 들어가는 조건식입니다. |
+| named connection | 이름 있는 연결 | 명명된 연결, 네임드 커넥션 | 처음 나올 때 원어를 붙입니다. |
+| lost update | 갱신 손실 | 갱신 분실, 로스트 업데이트 | 처음 나올 때 원어를 붙입니다. |
+| idempotent | 멱등 | | 처음 나올 때 멱등(idempotent)으로 씁니다. |
+| typed builder | 타입 있는 빌더 | 타입드 빌더 | |
+| workflow | 워크플로 | 워크플로우 | |
+| naming strategy | 네이밍 전략 | 네이밍 규약, 명명 전략 | |
+| fallback | 대체 | 폴백 | 동작을 말할 때는 "~로 넘어갑니다"로 씁니다. |
+| owning side | 소유 측 | 주인 쪽, 오너 사이드 | 외래 키를 가진 쪽의 관계입니다. |
+| inverse side | 역방향 측 | 반대편, 인버스 사이드 | |
+| round trip | 라운드 트립 | 왕복 | 데이터베이스와 한 번 주고받는 일입니다. |
+| hard delete | 하드 삭제 | 물리 삭제 | 소프트 삭제와 대비할 때 씁니다. |
+| tenant scope | 테넌트 범위 | 테넌트 스코프 | |
+| full-text search | 전문 검색 | 풀텍스트 검색 | |
+| single-valued relation | 단일 값 관계 | | ManyToOne과 OneToOne처럼 대상이 하나인 관계입니다. |
+| placeholder | 플레이스홀더 | 자리표시자 | |
+| circuit breaker | 서킷 브레이커 | 회로 차단기 | |
+| time window | 윈도 | 윈도우, 구간 | 시간 구간을 말합니다. |
 | created at | 생성 일시 | 생성 시각, 처음 넣은 시각 | |
 | updated at | 수정 일시 | 수정 시각, 갱신 시각 | |
 | deleted at | 삭제 일시 | 삭제 시각 | |

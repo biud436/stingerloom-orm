@@ -1,6 +1,6 @@
 # Logging & Diagnostics
 
-ORM이 내부에서 뭘 하는지 파악하고, 성능 문제를 찾고, 해결하는 데 필요한 진단 도구를 설명해요.
+Stingerloom의 진단 도구는 ORM이 내부에서 하는 일을 보여 줍니다. 이 도구로 성능 문제를 찾고 해결합니다.
 
 ---
 
@@ -8,7 +8,7 @@ ORM이 내부에서 뭘 하는지 파악하고, 성능 문제를 찾고, 해결�
 
 ### 쿼리 로깅이 왜 필요해요?
 
-ORM이 SQL을 대신 작성해주니까 편하지만, 문제가 생기면 실제로 어떤 SQL이 나가는지 봐야 해요. 데이터가 이상하거나, 페이지가 느리거나, 트랜잭션 데드락이 걸릴 때 쿼리 로깅을 켜면 바로 확인할 수 있어요.
+ORM은 SQL을 대신 작성하므로 편합니다. 하지만 문제가 생기면 데이터베이스에 실제로 보낸 SQL을 확인해야 합니다. 데이터가 이상할 때, 페이지가 느릴 때, 트랜잭션에 데드락이 걸렸을 때가 그렇습니다. 쿼리 로깅을 켜면 그 SQL이 바로 보입니다.
 
 ### 기본 설정
 
@@ -21,7 +21,7 @@ await em.register({
 
 ### 출력 예시
 
-로깅을 켜면 모든 SQL이 콘솔에 출력돼요:
+로깅을 켜면 모든 SQL 문이 콘솔에 출력됩니다.
 
 ```
 [Query] SELECT "id", "name", "email" FROM "user" WHERE "is_active" = $1 [true]  (4ms)
@@ -31,15 +31,15 @@ await em.register({
 [Query] DELETE FROM "post" WHERE "id" = $1 [17]  (2ms)
 ```
 
-각 줄에 세 가지 정보가 들어있어요:
+각 줄에는 세 가지 정보가 있습니다.
 
-1. **SQL 구문** -- 파라미터 placeholder (`$1`, `$2`)가 포함돼요. 문자열 보간이 아니라 parameterized query라서 SQL injection이 방지돼요.
-2. **파라미터 값** -- 대괄호 안에 순서대로 나와요.
-3. **실행 시간** -- 밀리초 단위예요.
+1. **SQL 문**: 파라미터 플레이스홀더(`$1`, `$2`)가 들어 있습니다. 값을 문자열에 끼워 넣지 않고 파라미터화된 쿼리로 보내므로 SQL 인젝션을 막습니다.
+2. **파라미터 값**: 대괄호 안에 순서대로 표시됩니다.
+3. **실행 시간**: 밀리초 단위입니다.
 
 ### 세부 설정
 
-더 세밀하게 제어하려면 객체로 전달하면 돼요:
+더 세밀하게 제어하려면 항목별 플래그를 담은 객체를 넘깁니다.
 
 ```typescript
 await em.register({
@@ -54,7 +54,7 @@ await em.register({
 
 ### 프로그래밍 방식 접근
 
-쿼리 로그를 구조화된 데이터로 가져올 수도 있어요:
+`em.getQueryLog()`는 쿼리 로그를 구조화된 데이터로 반환합니다.
 
 ```typescript
 const log = em.getQueryLog();
@@ -64,7 +64,7 @@ const log = em.getQueryLog();
 // ]
 ```
 
-성능 테스트에서 쿼리 수를 검증하거나, 커스텀 대시보드를 만들거나, 모니터링 시스템에 메트릭을 보낼 때 유용해요.
+이 데이터는 성능 테스트에서 쿼리 수를 검증할 때 유용합니다. 커스텀 대시보드를 만들거나 모니터링 시스템에 메트릭을 보낼 때도 씁니다.
 
 ---
 
@@ -72,9 +72,9 @@ const log = em.getQueryLog();
 
 ### N+1 문제가 뭐예요?
 
-ORM을 쓸 때 가장 흔한 성능 문제예요. 구체적인 예시로 설명할게요.
+N+1 문제는 ORM을 쓰는 애플리케이션에서 가장 흔한 성능 문제입니다.
 
-블로그에 게시글이 100개 있고, 각 게시글에 작성자가 있다고 해봐요. 모든 게시글과 작성자 이름을 표시하고 싶은 상황이에요.
+블로그에 게시글이 100개 있고 게시글마다 작성자가 있다고 가정합니다. 이제 모든 게시글을 작성자 이름과 함께 표시하려고 합니다.
 
 **단순한 방식 (N+1 문제):**
 
@@ -88,9 +88,9 @@ for (const post of posts) {
 }
 ```
 
-총 **101개 쿼리**. 쿼리당 10ms라면 1,010ms -- 게시글 목록 하나 보여주는 데 1초 이상 걸려요.
+쿼리는 모두 101개입니다. 네트워크 라운드 트립(round trip)을 포함해 쿼리 하나에 10ms가 걸리면 모두 1,010ms입니다. 게시글 목록 하나를 보여 주는 데 1초가 넘게 걸리는 셈입니다.
 
-**해결 방법 (eager loading with JOIN):**
+**해결 방법 (JOIN으로 즉시 로딩):**
 
 ```typescript
 const posts = await em.find(Post, {
@@ -99,9 +99,9 @@ const posts = await em.find(Post, {
 // 1 query: SELECT post.*, user.* FROM post LEFT JOIN user ON post.author_id = user.id
 ```
 
-총 **1개 쿼리**. 같은 데이터를 약 10ms에 가져와요. 100배 차이예요.
+쿼리는 1개입니다. 같은 데이터를 약 10ms에 조회합니다. 100배 차이입니다.
 
-N+1 문제가 교활한 이유는 코드를 작성할 때 문제가 안 보이기 때문이에요. 개발 환경에서 게시글 5개로는 잘 동작하고, 프로덕션에서 데이터가 많아져야 문제가 드러나요. Stingerloom의 N+1 감지기가 이걸 자동으로 잡아줘요.
+N+1 문제는 코드를 작성할 때는 잘못된 점이 보이지 않아서 까다롭습니다. 게시글이 5개뿐인 개발 환경에서는 잘 동작합니다. 문제는 프로덕션에서 데이터가 많아진 뒤에야 드러납니다. Stingerloom의 N+1 감지기는 이 문제를 자동으로 잡아냅니다.
 
 ### 설정
 
@@ -117,13 +117,13 @@ await em.register({
 
 ### 동작 방식
 
-`QueryTracker`가 EntityManager를 통과하는 모든 쿼리를 모니터링해요. 슬라이딩 타임 윈도우(기본 100ms) 내에서 같은 엔티티에 대한 쿼리 수를 세고, 임계값(기본 100ms 내 10회)을 넘으면 경고를 출력해요:
+`QueryTracker`는 EntityManager를 거치는 모든 쿼리를 감시합니다. 그리고 슬라이딩 타임 윈도 안에서 같은 엔티티를 대상으로 한 쿼리 수를 셉니다. 윈도 크기의 기본값은 100ms입니다. 이 수가 임계값을 넘으면 경고를 출력합니다. 임계값의 기본값은 10회입니다.
 
 ```
 [QueryTracker] [N+1 WARNING] Entity "User" queried 15+ times in 100ms. Consider using eager loading or relations option.
 ```
 
-경고는 엔티티별로 EntityManager 생명주기 동안 한 번만 발생해서 로그가 도배되지 않아요.
+경고는 EntityManager가 살아 있는 동안 엔티티마다 한 번만 출력됩니다. 그래서 같은 경고가 로그를 뒤덮지 않습니다.
 
 ### 경고가 뜨면 이렇게 해결해요
 
@@ -139,7 +139,7 @@ const posts = await em.find(Post, {
 });
 ```
 
-**방법 2: relation 데코레이터에 `eager: true` 설정:**
+**방법 2: 관계 데코레이터에 `eager: true` 설정:**
 
 ```typescript
 @ManyToOne(() => User, (user) => user.posts, { eager: true })
@@ -147,7 +147,7 @@ const posts = await em.find(Post, {
 author!: User;
 ```
 
-`eager: true`로 설정하면 게시글을 조회할 때 항상 LEFT JOIN으로 작성자를 함께 가져와요. 관련 데이터가 거의 항상 필요한 경우에 쓰면 좋아요.
+`eager: true`를 설정하면 게시글을 조회할 때마다 LEFT JOIN으로 작성자를 함께 로드합니다. 그래서 `relations`를 매번 지정하지 않아도 됩니다. 관련 데이터가 거의 항상 필요할 때 쓰면 좋아요.
 
 ---
 
@@ -155,7 +155,7 @@ author!: User;
 
 ### 느린 쿼리 감지가 왜 필요해요?
 
-API 엔드포인트가 800ms에 응답하면 아무도 불평 안 해요. 하지만 트래픽이 늘어서 그 쿼리가 초당 50번 실행되면 데이터베이스가 포화돼요. 느린 쿼리 경고는 장애가 되기 전에 미리 알려줘요.
+API 엔드포인트가 800ms에 응답해도 불평하는 사람은 없습니다. 하지만 트래픽이 늘어 그 쿼리가 초당 50번 실행되면 데이터베이스가 포화됩니다. 느린 쿼리 경고는 이런 문제가 장애로 번지기 전에 미리 알립니다.
 
 ### 설정
 
@@ -170,7 +170,7 @@ await em.register({
 
 ### 경고 출력 예시
 
-쿼리가 임계값을 초과하면:
+쿼리가 임계값을 넘으면 다음 경고를 출력합니다.
 
 ```
 [QueryTracker] [SLOW QUERY] 847ms: SELECT "id", "title", "body", "created_at" FROM "post" WHERE "body" LIKE '%search term%' ORDER BY "created_at" DESC
@@ -178,9 +178,9 @@ await em.register({
 
 ### 느린 쿼리를 발견하면 이렇게 해결해요
 
-대부분 다음 중 하나에 해당해요:
+느린 쿼리는 대부분 다음 중 하나에 해당합니다.
 
-**1. 인덱스 누락.** 테이블 전체를 스캔하는 대신 인덱스를 써야 해요. 필터링이나 정렬 대상 컬럼에 `@Index()`를 추가하세요.
+**1. 인덱스 누락.** 쿼리가 인덱스를 쓰지 않고 테이블의 모든 행을 스캔합니다. 필터링이나 정렬에 쓰는 컬럼에 `@Index()`를 추가하세요.
 
 ```typescript
 @Column({ type: "varchar", length: 255 })
@@ -188,13 +188,13 @@ await em.register({
 email!: string;
 ```
 
-**2. 대용량 테이블 풀 스캔.** 수백만 행의 테이블에서 WHERE 없이 조회하거나, WHERE 조건이 인덱스와 매칭되지 않는 경우예요.
+**2. 대용량 테이블 풀 스캔.** 수백만 행이 있는 테이블을 WHERE 절 없이 조회하는 경우입니다. WHERE 절이 어떤 인덱스와도 맞지 않는 경우도 여기에 해당합니다.
 
-**3. 앞쪽 와일드카드 LIKE.** `WHERE body LIKE '%search%'`는 와일드카드가 앞에 있어서 인덱스를 쓸 수 없어요. Full-text search를 고려하세요.
+**3. 앞쪽 와일드카드 LIKE.** `WHERE body LIKE '%search%'`는 와일드카드가 앞에 있어서 인덱스를 쓰지 못합니다. 대신 전문 검색(full-text search)을 고려하세요.
 
-**4. JOIN 인덱스 누락.** FK 컬럼에 인덱스가 없으면 JOIN할 때 전체 테이블을 스캔해요.
+**4. JOIN 인덱스 누락.** 외래 키 컬럼에 인덱스가 없으면 데이터베이스는 JOIN할 때 행마다 조인 대상 테이블 전체를 스캔합니다.
 
-다음 섹션의 EXPLAIN으로 데이터베이스가 정확히 무엇을 하는지 진단할 수 있어요.
+데이터베이스가 정확히 무엇을 하는지는 다음 절의 EXPLAIN으로 진단합니다.
 
 ---
 
@@ -202,7 +202,13 @@ email!: string;
 
 ### EXPLAIN이 왜 중요해요?
 
-쿼리가 느릴 때 EXPLAIN은 *왜* 느린지 알려줘요. 어떤 테이블을 스캔하는지, 어떤 인덱스를 사용(또는 무시)하는지, 몇 행을 검사하는지 보여줘요. EXPLAIN 없이는 추측이지만, EXPLAIN이 있으면 병목이 어디인지 정확히 알 수 있어요.
+쿼리가 느릴 때 EXPLAIN은 *왜* 느린지 알려 줍니다. EXPLAIN이 보여 주는 데이터베이스의 실행 계획에는 다음 내용이 나옵니다.
+
+- 어떤 테이블을 스캔하는지
+- 어떤 인덱스를 쓰거나 무시하는지
+- 몇 행을 검사할 것으로 예상하는지
+
+EXPLAIN 없이는 추측에 기대야 합니다. EXPLAIN을 보면 병목이 어디인지 정확히 드러납니다.
 
 ### 기본 사용법
 
@@ -221,25 +227,25 @@ console.log(result.cost);  // Estimated cost
 
 | Field | Description |
 |-------|-------------|
-| `type` | Access type -- 데이터베이스가 테이블을 읽는 방식 (아래 표 참고) |
-| `key` | 옵티마이저가 실제 사용한 인덱스 (없으면 null) |
+| `type` | 접근 방식(access type): 데이터베이스가 테이블을 읽는 방식입니다. 값의 뜻은 아래 표에 있습니다. |
+| `key` | 옵티마이저가 실제로 사용한 인덱스(없으면 null) |
 | `rows` | 검사할 행 수 추정값 |
-| `cost` | 추정 비용 (MySQL: filtered percentage, PostgreSQL: total_cost) |
+| `cost` | 추정 비용(MySQL은 filtered 비율, PostgreSQL은 total_cost) |
 | `possibleKeys` | 옵티마이저가 고려한 인덱스 목록 |
-| `raw` | 데이터베이스의 원시 출력 (객체 배열) |
+| `raw` | 데이터베이스가 출력한 원본 결과 전체(객체 배열) |
 
 ### MySQL EXPLAIN 출력 읽는 법
 
-`explain()`을 MySQL에서 호출하면 `EXPLAIN SELECT ...`를 실행해요. `type` 필드가 가장 중요해요:
+MySQL에서 `explain()`을 호출하면 Stingerloom은 `EXPLAIN SELECT ...`를 실행하고 그 결과를 반환합니다. 가장 중요한 필드는 `type`입니다.
 
 | type value | Meaning | Performance |
 |------------|---------|-------------|
-| `const` | 최대 1행 매칭 (PK 또는 unique index lookup) | Best possible |
-| `eq_ref` | 이전 테이블의 각 행에 대해 1행 읽기 (PK JOIN) | Excellent |
-| `ref` | 매칭되는 인덱스 값의 모든 행 읽기 | Good |
-| `range` | 인덱스를 사용해 지정 범위만 읽기 | Good |
-| `index` | 풀 인덱스 스캔 (인덱스의 모든 항목 읽기) | Okay |
-| `ALL` | 풀 테이블 스캔 (모든 행 읽기) | Worst -- 인덱스 추가 필요 |
+| `const` | 일치하는 행이 최대 1개(기본 키 또는 고유 인덱스 조회) | Best possible |
+| `eq_ref` | 이전 테이블의 행마다 이 테이블에서 1행 읽기(기본 키 JOIN) | Excellent |
+| `ref` | 인덱스 값이 일치하는 행을 모두 읽기 | Good |
+| `range` | 인덱스로 지정한 범위의 행만 읽기 | Good |
+| `index` | 풀 인덱스 스캔(인덱스의 모든 항목 읽기) | Okay |
+| `ALL` | 풀 테이블 스캔(테이블의 모든 행 읽기) | Worst: 인덱스 추가 필요 |
 
 **잘 인덱싱된 쿼리 예시 (MySQL)**
 
@@ -252,7 +258,7 @@ const result = await em.explain(User, {
 // result.rows = 1
 ```
 
-`idx_user_email` 인덱스를 사용해 lookup하고 1행만 검사해요. 빨라요.
+MySQL은 스캔하지 않고 `idx_user_email` 인덱스로 행을 찾습니다. 검사할 행도 1개로 예상하므로 이 쿼리는 빠릅니다.
 
 **풀 테이블 스캔 예시 (MySQL)**
 
@@ -265,18 +271,18 @@ const result = await em.explain(User, {
 // result.rows = 50000
 ```
 
-`bio` 컬럼에 인덱스가 없어서 50,000행을 전부 읽어요. 인덱스를 추가하거나 쿼리를 재검토해야 해요.
+`bio` 컬럼에 인덱스가 없어서 MySQL은 테이블의 50,000행을 전부 읽습니다. 인덱스를 추가하거나 쿼리를 다시 검토해야 합니다.
 
 ### PostgreSQL EXPLAIN 출력 읽는 법
 
-PostgreSQL은 다른 용어를 사용해요. Stingerloom의 `type` 필드는 PostgreSQL의 node type에 매핑돼요:
+PostgreSQL의 EXPLAIN 출력은 다른 용어를 씁니다. Stingerloom의 `type` 필드는 PostgreSQL의 노드 유형(node type)에 대응합니다.
 
 | type value | Meaning | Performance |
 |------------|---------|-------------|
-| `Index Scan` | 인덱스를 읽고 매칭 행을 테이블에서 가져오기 | Good |
-| `Index Only Scan` | 인덱스만 읽기 (필요한 컬럼이 모두 인덱스에 포함) | Best |
-| `Bitmap Index Scan` | 매칭 행의 bitmap을 만들고 일괄 읽기 | Good for medium selectivity |
-| `Seq Scan` | Sequential scan -- 모든 행 읽기 | Worst -- 인덱스 추가 필요 |
+| `Index Scan` | 인덱스를 읽은 뒤 일치하는 행을 테이블에서 읽기 | Good |
+| `Index Only Scan` | 인덱스만 읽기(필요한 컬럼이 모두 인덱스에 있음) | Best |
+| `Bitmap Index Scan` | 일치하는 행의 비트맵을 만든 뒤 한꺼번에 읽기 | Good for medium selectivity |
+| `Seq Scan` | 순차 스캔(sequential scan): 테이블의 모든 행 읽기 | Worst: 인덱스 추가 필요 |
 
 **인덱싱된 쿼리 예시 (PostgreSQL)**
 
@@ -290,7 +296,7 @@ const result = await em.explain(User, {
 // result.cost = 8.29
 ```
 
-**Sequential scan 예시 (PostgreSQL)**
+**순차 스캔 예시 (PostgreSQL)**
 
 ```typescript
 const result = await em.explain(User, {
@@ -302,9 +308,9 @@ const result = await em.explain(User, {
 // result.cost = 1234.00
 ```
 
-PostgreSQL의 `cost`는 추정 I/O + CPU 작업량을 나타내는 추상 단위예요. 절대값보다는 인덱스 추가 전후의 비교가 중요해요.
+PostgreSQL의 `cost`는 예상 I/O와 CPU 작업량을 나타내는 추상 단위입니다. 값이 낮을수록 좋습니다. 절댓값보다 인덱스를 추가하기 전후의 비교가 중요합니다.
 
-> **Note:** `explain()`은 MySQL과 PostgreSQL에서 지원돼요. SQLite에서는 `InvalidQueryError`가 발생해요.
+> 참고: `explain()`은 MySQL, PostgreSQL, SQLite를 지원합니다. SQLite에서는 `EXPLAIN QUERY PLAN`을 실행합니다([EXPLAIN](./entity-manager-querying.md)).
 
 ---
 
@@ -312,9 +318,9 @@ PostgreSQL의 `cost`는 추정 I/O + CPU 작업량을 나타내는 추상 단위
 
 ### 쿼리 타임아웃이 왜 필요해요?
 
-타임아웃 없는 쿼리는 시한폭탄이에요. 실수로 5천만 행을 스캔하는 쿼리가 실행되면 데이터베이스 커넥션을 무한정 점유해요. 커넥션 풀이 10개라면 이런 쿼리 10개만으로 전체 애플리케이션이 멈춰요.
+타임아웃이 없는 쿼리는 시한폭탄입니다. 실수로 5천만 행을 스캔하는 쿼리가 실행되면 그 쿼리는 데이터베이스 연결을 끝없이 점유합니다. 잠금을 잡은 채 사용자 입력을 기다리는 트랜잭션도 마찬가지입니다. 연결 풀의 크기가 10이면 이런 쿼리 10개만으로 애플리케이션 전체가 멈춥니다.
 
-쿼리 타임아웃은 circuit breaker 역할을 해요. "N밀리초 안에 안 끝나면 쿼리를 중단하고 커넥션을 해제해라"라는 거예요.
+쿼리 타임아웃은 서킷 브레이커(circuit breaker) 역할을 합니다. 쿼리가 N밀리초 안에 끝나지 않으면 쿼리를 중단하고 연결을 해제합니다.
 
 ### 전역 설정
 
@@ -327,7 +333,7 @@ await em.register({
 
 ### 개별 쿼리 오버라이드
 
-배치 처리나 복잡한 리포트처럼 정당하게 오래 걸리는 쿼리는 전역 설정을 오버라이드할 수 있어요:
+배치 처리나 복잡한 리포트처럼 오래 걸릴 수밖에 없는 쿼리도 있습니다. 이런 쿼리에서는 `timeout` 옵션으로 전역 타임아웃을 오버라이드합니다.
 
 ```typescript
 const users = await em.find(User, {
@@ -336,17 +342,17 @@ const users = await em.find(User, {
 });
 ```
 
-타임아웃이 발생하면 `QueryTimeoutError`가 throw됩니다. 메시지에 타임아웃 값이 들어가고, 취소를 알린 드라이버 에러는 `cause`에 담깁니다.
+타임아웃이 발생하면 ORM은 `QueryTimeoutError`를 던집니다. 에러 메시지에는 타임아웃 값이 들어갑니다. 취소를 알린 드라이버 에러는 `cause`에 담깁니다.
 
 ### 데이터베이스 레벨에서의 동작
 
-Stingerloom은 JavaScript 타이머가 아니라 데이터베이스의 네이티브 타임아웃 메커니즘을 사용해요. JavaScript `setTimeout`은 클라이언트 측 대기만 취소하고 서버에서는 쿼리가 계속 실행되기 때문에 중요한 차이예요.
+Stingerloom은 JavaScript 타이머가 아니라 데이터베이스의 네이티브 타임아웃 기능을 씁니다. 이 차이는 중요합니다. JavaScript의 `setTimeout`은 클라이언트 쪽 대기만 취소합니다. 취소한 뒤에도 서버에서는 쿼리가 계속 실행되어 데이터베이스 자원을 낭비합니다.
 
 | DB | SQL sent before the query | Effect |
 |----|--------------------------|--------|
-| MySQL | `SET max_execution_time = 5000` | MySQL 서버가 5000ms 후 쿼리 중단 |
-| PostgreSQL | `SET LOCAL statement_timeout = '5000ms'` | PostgreSQL이 쿼리 중단; `SET LOCAL`은 현재 트랜잭션으로 범위 한정 |
-| SQLite | Driver-level timeout | SQLite 드라이버가 타임아웃 적용 |
+| MySQL | `SET max_execution_time = 5000` | MySQL 서버가 5000ms 뒤 쿼리를 중단합니다. |
+| PostgreSQL | `SET LOCAL statement_timeout = '5000ms'` | PostgreSQL이 쿼리를 중단합니다. `SET LOCAL`이므로 설정은 현재 트랜잭션에만 적용됩니다. |
+| SQLite | Driver-level timeout | SQLite 드라이버가 타임아웃을 적용합니다. |
 
 ---
 
@@ -354,21 +360,26 @@ Stingerloom은 JavaScript 타이머가 아니라 데이터베이스의 네이티
 
 | Setting | Development | Production | 이유 |
 |---------|-------------|------------|------|
-| `logging.queries` | `true` | `false` | 매 쿼리마다 I/O 오버헤드가 생겨요. 프로덕션에서는 모니터링 시스템이 처리해야 해요. |
-| `logging.slowQueryMs` | `100` | `500`-`1000` | 개발 환경에서는 100ms 이상을 모두 잡아서 좋은 습관을 들이고, 프로덕션에서는 500ms-1s로 노이즈를 걸러요. |
-| `logging.nPlusOne` | `true` | `true` | 오버헤드가 거의 없고(타임 윈도우 내 쿼리 카운트만 함), 프로덕션 데이터 규모에서만 드러나는 문제를 잡아줘요. 항상 켜두세요. |
-| `queryTimeout` | -- | `5000`-`10000` | 개발 환경에서는 디버깅을 위해 쿼리를 완료시키고, 프로덕션에서는 폭주 쿼리가 커넥션 풀을 막기 전에 종료시켜야 해요. |
+| `logging.queries` | `true` | `false` | 모든 쿼리를 로그로 남기면 쿼리마다 I/O 오버헤드가 생깁니다. 프로덕션에서는 stdout이 아니라 모니터링 시스템이 이 일을 맡아야 합니다. |
+| `logging.slowQueryMs` | `100` | `500`-`1000` | 개발 환경에서는 100ms를 넘는 쿼리를 모두 잡아 좋은 습관을 들입니다. 프로덕션에서는 500ms-1s로 노이즈를 거르고 정말 문제가 되는 쿼리만 잡습니다. |
+| `logging.nPlusOne` | `true` | `true` | I/O 없이 타임 윈도 안에서 쿼리 수만 세므로 오버헤드가 거의 없습니다. 그리고 프로덕션 데이터 규모에서만 드러나는 문제를 잡아냅니다. 항상 켜 두세요. |
+| `queryTimeout` | 설정하지 않음 | `5000`-`10000` | 개발 환경에서는 디버깅하려면 쿼리가 끝까지 실행되어야 합니다. 프로덕션에서는 폭주하는 쿼리가 연결 풀을 막기 전에 종료해야 합니다. 5-10초는 정상적인 쿼리에는 충분한 시간입니다. 그리고 연쇄 장애를 막을 만큼 짧습니다. |
 
 ### 프로덕션 마인드셋 정리
 
-개발 환경에서는 최대한의 가시성이 필요해요: 모든 쿼리 로깅, 100ms 이상 경고, 디버깅을 위해 쿼리 완료까지 대기.
+개발 환경에서는 가시성이 최대한 높아야 합니다. 모든 쿼리를 로그로 남기고 100ms를 넘는 쿼리에 경고를 냅니다. 쿼리는 중단하지 않고 끝까지 실행해서 디버깅합니다.
 
-프로덕션에서는 최소 노이즈와 최대 보호가 필요해요: 일반 쿼리 로깅은 APM 도구에 맡기고, 정말 느린 쿼리만 알림을 받고, 너무 오래 걸리면 강제 종료하고, N+1 감지는 항상 켜두세요. "스테이징에서는 괜찮았는데 프로덕션에서 느려요"의 가장 흔한 원인이에요.
+프로덕션에서는 노이즈를 최소로 줄이고 보호는 최대로 높입니다.
+
+- 일반 쿼리 로그는 APM 도구에 맡깁니다.
+- 정말 느린 쿼리만 경고로 받습니다.
+- 너무 오래 걸리는 쿼리는 강제로 종료합니다.
+- N+1 감지는 항상 켜 둡니다. N+1 패턴은 "스테이징에서는 괜찮았는데 프로덕션에서 느려요"라는 문제의 가장 흔한 원인입니다.
 
 ---
 
 ## Next Steps
 
-- [Configuration](./configuration.md) -- All connection and runtime options
-- [Events & Subscribers](./events.md) -- React to entity lifecycle events
-- [Production Guide](./production-guide.md) -- Connection pool monitoring, graceful shutdown
+- [설정](./configuration.md): 연결 옵션과 런타임 옵션 전체
+- [이벤트 & 구독자](./events.md): 엔티티 생명주기 이벤트에 반응하기
+- [프로덕션 가이드](./production-guide.md): 연결 풀 모니터링, graceful shutdown

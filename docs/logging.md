@@ -304,7 +304,7 @@ const result = await em.explain(User, {
 
 The `cost` value in PostgreSQL is an abstract unit representing estimated I/O and CPU work. Lower is better. The absolute number does not matter -- what matters is comparing cost before and after adding an index.
 
-> **Note:** `explain()` is supported in MySQL and PostgreSQL. In SQLite, an `InvalidQueryError` is thrown.
+> **Note:** `explain()` is supported on MySQL, PostgreSQL and SQLite, where it runs `EXPLAIN QUERY PLAN` ([EXPLAIN](./entity-manager-querying.md)).
 
 ---
 
