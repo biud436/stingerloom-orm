@@ -41,7 +41,7 @@ Key characteristics:
 - `@CreateTimestamp` and `@UpdateTimestamp` columns a row leaves unset get the current time, whatever their `type` (`timestamptz` included). Other date/time columns are not touched.
 - `@Version` columns are initialized to `1` for each row, and client-generated keys (`@PrimaryGeneratedColumn("uuid")` / `"uuid-v7"`) are generated for rows that leave them unset. These generated values are written back onto the objects you passed.
 - A column no row provides is left out of the statement, so its database `DEFAULT` applies -- the same rule as `saveMany()` (see [undefined vs null on INSERT](#undefined-vs-null-on-insert-letting-db-defaults-apply)).
-- Returns `{ affected: number }` -- if you need the generated PKs back, use `insertManyAndReturn()` (PostgreSQL / SQLite) or `saveMany()` (all dialects) instead.
+- Returns `{ affected: number }` -- if you need the generated PKs back, use `insertManyAndReturn()` (PostgreSQL / SQLite / MariaDB) or `saveMany()` (all dialects) instead.
 
 ---
 
@@ -84,7 +84,7 @@ Key characteristics:
 - `@CreateTimestamp`, `@UpdateTimestamp`, `@Version` and client-generated UUID keys are filled in before the insert, and a column no row provides is left to its database `DEFAULT` -- the same rules as `insertMany()`.
 - Empty `items` returns `[]` immediately without touching the database.
 
-**Dialect support.** `insertManyAndReturn()` requires `INSERT ... RETURNING`, available on PostgreSQL and SQLite 3.35+. Calling it on MySQL throws `OrmError` with code `UNSUPPORTED_DATABASE`; use `saveMany()` there instead.
+**Dialect support.** `insertManyAndReturn()` requires `INSERT ... RETURNING`, available on PostgreSQL, SQLite 3.35+ and MariaDB 10.5+. Calling it on MySQL throws `OrmError` with code `UNSUPPORTED_DATABASE`; use `saveMany()` there instead.
 
 ```typescript
 // On MySQL -- throws OrmError (UNSUPPORTED_DATABASE)
@@ -99,10 +99,10 @@ const users = await em.saveMany(User, [{ name: "Alice" }]);
 | Method | Dialects | SQL statements | Returns |
 |--------|----------|----------------|---------|
 | `insertMany()` | All | 1 | `{ affected: number }` |
-| `insertManyAndReturn()` | PostgreSQL, SQLite 3.35+ | 1 | Entity instances |
+| `insertManyAndReturn()` | PostgreSQL, SQLite 3.35+, MariaDB 10.5+ | 1 | Entity instances |
 | `saveMany()` | All | N (one per row) | Entity instances |
 
-Use `insertMany()` when you do not need the rows back and must support MySQL. Use `insertManyAndReturn()` when you need the rows back and target PostgreSQL or SQLite. Use `saveMany()` when you need rows back on MySQL, or when the batch contains a mix of new and existing entities (INSERT vs UPDATE per row).
+Use `insertMany()` when you do not need the rows back and must support MySQL. Use `insertManyAndReturn()` when you need the rows back and target PostgreSQL, SQLite or MariaDB. Use `saveMany()` when you need rows back on MySQL, or when the batch contains a mix of new and existing entities (INSERT vs UPDATE per row).
 
 ---
 

@@ -53,6 +53,21 @@
 | pagination | 페이지네이션 | 페이징 | |
 | validation | 검증 | 유효성 검사 | |
 | deprecated | deprecated | 더 이상 사용되지 않는, 폐기 예정 | |
+| property | 속성 | 프로퍼티 | 엔티티 클래스의 필드도 속성입니다. |
+| shadow property | 섀도 속성 | 섀도우 프로퍼티 | |
+| unique (constraint, key) | 고유 제약 조건, 고유 키 | 유니크 | 고유 인덱스와 같은 규칙입니다. |
+| discriminator column | 구분 컬럼 | 판별자, discriminator 컬럼 | 처음 나올 때 구분 컬럼(discriminator column)으로 씁니다. |
+| discriminator value | 구분 값 | 판별자 값 | |
+| lifecycle hook | 생명주기 훅 | 라이프사이클 훅 | |
+| read replica | 읽기 레플리카 | 읽기 복제본, 리플리카 | |
+| window function | 윈도 함수 | 윈도우 함수 | |
+| race condition | 경쟁 상태 | 레이스 컨디션, 경쟁 조건 | 처음 나올 때 원어를 붙입니다. |
+| deadlock | 데드락 | 교착 상태 | |
+| SQL fragment | SQL 조각 | 프래그먼트 | |
+| raw SQL | raw SQL | 원시 SQL | |
+| hydrate | 하이드레이트 | 수화 | 조회한 행을 엔티티 인스턴스로 채우는 일입니다. |
+| user | 사용자 | 유저 | 애플리케이션의 최종 사용자를 말합니다. |
+| predicate | 조건 | 술어, 프레디킷 | WHERE에 들어가는 조건식입니다. |
 | created at | 생성 일시 | 생성 시각, 처음 넣은 시각 | |
 | updated at | 수정 일시 | 수정 시각, 갱신 시각 | |
 | deleted at | 삭제 일시 | 삭제 시각 | |
