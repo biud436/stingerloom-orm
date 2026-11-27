@@ -122,6 +122,13 @@
 | created at | 생성 일시 | 생성 시각, 처음 넣은 시각 | |
 | updated at | 수정 일시 | 수정 시각, 갱신 시각 | |
 | deleted at | 삭제 일시 | 삭제 시각 | |
+| lazy proxy | 지연 로딩 프록시 | lazy proxy | 처음 나올 때 원어를 붙이고 문맥이 분명하면 "프록시"로 줄입니다. |
+| pivot table | 피벗 테이블 | pivot 테이블 | ManyToMany의 중간 테이블입니다. |
+| escape (identifier) | 이스케이프 | escape 처리 | 식별자를 따옴표로 감싸는 일입니다. |
+| escape hatch | 탈출구 | 비상구 | raw SQL로 내려가는 API를 말합니다. |
+| canonical store | 기준 저장소 | canonical store | 데코레이터가 메타데이터를 처음 기록하는 저장소입니다. |
+| public layer, tenant layer | public 레이어, 테넌트 레이어 | Public layer, tenant layer | 레이어드 메타데이터의 레이어입니다. |
+| handler | 핸들러 | handler | |
 
 ## 동작을 나타내는 말
 

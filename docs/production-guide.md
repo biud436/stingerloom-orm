@@ -176,7 +176,7 @@ const slowQueries = em.getQueryLog().filter(
 
 | Risk | Description |
 |------|-------------|
-| **Data loss** | Renaming a column DROPs the old column and ADDs a new one. Data is lost. |
+| **Data loss** | Renaming a column DROPs the old column and ADDs a new one unless the entity declares `@Column({ renamedFrom })` or the two names read as the same column. Data is lost. |
 | **Unexpected DDL** | Schema changes are applied immediately to the production DB after deploying entity modifications. |
 | **No rollback** | Automatic changes have no record, making it difficult to revert to a previous state when problems occur. |
 | **Downtime** | Adding an index to a large table can cause a full table lock. |

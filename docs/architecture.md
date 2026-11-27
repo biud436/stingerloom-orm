@@ -217,12 +217,12 @@ When you call `em.register()`, the `SchemaRegistrar` compares your entity defini
 
 | `synchronize` value | What it does | When to use |
 |---------------------|-------------|-------------|
-| `true` | Creates, alters, and drops tables/columns to match entities | Development only |
+| `true` | Creates tables and adds, alters, and drops columns to match entities | Development only |
 | `"safe"` | Creates and adds, but never drops | Staging |
 | `"dry-run"` | Logs DDL without executing | Reviewing changes |
 | `false` (default) | Does nothing | Production |
 
-> **Warning** `synchronize: true` can drop columns and tables. Never use it in production. Use [Migrations](./migrations.md) instead.
+> **Warning** `synchronize: true` can drop columns. Never use it in production. Use [Migrations](./migrations.md) instead.
 
 For production, `SchemaDiff` compares the live DB schema against your entity metadata and generates a migration file. You review the migration, then apply it explicitly. This gives you full control over what changes hit your production database.
 

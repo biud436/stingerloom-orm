@@ -247,7 +247,7 @@ main().catch(console.error);
 
 When `synchronize: true` is set, the ORM compares your entity definitions against the live database and creates or alters tables to match. If the `user` table does not exist yet, it executes the `CREATE TABLE` DDL shown above. If the table exists but is missing a column you added, it runs `ALTER TABLE` to add it.
 
-> **Warning** Use `synchronize: true` only in development. In production, it can drop columns or tables that no longer match your entities. Use [migrations](./migrations.md) instead -- they give you full control over what changes reach your production database.
+> **Warning** Use `synchronize: true` only in development. In production, it can drop columns that no longer match your entities. Use [migrations](./migrations.md) instead -- they give you full control over what changes reach your production database.
 
 ## Step 5: Try CRUD
 
