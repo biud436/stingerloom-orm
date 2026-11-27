@@ -385,7 +385,7 @@ const recent = await base.clone().where("createdAt", ">=", thirtyDaysAgo).getMan
 const flagged = await base.clone().where("flagged", true).getMany();
 ```
 
-`clone()`은 얕은 복사입니다. `whereClauses`, `joinClauses` 같은 배열은 새로 만듭니다. 하지만 별칭 레지스트리와 속성/컬럼 맵은 참조를 공유합니다. 복제본에 `where`/`join`/`select`를 더 체이닝하는 것은 안전합니다. 다만 복제본에서 컬럼 메타데이터 자체를 수정하지는 마세요.
+`clone()`은 얕은 복사입니다. `whereClauses`, `joinClauses` 같은 배열은 새로 만듭니다. 하지만 별칭 레지스트리와 속성/컬럼 맵은 참조를 공유합니다. 복사본에 `where`/`join`/`select`를 더 체이닝하는 것은 안전합니다. 다만 복사본에서 컬럼 메타데이터 자체를 수정하지는 마세요.
 
 ## 다음 단계
 
