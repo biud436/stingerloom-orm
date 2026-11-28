@@ -51,9 +51,9 @@ const kindsOf = (notice: string) =>
   notice.slice(notice.indexOf(": ") + 2, notice.indexOf(". "));
 
 describe("uncompared schema change notices", () => {
-  it("lists ENUM value lists on MySQL only, where the values live in the column type", () => {
+  it("does not list ENUM value lists, which the diff compares on every dialect", () => {
     expect(kindsOf(describeSynchronizeGaps([Ticket], "mysql"))).toBe(
-      "removed or redefined indexes, changed ENUM value lists",
+      "removed or redefined indexes",
     );
     expect(kindsOf(describeSynchronizeGaps([Ticket], "postgres"))).toBe(
       "removed or redefined indexes",

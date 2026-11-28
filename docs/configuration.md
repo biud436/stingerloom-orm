@@ -159,7 +159,7 @@ await em.register({
 |------|---------|--------------|
 | `mode` | required | Base mode — same as the bare-form values. |
 | `continueOnError` | `true` | When `false`, the first DDL failure throws `OrmError(SCHEMA_SYNC_FAILED)` instead of degrading to a warning. Use this when you'd rather see boot fail loudly than discover a half-migrated schema in the logs. Whatever its value, boot fails when the existing tables cannot be read to compare them with the entities, and on a column type that is neither built in nor registered with `ColumnTypeRegistry` — those are not failing statements. |
-| `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN, narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`) and RENAME COLUMN throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing — useful as a production tripwire. (Tables are never dropped by synchronize, so there is nothing to guard there.) |
+| `failOnDestructiveChange` | `false` | When `true`, DROP COLUMN, narrowing ALTER (e.g. `varchar(255) → int`, `varchar(255) → varchar(64)`, a MySQL `ENUM` that loses a value) and RENAME COLUMN throw `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)` before executing — useful as a production tripwire. (Tables are never dropped by synchronize, so there is nothing to guard there.) |
 | `logDDL` | `false` | When `true`, every emitted DDL is logged at info level (CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX, etc.). Under `"safe"` it also logs the statements the mode skipped, prefixed with `[skipped: safe mode]`. Pairs well with `"dry-run"` for full visibility. |
 
 The bare forms (`true`, `"safe"`, `"dry-run"`, `false`) still work and normalize to the same defaults above — no migration is required.
@@ -179,7 +179,7 @@ INFO [SchemaRegistrar] [dry-run] Would CREATE TYPE post_status_enum AS ENUM ('dr
 INFO [SchemaRegistrar] [dry-run] Would ALTER TYPE post_status_enum ADD VALUE IF NOT EXISTS 'archived' BEFORE 'published'
 ```
 
-MySQL and SQLite need none of this -- MySQL carries the values in the column's own `ENUM(...)` type and SQLite stores the column as `TEXT`. The flip side on MySQL / MariaDB: the diff compares the type's name, not the value list inside it, so a changed value list on an existing column is not synchronized. Change it with a migration.
+MySQL and SQLite need none of this -- MySQL carries the values in the column's own `ENUM(...)` type and SQLite stores the column as `TEXT`. On MySQL / MariaDB a changed value list is a change to the column: full sync applies it with `MODIFY COLUMN`, `"safe"` skips it like any other ALTER, and a removed value counts as a narrowing ALTER for `failOnDestructiveChange`. See [ENUM Value Synchronization](./migrations.md#enum-value-synchronization-postgresql).
 
 ### What synchronize leaves alone
 
