@@ -157,7 +157,7 @@ await em.register({
 |--------|--------|------|
 | `mode` | 필수 | 기본 모드. 단일 값 폼과 뜻이 같습니다. |
 | `continueOnError` | `true` | `false`이면 DDL이 처음 실패할 때 warn으로 낮추지 않고 `OrmError(SCHEMA_SYNC_FAILED)`를 던집니다. 반쯤 마이그레이션된 스키마를 로그로 찾기보다 부팅을 명시적으로 실패시키고 싶을 때 쓰세요. 값과 상관없이 부팅이 실패하는 경우도 있습니다. 엔티티와 비교하려고 기존 테이블을 읽다가 실패하거나 내장 타입도 아니고 `ColumnTypeRegistry`에 등록되지도 않은 컬럼 타입을 만난 경우입니다. 이런 경우는 DDL 문이 실패한 것이 아니기 때문입니다. |
-| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN, 좁히는 ALTER, RENAME COLUMN을 실행하기 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`를 던집니다. 좁히는 ALTER의 예는 `varchar(255) → int`, `varchar(255) → varchar(64)`입니다. 프로덕션 안전망으로 유용합니다. synchronize는 어떤 모드에서도 테이블을 삭제하지 않으므로 테이블 삭제는 막을 대상이 아닙니다. |
+| `failOnDestructiveChange` | `false` | `true`이면 DROP COLUMN, 좁히는 ALTER, RENAME COLUMN을 실행하기 전에 `OrmError(SCHEMA_SYNC_DESTRUCTIVE_CHANGE)`를 던집니다. 좁히는 ALTER의 예는 `varchar(255) → int`, `varchar(255) → varchar(64)`, 값을 제거하는 MySQL `ENUM` 변경입니다. 프로덕션 안전망으로 유용합니다. synchronize는 어떤 모드에서도 테이블을 삭제하지 않으므로 테이블 삭제는 막을 대상이 아닙니다. |
 | `logDDL` | `false` | `true`이면 실행하는 모든 DDL을 info 레벨로 로그에 출력합니다. CREATE TABLE, ALTER, RENAME, DROP, FULLTEXT INDEX가 모두 해당합니다. `"safe"`에서는 건너뛴 SQL 문도 `[skipped: safe mode]` 접두어를 붙여 함께 출력합니다. `"dry-run"`과 함께 쓰면 실행할 DDL을 모두 확인합니다. |
 
 단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)도 그대로 동작합니다. 같은 기본값으로 정규화하므로 기존 설정을 고치지 않아도 됩니다.
@@ -177,7 +177,7 @@ INFO [SchemaRegistrar] [dry-run] Would CREATE TYPE post_status_enum AS ENUM ('dr
 INFO [SchemaRegistrar] [dry-run] Would ALTER TYPE post_status_enum ADD VALUE IF NOT EXISTS 'archived' BEFORE 'published'
 ```
 
-MySQL과 SQLite에는 이 과정이 없습니다. MySQL은 컬럼 자체의 `ENUM(...)` 타입에 값을 담고 SQLite는 `TEXT`로 저장하기 때문입니다. 다만 MySQL과 MariaDB에서 diff는 타입 이름만 비교하고 그 안의 값 목록은 보지 않습니다. 그래서 기존 컬럼의 값 목록을 바꿔도 동기화되지 않습니다. 값 목록은 마이그레이션으로 바꾸세요.
+MySQL과 SQLite에는 이 과정이 없습니다. MySQL은 컬럼 자체의 `ENUM(...)` 타입에 값을 담고 SQLite는 `TEXT`로 저장하기 때문입니다. MySQL과 MariaDB에서 diff는 값 목록이 바뀌면 컬럼이 바뀐 것으로 봅니다. 전체 동기화(`true`)는 `MODIFY COLUMN`으로 이 변경을 적용합니다. `"safe"`는 다른 ALTER처럼 이 변경을 건너뜁니다. 값을 제거하는 변경은 `failOnDestructiveChange`에서 좁히는 ALTER로 취급합니다. 자세한 내용은 [ENUM 값 동기화](./migrations.md#enum-값-동기화-postgresql)에 있습니다.
 
 ### synchronize가 적용하지 않는 변경
 

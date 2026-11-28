@@ -752,9 +752,14 @@ export class SchemaDiffMigrationGenerator {
     const column = this.escapeId(col.columnName, dialect);
 
     if (dialect === "mysql") {
+      // MODIFY COLUMN replaces the whole definition: the declared default goes
+      // with it, or the column loses its default.
       const typeStr = this.renderColumnType(col, dialect);
       const nullability = col.nullable === false ? " NOT NULL" : " NULL";
-      return [`ALTER TABLE ${table} MODIFY COLUMN ${column} ${typeStr}${nullability}`];
+      const defaultClause = addColumnDefaultClause(col.defaultValue, dialect);
+      return [
+        `ALTER TABLE ${table} MODIFY COLUMN ${column} ${typeStr}${nullability}${defaultClause}`,
+      ];
     }
 
     // PostgreSQL
@@ -791,18 +796,24 @@ export class SchemaDiffMigrationGenerator {
     if (dialect === "mysql") {
       // For a nullability-only change the type is unchanged (restate the
       // declared type with length); for a type change restore the previous
-      // type. Reattach the previous nullability when known.
+      // type — the server's full COLUMN_TYPE when the diff read it, since
+      // the bare name (`varchar`, `enum`) is not a valid column type.
+      // Reattach the previous nullability when known. The default is not
+      // compared, so the declared one is restated as in up().
       const typeStr =
         col.typeChanged === false
           ? this.renderColumnType(col, dialect)
-          : (col.currentType ?? "VARCHAR(255)");
+          : (col.currentColumnType ?? col.currentType ?? "VARCHAR(255)");
       const nullability =
         col.currentNullable === true
           ? " NULL"
           : col.currentNullable === false
             ? " NOT NULL"
             : "";
-      return [`ALTER TABLE ${table} MODIFY COLUMN ${column} ${typeStr}${nullability}`];
+      const defaultClause = addColumnDefaultClause(col.defaultValue, dialect);
+      return [
+        `ALTER TABLE ${table} MODIFY COLUMN ${column} ${typeStr}${nullability}${defaultClause}`,
+      ];
     }
 
     // PostgreSQL

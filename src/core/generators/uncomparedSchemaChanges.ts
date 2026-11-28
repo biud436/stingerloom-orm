@@ -23,10 +23,7 @@ export const UNCOMPARED_CHANGES_DOC =
  * `migrate:generate` adds neither to an existing table, which
  * {@link describeGenerateGaps} states on top of this list.
  */
-function uncomparedKinds(
-  entities: ClazzType<unknown>[],
-  dialect: SchemaDialect,
-): string[] {
+function uncomparedKinds(entities: ClazzType<unknown>[]): string[] {
   const columns = entities.flatMap((entity) => collectEntityColumns(entity));
   const relations = entities.flatMap(owningRelations);
 
@@ -51,12 +48,6 @@ function uncomparedKinds(
     )
   ) {
     kinds.push("changed computed column expressions");
-  }
-  if (
-    dialect === "mysql" &&
-    columns.some((col) => col.options.type === "enum")
-  ) {
-    kinds.push("changed ENUM value lists");
   }
   return kinds;
 }
@@ -87,7 +78,7 @@ export function describeSynchronizeGaps(
   entities: ClazzType<unknown>[],
   dialect: SchemaDialect,
 ): string {
-  const kinds = uncomparedKinds(entities, dialect);
+  const kinds = uncomparedKinds(entities);
   if (dialect === "sqlite" && entities.some((e) => owningRelations(e).length > 0)) {
     kinds.push("foreign key constraints for relations added to an existing table");
   }
@@ -104,11 +95,11 @@ export function describeSynchronizeGaps(
  */
 export function describeGenerateGaps(
   entities: ClazzType<unknown>[],
-  dialect: SchemaDialect,
+  _dialect: SchemaDialect,
 ): string {
   const kinds = [
     "new indexes and foreign key constraints",
-    ...uncomparedKinds(entities, dialect),
+    ...uncomparedKinds(entities),
   ];
   return (
     `migrate:generate does not write these for existing tables: ${kinds.join(", ")}. ` +

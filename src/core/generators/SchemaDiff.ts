@@ -52,12 +52,28 @@ export interface ColumnChange {
    */
   renamedFrom?: string;
   /**
-   * `@Column({ default })` on the added column, so ADD COLUMN gives an
-   * existing table the default a new table gets. Only set on addColumns,
-   * and only when the column declares one.
+   * `@Column({ default })` on the column, set only when the column declares
+   * one. On addColumns, ADD COLUMN gives an existing table the default a new
+   * table gets. On alterColumns, MySQL's MODIFY COLUMN restates it: that
+   * statement replaces the whole column definition, so a default left out of
+   * it is removed from the column.
    */
   defaultValue?: string | number | boolean | null;
   currentType?: string;
+  /**
+   * MySQL / MariaDB: the column's whole current type as the server reports
+   * it in `COLUMN_TYPE` (`varchar(20)`, `enum('a','b')`, `decimal(10,2)`),
+   * where `currentType` holds only the type name. A `down` migration restores
+   * the column to it. Set on alterColumns; undefined on other dialects and on
+   * hand-built diffs.
+   */
+  currentColumnType?: string;
+  /**
+   * MySQL / MariaDB: the values the column's ENUM type holds in the
+   * database, in order. Set on alterColumns of ENUM columns, so an ALTER that
+   * drops a value can be told apart from one that only adds values.
+   */
+  currentEnumValues?: string[];
   nullable?: boolean;
   /**
    * The DB column's current nullability (`is_nullable = "YES"`). Set on
@@ -201,6 +217,8 @@ interface DbColumnInfo {
   character_maximum_length?: number | null;
   numeric_precision?: number | null;
   numeric_scale?: number | null;
+  /** MySQL / MariaDB only: the full type, `COLUMN_TYPE`. */
+  column_type?: string | null;
 }
 
 export interface SchemaDiffOptions {
@@ -325,6 +343,83 @@ function comparisonToken(
   }
   const bare = stripTypeArguments(ddl);
   return dialect === "sqlite" ? sqliteStorageToken(bare) : bare;
+}
+
+/** What a backslash escape in a MySQL `COLUMN_TYPE` literal stands for. */
+const MYSQL_ESCAPES: Record<string, string> = {
+  "0": "\0",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  b: "\b",
+  Z: "\x1a",
+};
+
+/**
+ * The values of a MySQL / MariaDB ENUM column, in order, read from its
+ * `COLUMN_TYPE` (`enum('a','it''s','back\\slash')`). The server spells each
+ * value as a string literal there: a quote is doubled and a backslash starts
+ * an escape. Undefined when the column is not an ENUM.
+ */
+export function parseMySqlEnumValues(
+  columnType: string | null | undefined,
+): string[] | undefined {
+  if (!columnType) return undefined;
+  const match = /^enum\s*\(([\s\S]*)\)$/i.exec(columnType.trim());
+  if (!match) return undefined;
+
+  const body = match[1];
+  const values: string[] = [];
+  let i = 0;
+  while (i < body.length) {
+    if (body[i] !== "'") {
+      i++; // the comma between two values
+      continue;
+    }
+    i++;
+    let value = "";
+    while (i < body.length) {
+      const ch = body[i];
+      if (ch === "\\" && i + 1 < body.length) {
+        const next = body[i + 1];
+        value += MYSQL_ESCAPES[next] ?? next;
+        i += 2;
+      } else if (ch === "'" && body[i + 1] === "'") {
+        value += "'";
+        i += 2;
+      } else if (ch === "'") {
+        i++;
+        break;
+      } else {
+        value += ch;
+        i++;
+      }
+    }
+    values.push(value);
+  }
+  return values;
+}
+
+/**
+ * An ENUM value as MySQL stores it in the column definition: CREATE TABLE
+ * and ALTER TABLE drop trailing spaces from each value.
+ */
+export function storedMySqlEnumValue(value: string): string {
+  return value.replace(/ +$/, "");
+}
+
+/**
+ * Whether the values an entity declares for a MySQL ENUM column differ from
+ * the ones the database column holds. Order counts: it is the order
+ * `ORDER BY` sorts the column in, and the order CREATE TABLE would give it.
+ */
+function mySqlEnumValuesChanged(
+  declared: string[] | undefined,
+  current: string[] | undefined,
+): boolean {
+  if (!declared || declared.length === 0 || !current) return false;
+  if (declared.length !== current.length) return true;
+  return declared.some((value, i) => storedMySqlEnumValue(value) !== current[i]);
 }
 
 /**
@@ -475,6 +570,13 @@ export class SchemaDiff {
           const expectedNullable = col.options?.nullable ?? false;
           const dbNullable =
             (dbCol.is_nullable ?? "").toString().toUpperCase() === "YES";
+          // MySQL carries an ENUM's values in the column type itself, so
+          // they are compared here; PostgreSQL keeps them in a named type,
+          // which detectEnumChanges() compares.
+          const currentEnumValues =
+            dialect === "mysql"
+              ? parseMySqlEnumValues(dbCol.column_type)
+              : undefined;
 
           const alter = (typeChanged: boolean): ColumnChange => ({
             tableName,
@@ -483,6 +585,13 @@ export class SchemaDiff {
             columnType: declared.ddl,
             comparisonType: declared.compare,
             currentType: dbCol.data_type,
+            ...(dbCol.column_type
+              ? { currentColumnType: dbCol.column_type }
+              : {}),
+            ...(currentEnumValues ? { currentEnumValues } : {}),
+            ...(col.options?.default !== undefined
+              ? { defaultValue: col.options.default }
+              : {}),
             // Carry the declared nullability — MySQL's MODIFY COLUMN restates
             // the whole definition, so omitting this silently drops NOT NULL.
             nullable: expectedNullable,
@@ -501,6 +610,11 @@ export class SchemaDiff {
             result.alterColumns.push(alter(true));
           } else if (!this.lengthsMatch(expectedLength, col.options, dbCol)) {
             // Types match but length/precision differs
+            result.alterColumns.push(alter(true));
+          } else if (
+            mySqlEnumValuesChanged(col.options?.enumValues, currentEnumValues)
+          ) {
+            // Both are ENUM, but the value list changed.
             result.alterColumns.push(alter(true));
           } else if (expectedNullable !== dbNullable && !col.options?.primary) {
             // Type and length match, but nullability drifted — emit a
@@ -669,7 +783,7 @@ export class SchemaDiff {
 
     if (dialect === "mysql") {
       rawResult = await queryRunner.query(
-        sql`SELECT COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable, CHARACTER_MAXIMUM_LENGTH as character_maximum_length, NUMERIC_PRECISION as numeric_precision, NUMERIC_SCALE as numeric_scale FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${tableName}`,
+        sql`SELECT COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable, CHARACTER_MAXIMUM_LENGTH as character_maximum_length, NUMERIC_PRECISION as numeric_precision, NUMERIC_SCALE as numeric_scale, COLUMN_TYPE as column_type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${tableName}`,
       );
     } else {
       const pgSchema = schema ?? "public";

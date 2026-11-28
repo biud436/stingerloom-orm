@@ -732,17 +732,19 @@ PostgreSQL에는 근본적인 제약이 있습니다. 기존 enum 타입에서�
 
 **MySQL의 경우**
 
-MySQL은 값을 컬럼 타입 자체에 담습니다(`role ENUM('admin','user','moderator')`). 그런데 diff는 `ENUM`, `enum` 같은 타입 이름만 비교하고 안의 값 목록은 보지 않습니다. 그래서 MySQL / MariaDB에서는 값 목록을 바꿔도 `migrate:generate`와 `synchronize`가 모두 감지하지 못합니다. `MODIFY COLUMN`을 직접 작성하세요.
+MySQL은 값을 컬럼 타입 자체에 담습니다(`role ENUM('admin','user','moderator')`). 그래서 값 목록이 바뀌면 컬럼이 바뀐 것으로 봅니다. diff는 `information_schema.COLUMNS.COLUMN_TYPE`에서 값 목록을 조회합니다. 그리고 `migrate:generate`와 `synchronize`는 모두 `MODIFY COLUMN`으로 컬럼을 다시 정의합니다.
 
 ```sql
 ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NULL;
 ```
 
+값의 순서도 비교합니다. ENUM 컬럼으로 `ORDER BY`하면 값 목록의 순서대로 정렬되기 때문입니다. 그래서 순서만 바꿔도 컬럼을 변경합니다. 값을 제거하는 변경은 좁히는 ALTER입니다. 제거한 값을 가진 행이 있으면 strict SQL 모드에서는 이 SQL 문이 실패합니다. strict SQL 모드가 아니면 그 행의 값은 `''`가 됩니다. `synchronize.failOnDestructiveChange`는 이 변경을 거부합니다. `"safe"` 모드는 다른 ALTER처럼 이 변경을 건너뜁니다. 생성된 `down()`은 컬럼을 이전 값 목록으로 되돌립니다.
+
 ### Schema Diff가 비교하지 않는 항목
 
 아직 없는 테이블은 `synchronize`와 생성된 마이그레이션 모두 빠짐없이 생성합니다. 컬럼, 각 관계의 외래 키 컬럼, 인덱스, 외래 키 제약 조건, `@ManyToMany` 관계의 조인 테이블까지 포함합니다. 생성된 `down()`은 같은 것을 역순으로 삭제합니다.
 
-이미 있는 테이블에서 diff가 비교하는 것은 컬럼입니다. 컬럼의 존재 여부, 타입, 길이, 정밀도, null 허용 여부를 봅니다. 이름 변경, 생성 컬럼, PostgreSQL enum 값도 봅니다. `synchronize`는 여기에 더해 엔티티에 새로 생긴 인덱스와 외래 키를 생성합니다. 아래 표의 나머지는 데이터베이스에 있는 그대로 남습니다. 표의 결과는 PostgreSQL, MariaDB, SQLite에서 직접 측정했습니다.
+이미 있는 테이블에서 diff가 비교하는 것은 컬럼입니다. 컬럼의 존재 여부, 타입, 길이, 정밀도, null 허용 여부를 봅니다. 이름 변경, 생성 컬럼, enum 값도 봅니다. `synchronize`는 여기에 더해 엔티티에 새로 생긴 인덱스와 외래 키를 생성합니다. 아래 표의 나머지는 데이터베이스에 있는 그대로 남습니다. 표의 결과는 PostgreSQL, MariaDB, SQLite에서 직접 측정했습니다.
 
 | 기존 테이블의 변경 | `synchronize` | `migrate:generate` |
 |--------------------|---------------|--------------------|
@@ -750,6 +752,7 @@ ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NU
 | 컬럼 이름 변경(`renamedFrom` 또는 같은 컬럼으로 읽히는 이름) | 적용 | 생성 |
 | `@ComputedColumn` 추가 | 적용 | 생성 |
 | PostgreSQL enum 값 추가 | 적용 | 생성 |
+| MySQL / MariaDB `ENUM` 값 추가·제거·순서 변경 | 적용(모드가 허용하는 만큼) | 생성 |
 | `@Index`, `@UniqueIndex`, 클래스 레벨 `@Index([...])`, `@FullTextIndex` 추가 | 생성 | 생성 안 함 |
 | 관계 추가(`@ManyToOne`, 소유 측 `@OneToOne`) | 컬럼과 제약 조건 생성. SQLite는 기존 테이블에 제약 조건을 추가하지 못하므로 컬럼만 생성 | 컬럼만 |
 | `@ManyToMany` 추가(조인 테이블이 없는 경우) | 조인 테이블 생성 | 생성 |
@@ -760,10 +763,11 @@ ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NU
 | 컬럼 `default` 추가·변경·제거 | 비교 안 함 | 비교 안 함 |
 | 관계 `onDelete` / `onUpdate` 변경 | 비교 안 함 | 비교 안 함 |
 | `@ComputedColumn` 표현식 변경 | 비교 안 함 | 비교 안 함 |
-| MySQL / MariaDB `ENUM` 값 변경 | 비교 안 함 | 비교 안 함 |
 | 엔티티 제거 | 테이블 유지 | 테이블 유지 |
 
 기존 테이블에 추가되는 컬럼은 CREATE TABLE에서처럼 선언한 `default`를 갖고 추가됩니다. 그래서 이미 있던 행에도 그 값이 들어갑니다. 선언한 default가 없으면 NOT NULL 텍스트·숫자·불리언 컬럼은 각각 `''`, `0`, `FALSE`로 채웁니다. 날짜, enum, JSON 같은 그 밖의 NOT NULL 컬럼은 경고와 함께 nullable로 추가합니다. SQLite는 `"(CURRENT_TIMESTAMP)"` 같은 표현식 default로 컬럼을 추가하지 못합니다. 그래서 그 컬럼은 default 없이 추가하고 경고에 컬럼 이름을 남깁니다.
+
+MySQL / MariaDB에서는 `MODIFY COLUMN`으로 컬럼을 변경합니다. 이 SQL 문은 컬럼 정의 전체를 교체합니다. 그래서 이 SQL 문에는 선언한 `default`도 함께 들어갑니다. 덕분에 타입, 길이, ENUM 값이 바뀐 컬럼도 default를 유지합니다. 선언한 default가 데이터베이스의 default와 다르면 이 SQL 문은 데이터베이스의 default를 선언한 값으로 교체합니다.
 
 이런 수정 뒤에 재시작하면 동기화가 성공한 것처럼 보이기 쉽습니다. 그래서 `synchronize`와 `migrate:generate`는 모두 이 사실을 알립니다. 이미 있던 테이블이 하나라도 있으면 `synchronize`는 부팅할 때마다 로그를 한 줄 남깁니다. 이 로그에는 엔티티가 실제로 쓰는 종류만 나열됩니다. 예를 들어 `default`는 어떤 컬럼이 선언했을 때만 목록에 들어갑니다.
 

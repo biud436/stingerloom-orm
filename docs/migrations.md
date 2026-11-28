@@ -722,17 +722,19 @@ This is intentionally cautious. Dropping and recreating an enum type is a multi-
 
 **What about MySQL?**
 
-MySQL keeps the values in the column's own type (`role ENUM('admin','user','moderator')`), and the diff compares only the type's name -- `ENUM` against `enum` -- not the list inside it. A changed value list is therefore not detected on MySQL / MariaDB, by `migrate:generate` or by `synchronize`. Write the `MODIFY COLUMN` by hand:
+MySQL keeps the values in the column's own type (`role ENUM('admin','user','moderator')`), so a changed value list is a change to the column. The diff reads the list from `information_schema.COLUMNS.COLUMN_TYPE`, and both `migrate:generate` and `synchronize` restate the column with `MODIFY COLUMN`:
 
 ```sql
 ALTER TABLE `users` MODIFY COLUMN `role` ENUM('admin','user','moderator') NOT NULL;
 ```
 
+The order of the values counts too: it is the order `ORDER BY` sorts the column in, so a reordered list is applied as well. Removing a value narrows the column. Rows that hold the removed value make the statement fail in strict SQL mode, and without strict mode they are set to `''`. `synchronize.failOnDestructiveChange` refuses such a change, and `"safe"` mode skips it like every other ALTER. The generated `down()` restores the previous list.
+
 ### What the Schema Diff Does Not Compare
 
 A table that does not exist yet is created in full, by `synchronize` and by a generated migration alike: its columns, the foreign key column of every relation, its indexes and foreign key constraints, and the join tables of its `@ManyToMany` relations. The generated `down()` drops the same things in reverse.
 
-On a table that already exists, the diff compares columns: their presence, type, length, precision and nullability, plus renames, generated columns and PostgreSQL enum values. `synchronize` also creates the indexes and foreign keys an entity adds. Everything else in the table below stays as it is in the database. Both were measured on PostgreSQL, MariaDB and SQLite:
+On a table that already exists, the diff compares columns: their presence, type, length, precision and nullability, plus renames, generated columns and enum values. `synchronize` also creates the indexes and foreign keys an entity adds. Everything else in the table below stays as it is in the database. Both were measured on PostgreSQL, MariaDB and SQLite:
 
 | Change to an existing table | `synchronize` | `migrate:generate` |
 |-----------------------------|---------------|--------------------|
@@ -740,6 +742,7 @@ On a table that already exists, the diff compares columns: their presence, type,
 | Column renamed (`renamedFrom`, or a matching name) | Applied | Generated |
 | `@ComputedColumn` added | Applied | Generated |
 | PostgreSQL enum value added | Applied | Generated |
+| MySQL / MariaDB `ENUM` values added, removed or reordered | Applied (as the mode allows) | Generated |
 | `@Index`, `@UniqueIndex`, class-level `@Index([...])` or `@FullTextIndex` added | Created | **Not generated** |
 | Relation added (`@ManyToOne`, owning `@OneToOne`) | Column and constraint created -- SQLite: column only, it cannot add a constraint to an existing table | **Column only** |
 | `@ManyToMany` added (the join table does not exist) | Join table created | Generated |
@@ -750,10 +753,11 @@ On a table that already exists, the diff compares columns: their presence, type,
 | Column `default` added, changed or removed | Not compared | Not compared |
 | Relation `onDelete` / `onUpdate` changed | Not compared | Not compared |
 | `@ComputedColumn` expression changed | Not compared | Not compared |
-| MySQL / MariaDB `ENUM` values changed | Not compared | Not compared |
 | Entity removed | Table kept | Table kept |
 
 A column added to an existing table gets its declared `default`, as it would in CREATE TABLE, so the rows already there take that value. Without one, a NOT NULL text, number or boolean column is backfilled with `''`, `0` or `FALSE`, and any other NOT NULL column (a date, an enum, JSON) is added nullable with a warning. SQLite cannot add a column with an expression default such as `"(CURRENT_TIMESTAMP)"`. There the column is added without it, and a warning names it.
+
+On MySQL / MariaDB, a column is altered with `MODIFY COLUMN`, which replaces the whole column definition. The statement therefore carries the declared `default` as well, so a column whose type, length or ENUM values change keeps its default. When the declared default differs from the one in the database, that statement writes the declared one.
 
 Because a restart after such an edit would otherwise look like a successful sync, both say so. When a table already existed, `synchronize` logs one line per boot listing the kinds your entities can run into -- a default is only listed when some column declares one, and so on:
 

@@ -56,6 +56,7 @@ import {
   SchemaDiff,
   ColumnChange,
   SchemaDiffResult,
+  storedMySqlEnumValue,
   withDeclaredSize,
 } from "./generators/SchemaDiff";
 import { InheritanceResolver } from "./InheritanceResolver";
@@ -296,6 +297,13 @@ export class SchemaRegistrar {
     // other narrowing cases.
     if (col.currentNullable === true && col.nullable === false) {
       return true;
+    }
+
+    // A MySQL ENUM that loses a value: rows holding it make the MODIFY fail
+    // in strict SQL mode, and are set to the empty string without it.
+    if (col.currentEnumValues && col.enumValues) {
+      const kept = new Set(col.enumValues.map(storedMySqlEnumValue));
+      if (col.currentEnumValues.some((value) => !kept.has(value))) return true;
     }
 
     const cur = (col.currentType ?? "").toUpperCase();
@@ -1089,17 +1097,18 @@ export class SchemaRegistrar {
       for (const col of diff.alterColumns) {
         const ddl = this.buildAlterColumnDDL(col, dialect);
         if (!ddl) continue; // SQLite: unsupported
+        const typeChange = `${col.currentColumnType ?? col.currentType} → ${col.columnType}`;
         if (this.isNarrowingAlter(col)) {
           this.assertDestructiveAllowed(
             "ALTER COLUMN (narrowing)",
-            `${col.tableName}.${col.columnName} (${col.currentType} → ${col.columnType})`,
+            `${col.tableName}.${col.columnName} (${typeChange})`,
             policy,
           );
         }
         const change =
           col.typeChanged === false
             ? `nullability ${col.currentNullable ? "NULL" : "NOT NULL"} → ${col.nullable === false ? "NOT NULL" : "NULL"}`
-            : `${col.currentType} → ${col.columnType}`;
+            : typeChange;
         if (isDryRun) {
           this.logger.info(`[dry-run] ${ddl}`);
         } else {
@@ -1436,11 +1445,13 @@ export class SchemaRegistrar {
     }
 
     if (dialect === "mysql") {
-      // MODIFY COLUMN restates the whole definition, so it carries both the
-      // type and the declared nullability — covering a type change, a
-      // nullability-only change, or both at once.
+      // MODIFY COLUMN restates the whole definition, so it carries the type,
+      // the declared nullability and the declared default — covering a type
+      // change, a nullability-only change, or both at once. A default left
+      // out would be removed from the column.
       const nullable = col.nullable === false ? "NOT NULL" : "NULL";
-      return `ALTER TABLE ${tableName} MODIFY COLUMN ${columnName} ${typeExpr} ${nullable}`;
+      const defaultClause = addColumnDefaultClause(col.defaultValue, dialect);
+      return `ALTER TABLE ${tableName} MODIFY COLUMN ${columnName} ${typeExpr} ${nullable}${defaultClause}`;
     }
 
     // PostgreSQL: TYPE and nullability are independent ALTER actions and a
