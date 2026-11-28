@@ -1,42 +1,42 @@
 # 시작하기
 
-설치부터 첫 CRUD까지, 5분이면 돼요.
+설치부터 첫 CRUD까지 5분이면 충분합니다.
 
-## ORM이란?
+## ORM 개요
 
-웹 애플리케이션을 만들 때, 데이터는 서로 전혀 다른 두 세계에 존재해요. TypeScript 코드 안에서 데이터는 **객체**로 존재해요 — 프로퍼티와 메서드를 가진 클래스. 데이터베이스 안에서 데이터는 **테이블**로 존재해요 — 행과 열로 이루어진 원시 값.
+웹 애플리케이션의 데이터는 서로 전혀 다른 두 세계에 있습니다. TypeScript 코드에서 데이터는 속성과 메서드를 가진 객체입니다. 데이터베이스에서 데이터는 행과 컬럼으로 이루어진 테이블입니다.
 
-ORM(Object-Relational Mapper)은 이 두 세계 사이의 변환 계층이에요. SQL 문자열을 직접 작성하는 대신, TypeScript 클래스를 정의하면 ORM이 테이블 생성, 행 삽입, 데이터 조회, 타입이 지정된 객체 반환까지 알아서 처리해요.
+ORM(Object-Relational Mapper)은 두 세계 사이의 변환 계층입니다. SQL 문자열을 직접 쓰지 않고 TypeScript 클래스를 정의하면 됩니다. 그러면 ORM이 테이블 생성, 행 삽입, 데이터 조회, 타입이 있는 객체 반환을 알아서 처리합니다.
 
-일종의 통역사라고 생각하면 돼요. 여러분은 TypeScript를 쓰고, 데이터베이스는 SQL을 쓰고, ORM이 그 사이의 모든 대화를 번역해 줘요.
+ORM을 통역사라고 생각하면 됩니다. 개발자는 TypeScript로 말하고 데이터베이스는 SQL로 말합니다. ORM은 그 사이의 모든 대화를 통역합니다.
 
-ORM 없이:
+ORM 없이 쓰면 다음과 같습니다.
 
 ```typescript
-// raw SQL 문자열을 직접 작성, 결과는 타입 없음
+// raw SQL 문자열을 직접 작성하고 결과에는 타입이 없습니다
 const result = await pool.query('SELECT * FROM "user" WHERE "id" = $1', [1]);
-const user = result.rows[0]; // { id: 1, name: "Alice" } — 타입 안전성 없음
+const user = result.rows[0]; // { id: 1, name: "Alice" }: 타입 안전성 없음
 ```
 
-ORM을 쓰면:
+ORM을 쓰면 다음과 같습니다.
 
 ```typescript
-// 타입이 지정된 객체로 작업, SQL은 ORM이 작성
+// 타입이 있는 객체로 작업하고 SQL은 ORM이 작성합니다
 const user = await em.findOne(User, { where: { id: 1 } });
-// user는 User | null — 타입 안전, 프로퍼티 자동완성
+// user는 User | null: 타입 안전, 속성 자동 완성
 ```
 
-ORM은 양방향으로 변환을 처리해요. 클래스 정의 → `CREATE TABLE`, `save()` 호출 → `INSERT`, `find()` 호출 → `SELECT`. 이 가이드에서 각 연산의 실제 SQL도 함께 보여줄게요.
+ORM은 양방향으로 변환합니다. 클래스 정의는 `CREATE TABLE` 문이 됩니다. `save()` 호출은 `INSERT`가 되고 `find()` 호출은 `SELECT`가 됩니다.
 
 ## 사전 요구사항
 
 - Node.js 22+
-- TypeScript 5.4+ — 코드 우선 `defineEntity` API에 필요합니다 (타입이 5.4에 추가된 `NoInfer`를 사용). 데코레이터 API는 그 이전 TypeScript 5.x에서도 동작합니다
+- TypeScript 5.4+: 코드 우선 `defineEntity` API에 필요합니다. 이 API의 타입이 5.4에 추가된 `NoInfer`를 쓰기 때문입니다. 데코레이터 API는 그 이전의 TypeScript 5.x에서도 동작합니다.
 - MySQL, PostgreSQL, 또는 SQLite
 
 ## 1단계: 설치
 
-코어 패키지와 `reflect-metadata`를 설치하고, DB 드라이버를 추가해요.
+코어 패키지와 `reflect-metadata`를 설치한 뒤 DB 드라이버를 추가합니다.
 
 ::: code-group
 
@@ -54,7 +54,7 @@ yarn add @stingerloom/orm reflect-metadata
 
 :::
 
-DB 드라이버 설치:
+그다음 DB 드라이버를 설치합니다.
 
 ::: code-group
 
@@ -72,7 +72,7 @@ npm install better-sqlite3  # 또는 pnpm add better-sqlite3 / yarn add better-s
 
 :::
 
-PostgreSQL 예시 (한 줄로):
+예를 들어 PostgreSQL 프로젝트는 한 줄로 설치합니다.
 
 ::: code-group
 
@@ -90,17 +90,17 @@ yarn add @stingerloom/orm reflect-metadata pg
 
 :::
 
-### reflect-metadata가 왜 필요할까?
+### reflect-metadata가 필요한 이유
 
-`@Column()`을 클래스 프로퍼티에 붙이면, TypeScript는 컴파일 타임에 해당 프로퍼티의 타입이나 이름 같은 정보를 기록해요. 하지만 기본적으로 이 정보는 JavaScript로 컴파일될 때 사라져요.
+클래스 속성에 `@Column()`을 붙이면 TypeScript는 컴파일 타임에 그 속성의 타입과 이름 같은 정보를 기록합니다. 하지만 기본 설정에서는 이 정보가 JavaScript로 컴파일될 때 사라집니다.
 
-`reflect-metadata`는 이 메타데이터를 **런타임**에도 사용할 수 있게 해주는 폴리필이에요. ORM이 "`email` 프로퍼티의 타입이 뭐지?"라는 질문에 답할 수 있어야 `string` → `VARCHAR`, `number` → `INTEGER`로 자동 매핑할 수 있거든요. 이 폴리필이 없으면 `@Entity()`나 `@Column()` 같은 데코레이터가 클래스 구조를 전혀 알 수 없어요.
+`reflect-metadata`는 이 메타데이터를 런타임에도 쓸 수 있게 하는 폴리필입니다. ORM은 "`email` 속성의 타입은 무엇인가?"라는 질문에 답할 수 있어야 `string`을 `VARCHAR`로, `number`를 `INTEGER`로 자동 매핑할 수 있습니다. 이 폴리필이 없으면 `@Entity()`나 `@Column()` 같은 데코레이터는 클래스 구조를 읽어 낼 방법이 없습니다.
 
-앱 진입점 최상단에서 한 번만 import하면 돼요. 그 이후로 ORM의 모든 데코레이터가 필요한 타입 정보를 읽을 수 있어요.
+앱 진입점 맨 위에서 한 번만 import하면 됩니다. 그러면 ORM의 모든 데코레이터가 필요한 타입 정보를 읽을 수 있습니다.
 
 ### CJS / ESM
 
-CJS/ESM 듀얼 패키지예요. 별도 설정 없이 둘 다 동작해요.
+Stingerloom ORM은 CJS/ESM 듀얼 패키지입니다. `require()`와 `import` 모두 별도 설정 없이 동작합니다.
 
 ```typescript
 // ESM (권장)
@@ -110,7 +110,7 @@ import { EntityManager } from "@stingerloom/orm";
 const { EntityManager } = require("@stingerloom/orm");
 ```
 
-Subpath export도 동일:
+Subpath export도 두 형식을 모두 지원합니다.
 
 ```typescript
 import { StingerloomOrmModule } from "@stingerloom/orm/nestjs";
@@ -119,7 +119,7 @@ import { PostgresDriver } from "@stingerloom/orm/postgres";   // 단일 드라�
 ```
 
 ::: tip 선택사항: class-transformer
-기본적으로 ORM은 의존성 없는 경량 `PlainObjectDeserializer`를 사용해요. `class-transformer`를 설치하면 자동으로 감지되어 역직렬화에 사용돼요. 별도 설정은 필요 없어요.
+기본값으로 ORM은 의존성이 없는 가벼운 `PlainObjectDeserializer`를 사용합니다. `class-transformer`를 설치하면 ORM이 자동으로 감지해서 역직렬화에 사용합니다. 별도 설정은 필요 없습니다.
 
 ```bash
 npm install class-transformer   # 선택사항, 고급 역직렬화용
@@ -128,9 +128,9 @@ npm install class-transformer   # 선택사항, 고급 역직렬화용
 
 ## 2단계: TypeScript 설정
 
-엔티티를 **코드 우선 빌더**(`defineEntity`, 3단계에서 보여줄게요)로 정의한다면 특별한 컴파일러 옵션이 필요 없어요 — 건너뛰어도 돼요.
+3단계에서 다룰 코드 우선 빌더(`defineEntity`)로 엔티티를 정의한다면 특별한 컴파일러 옵션이 필요 없습니다. 이 단계는 건너뛰어도 됩니다.
 
-**데코레이터** 스타일(`@Entity`, `@Column`)은 `tsconfig.json`에 다음이 필요해요:
+데코레이터 스타일(`@Entity`, `@Column`)을 쓰려면 `tsconfig.json`에 다음 설정이 필요합니다.
 
 ```json
 // tsconfig.json
@@ -143,17 +143,17 @@ npm install class-transformer   # 선택사항, 고급 역직렬화용
 }
 ```
 
-각 옵션이 하는 일:
+각 옵션의 역할은 다음과 같습니다.
 
-- `experimentalDecorators` -- `@Entity()`, `@Column()` 문법을 활성화해요. 이 옵션 없이는 TypeScript가 `@`를 문법 오류로 처리해요.
-- `emitDecoratorMetadata` -- 컴파일러에게 `reflect-metadata`가 런타임에 읽을 수 있는 타입 정보를 출력하라고 지시해요. ORM이 `name: string`을 `VARCHAR` 컬럼으로 매핑할 수 있는 게 이 옵션 덕분이에요.
-- `strictPropertyInitialization` -- 보통 TypeScript는 클래스 프로퍼티가 생성자에서 할당되지 않으면 경고해요. 엔티티 프로퍼티는 생성자가 아니라 ORM이 채워주기 때문에, 모든 프로퍼티에 `!:`를 붙이지 않으려면 이 체크를 꺼야 해요.
+- `experimentalDecorators`: `@Entity()`, `@Column()` 문법을 활성화합니다. 이 옵션이 없으면 TypeScript가 `@`를 문법 에러로 처리합니다.
+- `emitDecoratorMetadata`: `reflect-metadata`가 런타임에 읽을 타입 정보를 컴파일러가 출력하게 합니다. ORM이 `name: string`을 `VARCHAR` 컬럼으로 매핑하는 것도 이 옵션 덕분입니다.
+- `strictPropertyInitialization`: TypeScript는 보통 생성자에서 할당하지 않은 클래스 속성을 경고합니다. 하지만 엔티티 속성은 생성자가 아니라 ORM이 채웁니다. 그래서 모든 속성에 `!:`를 붙이지 않으려면 이 검사를 꺼야 합니다.
 
-> 코드 우선 빌더는 이 중 어느 것도 필요 없어요 — 컬럼 타입을 스스로 들고 다니고 데코레이터를 쓰지 않거든요. 그래도 진입점에서 `reflect-metadata`는 한 번 import해야 해요(ORM 코어가 런타임에 사용해요).
+> 코드 우선 빌더에는 이 옵션이 하나도 필요 없습니다. 빌더가 컬럼 타입을 직접 갖고 있고 데코레이터를 쓰지 않기 때문입니다. 그래도 진입점에서 `reflect-metadata`는 한 번 import해야 합니다. ORM 코어가 런타임에 사용하기 때문입니다.
 
 ## 3단계: 엔티티 정의
 
-**엔티티**(Entity)는 데이터베이스 테이블을 나타내고, 각 행이 하나의 레코드예요. 엔티티를 정의하는 권장 방식은 **코드 우선 빌더 API** — `defineEntity`와 `t` 필드 빌더를 쓰는 거예요. 선언을 하나만 작성하면 엔티티의 TypeScript 타입이 거기서 추론돼요.
+**엔티티**(entity)는 데이터베이스 테이블을 나타냅니다. 테이블의 각 행이 엔티티 인스턴스 하나에 대응합니다. 엔티티를 정의할 때 권장하는 방식은 **코드 우선 빌더 API**입니다. `defineEntity`와 `t` 필드 빌더를 쓰는 방식입니다. 선언을 하나만 작성하면 엔티티의 TypeScript 타입은 그 선언에서 추론됩니다.
 
 ```typescript
 // user.entity.ts
@@ -169,15 +169,15 @@ export type User = InferEntity<typeof User>;
 // { id: number; name: string; email: string }
 ```
 
-각 부분이 하는 일:
+각 부분의 역할은 다음과 같습니다.
 
-- `defineEntity("users", { … })` -- `users`라는 이름의 테이블을 정의해요. 반환된 `User`는 ORM이 엔티티를 기대하는 모든 곳(`em.findOne(User, …)`)에서 쓰는 실제 클래스예요.
-- `t.int().primary().generated()` -- 값을 데이터베이스가 자동 생성하는 기본 키(MySQL: auto-increment, PostgreSQL: `SERIAL`).
-- `t.varchar(255)` -- `VARCHAR(255)` 컬럼. 빌더가 SQL 타입과 추론된 TypeScript 타입(`string`)을 동시에 고정하므로, 둘이 절대 어긋날 수 없어요.
-- `InferEntity<typeof User>` -- 스키마에서 행 타입을 복원해요. 별도 인터페이스도, 코드 생성도 없어요.
+- `defineEntity("users", { … })`: `users`라는 이름의 테이블을 정의합니다. 반환된 `User`는 실제 클래스입니다. `em.findOne(User, …)`처럼 ORM이 엔티티를 받는 모든 곳에 씁니다.
+- `t.int().primary().generated()`: 데이터베이스가 값을 자동으로 생성하는 기본 키입니다. MySQL에서는 auto-increment이고 PostgreSQL에서는 `SERIAL`입니다.
+- `t.varchar(255)`: `VARCHAR(255)` 컬럼입니다. 빌더 하나로 SQL 타입과 추론되는 TypeScript 타입(`string`)이 함께 정해집니다. 그래서 두 타입은 절대 어긋나지 않습니다.
+- `InferEntity<typeof User>`: 스키마에서 행 타입을 꺼냅니다. 별도 인터페이스도 코드 생성도 필요 없습니다.
 
-::: tip 데코레이터가 더 좋다면?
-클래스-데코레이터 스타일이 좋다면(또는 NestJS를 쓰고 있다면), 같은 엔티티를 `@Entity` / `@Column`으로도 표현할 수 있고, 동일한 메타데이터를 생성해요:
+::: tip 데코레이터를 선호하는 경우
+클래스와 데코레이터를 쓰는 스타일이 좋거나 NestJS를 쓰고 있다면 같은 엔티티를 `@Entity` / `@Column`으로도 표현할 수 있습니다. 두 방식은 똑같은 메타데이터를 생성합니다.
 
 ```typescript
 import { Entity, PrimaryGeneratedColumn, Column } from "@stingerloom/orm";
@@ -190,10 +190,10 @@ export class User {
 }
 ```
 
-데코레이터 경로는 2단계의 `experimentalDecorators`와 `emitDecoratorMetadata` 컴파일러 옵션이 필요하지만, 위의 코드 우선 빌더는 필요 없어요. 두 스타일은 같은 프로젝트에서 함께 동작해요 — [엔티티 정의하기](./define-entity.md)와 [엔티티 & 컬럼 (데코레이터)](./entities.md)를 참고하세요.
+데코레이터 방식에는 2단계의 `experimentalDecorators`와 `emitDecoratorMetadata` 컴파일러 옵션이 필요합니다. 반면 위의 코드 우선 빌더에는 필요 없습니다. 두 스타일은 같은 프로젝트에서 함께 쓸 수 있습니다. 자세한 내용은 [엔티티 정의하기](./define-entity.md)와 [엔티티 & 컬럼 (데코레이터)](./entities.md)를 참고하세요.
 :::
 
-`synchronize: true`로 설정하면(다음 단계) ORM이 이 DDL을 생성해서 실행해요:
+다음 단계에서 `synchronize: true`로 설정하면 ORM이 다음 DDL을 생성해 실행합니다.
 
 ```sql
 -- PostgreSQL
@@ -211,17 +211,17 @@ CREATE TABLE `users` (
 );
 ```
 
-식별자 래핑 차이를 주목해 주세요: PostgreSQL은 `"큰따옴표"`, MySQL은 `` `백틱` ``을 써요. ORM이 `type` 설정에 따라 자동으로 처리해요.
+식별자를 감싸는 방식이 다르다는 점을 눈여겨보세요. PostgreSQL은 `"큰따옴표"`를 쓰고 MySQL은 `` `백틱` ``을 씁니다. ORM은 `type` 설정에 따라 이 차이를 자동으로 처리합니다.
 
-> **힌트** 엔티티 정의에 대해 더 알아보려면 [엔티티 정의하기](./define-entity.md)(코드 우선)와 [엔티티 & 컬럼](./entities.md)(데코레이터)을 참고하세요.
+> 힌트: 엔티티 정의를 더 알아보려면 [엔티티 정의하기](./define-entity.md)(코드 우선)와 [엔티티 & 컬럼](./entities.md)(데코레이터)을 참고하세요.
 
 ## 4단계: 데이터베이스 연결
 
-`EntityManager`로 DB에 연결해요. `reflect-metadata`는 반드시 **최상단**에서 import해야 해요.
+`EntityManager`로 DB에 연결합니다. `reflect-metadata`는 반드시 맨 위에서 import해야 합니다.
 
 ```typescript
 // main.ts
-import "reflect-metadata";  // 반드시 첫 번째 import이어야 해요
+import "reflect-metadata";  // 반드시 첫 번째 import여야 합니다
 import { EntityManager } from "@stingerloom/orm";
 import { User } from "./user.entity";
 
@@ -245,13 +245,13 @@ async function main() {
 main().catch(console.error);
 ```
 
-`synchronize: true`로 설정하면, ORM이 엔티티 정의와 실제 DB를 비교해서 테이블을 맞춰줘요. `user` 테이블이 아직 없으면 위의 `CREATE TABLE` DDL을 실행하고, 테이블은 있지만 새로 추가한 컬럼이 빠져 있으면 `ALTER TABLE`로 추가해요.
+`synchronize: true`로 설정하면 ORM이 엔티티 정의와 실제 DB를 비교해서 테이블을 맞춥니다. `user` 테이블이 아직 없으면 위의 `CREATE TABLE` DDL을 실행합니다. 테이블은 있지만 새로 추가한 컬럼이 없으면 `ALTER TABLE`로 그 컬럼을 추가합니다.
 
-> **경고** `synchronize: true`는 개발 전용이에요. 프로덕션에서는 엔티티에서 사라진 컬럼이나 테이블을 DROP할 수 있어요. [마이그레이션](./migrations.md)을 사용하면 어떤 변경이 프로덕션 DB에 적용되는지 직접 제어할 수 있어요.
+> 경고: `synchronize: true`는 개발 환경에서만 쓰세요. 프로덕션에서는 엔티티에서 사라진 컬럼을 DROP할 수 있습니다. 대신 [마이그레이션](./migrations.md)을 사용하세요. 마이그레이션을 쓰면 프로덕션 DB에 어떤 변경이 적용되는지 직접 제어할 수 있습니다.
 
 ## 5단계: CRUD 실습
 
-DB 연결이 됐으니 `main()` 안에서 CRUD를 해볼게요.
+DB에 연결했으니 이제 `main()` 함수 안에서 데이터를 생성, 조회, 수정, 삭제해 보겠습니다.
 
 ### 생성 (Create)
 
@@ -265,7 +265,7 @@ console.log("저장된 사용자:", user);
 // { id: 1, name: "John Doe", email: "john@example.com" }
 ```
 
-`em.save()`는 `id`가 없는 것을 보고 INSERT를 실행해요. 실제 생성되는 SQL:
+`em.save()`는 `id`가 없으므로 INSERT를 실행합니다. 실제로 실행되는 SQL은 다음과 같습니다.
 
 ```sql
 -- PostgreSQL
@@ -278,7 +278,7 @@ INSERT INTO `user` (`name`, `email`) VALUES (?, ?)
 -- 이후: SELECT * FROM `user` WHERE `id` = LAST_INSERT_ID()
 ```
 
-사용자가 제공한 값은 SQL 문자열에 직접 들어가지 않아요. `$1`, `$2` (PostgreSQL) / `?` (MySQL)로 표시되는데, 이게 **파라미터 바인딩**이고 SQL injection을 방지해요. PostgreSQL은 `RETURNING *`를 지원해서 INSERT 결과를 한 번의 왕복으로 받을 수 있고, MySQL은 자동 생성된 `id`를 가져오려면 두 번째 쿼리가 필요해요.
+사용자가 넘긴 값은 SQL 문자열에 직접 들어가지 않습니다. 이 값은 PostgreSQL에서는 `$1`, `$2`로, MySQL에서는 `?`로 표시됩니다. 이것이 **파라미터 바인딩**이며 SQL 인젝션을 막습니다. PostgreSQL은 `RETURNING *`를 지원하므로 삽입한 행을 라운드 트립 한 번으로 받습니다. 반면 MySQL은 자동 생성된 `id`를 조회하려면 쿼리를 한 번 더 실행해야 합니다.
 
 ### 조회 (Read)
 
@@ -294,29 +294,29 @@ console.log("단일 사용자:", found); // User | null
 ```
 
 ```sql
--- find() — 전체 조회
+-- find(): 전체 조회
 SELECT "id", "name", "email" FROM "user"
 
--- findOne() — 조건으로 하나 찾기
+-- findOne(): 조건으로 하나 찾기
 SELECT "id", "name", "email" FROM "user" WHERE "id" = $1 LIMIT 1
 -- 파라미터: [1]
 ```
 
-`find()`는 배열을 반환해요 (매칭되는 행이 없으면 빈 배열). `findOne()`은 타입이 지정된 단일 객체 또는 `null`을 반환해요. 한 행만 필요하니까 ORM이 자동으로 `LIMIT 1`을 추가해요.
+`find()`는 배열을 반환합니다. 매칭되는 행이 없으면 빈 배열입니다. `findOne()`은 타입이 있는 객체 하나나 `null`을 반환합니다. 한 행만 필요하므로 ORM이 `findOne()`에 `LIMIT 1`을 자동으로 붙입니다.
 
 ### 수정 (Update)
 
 ```typescript
 // main.ts
 const updated = await em.save(User, {
-  id: 1,               // PK가 있으므로 UPDATE
+  id: 1,               // 기본 키가 있으므로 UPDATE
   name: "John Doe (수정됨)",
   email: "john@example.com",
 });
 console.log("수정된 사용자:", updated);
 ```
 
-`save()`에 PK(`id: 1`)가 포함된 객체를 전달하면, INSERT 대신 UPDATE를 실행해요:
+`save()`에 기본 키(`id: 1`)가 들어 있는 객체를 넘기면 INSERT 대신 UPDATE를 실행합니다.
 
 ```sql
 -- PostgreSQL
@@ -341,11 +341,11 @@ DELETE FROM "user" WHERE "id" = $1
 -- 파라미터: [1]
 ```
 
-여기까지가 첫 CRUD예요. 모든 작업이 메서드 하나로 끝나고, SQL 생성, 파라미터 바인딩, 결과 역직렬화는 ORM이 뒤에서 처리해요.
+이것으로 첫 CRUD를 마쳤습니다. 모든 작업이 메서드 호출 하나로 끝납니다. SQL 생성, 파라미터 바인딩, 결과 역직렬화는 ORM이 뒤에서 처리합니다.
 
 ## 다른 데이터베이스 사용
 
-`type`만 바꾸면 다른 DB를 쓸 수 있어요. 나머지 코드는 동일해요.
+`type`만 바꾸면 다른 DB를 쓸 수 있습니다. 나머지 코드는 같습니다.
 
 | DB | `type` | `port` | 참고 |
 |----|--------|--------|------|
@@ -369,7 +369,7 @@ await em.register({
 ```
 
 ```typescript
-// SQLite 예제 -- host, port, username, password는 비워둡니다
+// SQLite 예제: host, port, username, password는 비워 둡니다
 await em.register({
   type: "sqlite",
   host: "",
@@ -384,18 +384,18 @@ await em.register({
 
 ## NestJS 통합
 
-Stingerloom ORM은 `@stingerloom/orm/nestjs` subpath export를 통해 NestJS 통합 모듈을 제공해요.
+Stingerloom ORM은 `@stingerloom/orm/nestjs` subpath export로 NestJS 통합 모듈을 제공합니다.
 
-### 왜 별도의 모듈이 필요할까?
+### 별도 모듈이 필요한 이유
 
-NestJS는 **의존성 주입**(DI)을 사용해요 — `new`로 직접 객체를 만드는 대신, 필요한 것을 선언하면 NestJS가 알아서 제공해요. ORM 모듈은 이 두 세계를 연결하는 다리예요: `EntityManager`와 리포지토리를 생성한 뒤, NestJS의 DI 컨테이너에 등록해서 서비스의 생성자 파라미터로 주입받을 수 있게 해요.
+NestJS는 **의존성 주입**(Dependency Injection, DI)을 사용합니다. `new`로 객체를 직접 만들지 않고 필요한 것을 선언하면 NestJS가 알아서 제공합니다. ORM 모듈은 ORM과 NestJS를 잇는 다리입니다. 이 모듈은 `EntityManager`와 리포지토리를 생성하고 NestJS의 DI 컨테이너에 등록합니다. 그래서 서비스는 생성자 파라미터로 이 객체를 주입받을 수 있습니다.
 
-흐름은 이렇게 동작해요:
+흐름은 다음과 같습니다.
 
-1. `forRoot()` — `EntityManager`를 생성하고, DB에 연결하고, 글로벌 NestJS 프로바이더로 등록해요.
-2. `forFeature([User])` — `BaseRepository<User>`를 생성하고, `User` 클래스에서 유도된 고유 토큰으로 등록해요.
-3. `@InjectRepository(User)` — 서비스에서 NestJS에게 "User에 대해 등록된 리포지토리를 줘"라고 알려줘요.
-4. NestJS가 의존성을 해석해서 서비스의 생성자에 리포지토리를 전달해요.
+1. `forRoot()`: `EntityManager`를 생성하고 DB에 연결합니다. 그리고 전역 NestJS 프로바이더로 등록합니다.
+2. `forFeature([User])`: `BaseRepository<User>`를 생성하고 `User` 클래스에서 만든 고유 토큰으로 등록합니다.
+3. `@InjectRepository(User)`: 서비스에서 NestJS에 "User용으로 등록된 리포지토리를 달라"고 요청합니다.
+4. NestJS가 의존성을 해석해서 서비스의 생성자에 리포지토리를 넘깁니다.
 
 ### 설치
 
@@ -415,11 +415,11 @@ yarn add @stingerloom/orm reflect-metadata
 
 :::
 
-`@nestjs/common`과 `@nestjs/core`는 선택적 peer dependency예요 -- 모든 NestJS 프로젝트에 이미 있어요.
+`@nestjs/common`과 `@nestjs/core`는 선택적 peer dependency입니다. NestJS 프로젝트에는 이미 설치되어 있습니다.
 
 ### 루트 모듈 등록
 
-`StingerloomOrmModule.forRoot()`로 데이터베이스 연결을 초기화하고, `StingerloomOrmModule.forFeature()`로 엔티티 리포지토리를 등록해요.
+`StingerloomOrmModule.forRoot()`로 데이터베이스 연결을 초기화합니다. 그리고 `StingerloomOrmModule.forFeature()`로 엔티티 리포지토리를 등록합니다.
 
 ```typescript
 // app.module.ts
@@ -465,7 +465,7 @@ export class UsersModule {}
 
 ### 서비스에서 사용
 
-`@stingerloom/orm/nestjs`에서 `InjectRepository`를 import해서 타입이 지정된 리포지토리를 주입해요.
+`@stingerloom/orm/nestjs`에서 `InjectRepository`를 import해서 타입이 있는 리포지토리를 주입합니다.
 
 ```typescript
 // users/users.service.ts
@@ -494,9 +494,9 @@ export class UsersService {
 }
 ```
 
-### 멀티 DB (Named Connections)
+### 멀티 DB (이름 있는 연결)
 
-`forRoot()`와 `forFeature()`에 `connectionName`을 전달하면 여러 데이터베이스를 동시에 쓸 수 있어요.
+`forRoot()`와 `forFeature()`에 `connectionName`을 넘기면 여러 데이터베이스를 동시에 쓸 수 있습니다.
 
 ```typescript
 // app.module.ts
@@ -517,7 +517,7 @@ import { Event } from "./event.entity";
       database: "main",
       entities: [User],
     }),
-    // Named 연결 (PostgreSQL)
+    // 이름 있는 연결 (PostgreSQL)
     StingerloomOrmModule.forRoot({
       type: "postgres",
       host: "localhost",
@@ -534,7 +534,7 @@ import { Event } from "./event.entity";
 export class AppModule {}
 ```
 
-기능 모듈에서 connectionName을 지정해요:
+기능 모듈에서는 connectionName을 지정합니다.
 
 ```typescript
 // analytics/analytics.module.ts
@@ -545,7 +545,7 @@ export class AppModule {}
 export class AnalyticsModule {}
 ```
 
-서비스에서 `@InjectRepository`와 `@InjectEntityManager`에 connectionName을 전달해요:
+서비스에서는 `@InjectRepository`와 `@InjectEntityManager`에 connectionName을 넘깁니다.
 
 ```typescript
 // analytics/analytics.service.ts
@@ -568,16 +568,16 @@ export class AnalyticsService {
 }
 ```
 
-> connectionName을 생략하면 기본값 `"default"`가 사용되므로, 기존 단일 DB 코드는 변경 없이 계속 동작해요.
+> connectionName을 생략하면 기본값 `"default"`가 쓰입니다. 그래서 기존 단일 DB 코드는 바꾸지 않아도 계속 동작합니다.
 
-> **힌트** 완전한 NestJS 예제는 `examples/` 아래에 있어요: `nestjs-cats`(기본 CRUD + EntitySubscriber), `nestjs-blog`(M2M, soft delete, upsert, 59개 e2e 테스트), `nestjs-multitenant`(PostgreSQL 스키마별 테넌트), `nestjs-todo`(최소 CRUD), `nestjs-todo-sqlite`(SQLite), 그리고 `nestjs-linear-clone`(풀 레퍼런스 앱 — 재귀 CTE 이슈 트리, 워크플로 상태 머신, 분석, 워크스페이스별 멀티테넌시).
+> 힌트: 완전한 NestJS 예제는 `examples/` 아래에 있습니다. `nestjs-cats`(기본 CRUD + EntitySubscriber), `nestjs-blog`(ManyToMany, 소프트 삭제, upsert, 59개 e2e 테스트), `nestjs-multitenant`(PostgreSQL 스키마별 테넌트), `nestjs-todo`(최소 CRUD), `nestjs-todo-sqlite`(SQLite), `nestjs-linear-clone`(풀 레퍼런스 앱: 재귀 CTE 이슈 트리, 워크플로 상태 머신, 분석, 워크스페이스별 멀티테넌시)이 있습니다.
 
 ## 다음 단계
 
-기본 설정과 CRUD를 배웠어요. 이제 더 풍부한 엔티티를 정의해 보세요.
+기본 설정과 CRUD를 익혔습니다. 이제 더 풍부한 엔티티를 정의해 보세요.
 
-- [엔티티](./entities.md) -- 컬럼 타입, 인덱스, 소프트 삭제, 생명주기 훅
-- [관계](./relations.md) -- `@ManyToOne`, `@OneToMany`로 테이블 간 관계 정의
-- [엔티티 매니저](./entity-manager.md) -- 검색 옵션, 집계, 페이지네이션
-- [NestJS 통합](./nestjs.md) -- forRoot/forFeature, @InjectRepository, 멀티 DB
-- [설정](./configuration.md) -- 풀링, 타임아웃, Read Replica 및 기타 운영 설정
+- [엔티티](./entities.md): 컬럼 타입, 인덱스, 소프트 삭제, 생명주기 훅
+- [관계](./relations.md): `@ManyToOne`, `@OneToMany`로 테이블 간 관계 정의
+- [엔티티 매니저](./entity-manager.md): 검색 옵션, 집계, 페이지네이션
+- [NestJS 통합](./nestjs.md): forRoot/forFeature, @InjectRepository, 멀티 DB
+- [설정](./configuration.md): 연결 풀, 타임아웃, 읽기 레플리카를 비롯한 운영 설정

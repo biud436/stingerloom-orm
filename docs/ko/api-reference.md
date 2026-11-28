@@ -1,6 +1,6 @@
-# API Reference
+# API 레퍼런스
 
-메서드 시그니처와 타입을 빠르게 찾아볼 수 있는 레퍼런스예요. 사용법과 예제는 각 주제별 문서를 참고해 주세요.
+메서드 시그니처와 타입을 빠르게 찾아보는 레퍼런스입니다. 사용법과 예제는 주제별 문서에 있습니다.
 
 - [Entity Definition](./entities.md) | [Relations](./relations.md) | [EntityManager](./entity-manager.md)
 - [Query Builder](./query-builder.md) | [Transactions](./transactions.md) | [Migrations](./migrations.md)
@@ -13,12 +13,12 @@ import { EntityManager } from "@stingerloom/orm";
 const em = new EntityManager();
 ```
 
-### Connection
+### 연결
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
 | `register` | `(options: DatabaseClientOptions, connectionName?: string): Promise<void>` | DB 연결 및 엔티티 등록 |
-| `getConnectionName` | `(): string` | 커넥션 이름 (기본값: `"default"`) |
+| `getConnectionName` | `(): string` | 연결 이름 (기본값: `"default"`) |
 | `getDriver` | `(): ISqlDriver \| undefined` | SQL 드라이버 반환 |
 | `propagateShutdown` | `(options?: { gracefulTimeoutMs?: number; closeConnections?: boolean }): Promise<boolean>` | 내부 리소스 정리. 제한 시간이 지났는데 아직 실행 중인 쿼리가 있었으면 `false`를 반환합니다. [사용법 ->](./entity-manager-advanced.md#종료-propagateshutdown) |
 
@@ -30,56 +30,56 @@ const em = new EntityManager();
 | `findBy` | `<T>(entity, where): Promise<T[]>` | 필터 우선 목록 조회 (`find({ where })`의 단축형) |
 | `findOne` | `<T>(entity, option): Promise<T \| null>` | 단건 조회 |
 | `findOneBy` | `<T>(entity, where): Promise<T \| null>` | 필터 우선 단건 조회 (`findOne({ where })`의 단축형) |
-| `findOneOrFail` | `<T>(entity, option): Promise<T>` | 단건 조회 (없으면 `EntityNotFoundError` 발생) |
-| `findOneByOrFail` | `<T>(entity, where): Promise<T>` | 필터 우선 단건 조회 (없으면 `EntityNotFoundError` 발생); `findOneBy` + `findOneOrFail` 조합 |
-| `exists` | `<T>(entity, where?, withDeleted?, onlyDeleted?): Promise<boolean>` | 매칭되는 레코드 존재 여부 |
-| `findByPK` | `<T>(entity, pk): Promise<T \| null>` | 기본 키로 조회 |
-| `findByPKs` | `<T>(entity, pks[]): Promise<T[]>` | 여러 기본 키로 조회 |
-| `findByPKsMap` | `<T>(entity, ids: unknown[]): Promise<Map<string \| number \| bigint, T>>` | 배치 조회 후 Map 반환 — O(1) 조회; 복합 PK는 `"col1=v1,col2=v2"` 문자열 키 |
-| `pluck` | `<T, K extends keyof T & string>(entity, column: K, where?): Promise<T[K][]>` | 매칭 행의 특정 컬럼 값을 flat 배열로 반환; `find()`를 재사용하므로 테넌트 범위 / soft-delete / 네이밍 전략 자동 적용 |
+| `findOneOrFail` | `<T>(entity, option): Promise<T>` | 단건 조회 (없으면 `EntityNotFoundError`를 던짐) |
+| `findOneByOrFail` | `<T>(entity, where): Promise<T>` | 필터 우선 단건 조회 (없으면 `EntityNotFoundError`를 던짐). `findOneBy` + `findOneOrFail` 조합 |
+| `exists` | `<T>(entity, where?, withDeleted?, onlyDeleted?): Promise<boolean>` | 매칭되는 행이 있는지 확인 |
+| `findByPK` | `<T>(entity, id: unknown): Promise<T \| null>` | 기본 키로 조회 |
+| `findByPKs` | `<T>(entity, ids: unknown[]): Promise<T[]>` | 여러 기본 키로 조회 |
+| `findByPKsMap` | `<T>(entity, ids: unknown[]): Promise<Map<string \| number \| bigint, T>>` | 배치로 조회하고 기본 키를 키로 하는 `Map`을 반환. 반환한 Map에서는 O(1)로 조회. 복합 기본 키는 `"col1=v1,col2=v2"` 문자열 키 |
+| `pluck` | `<T, K extends keyof T & string>(entity, column: K, where?): Promise<T[K][]>` | 매칭 행의 특정 컬럼 값을 1차원 배열로 반환. `find()`를 재사용하므로 테넌트 범위, 소프트 삭제, 네이밍 전략이 자동으로 적용됨 |
 | `findAndCount` | `<T>(entity, option?): Promise<[T[], number]>` | 목록 + 전체 개수 |
 | `findWithCursor` | `<T>(entity, option?): Promise<CursorPaginationResult<T>>` | 커서 페이지네이션 |
 | `save` | `<T>(entity, item): Promise<InstanceType<ClazzType<T>>>` | INSERT 또는 UPDATE |
 | `delete` | `<T>(entity, criteria): Promise<DeleteResult>` | 영구 삭제 |
-| `softDelete` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete |
-| `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | Soft Delete 복원 |
-| `upsert` | `<T>(entity, data, conflictColumns?): Promise<{ affected: number }>` | INSERT ... ON CONFLICT; MySQL은 INSERT 1, UPDATE 2 반환 |
-| `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<{ affected: number }>` | 다건 upsert; MySQL caveat 동일 적용 |
-| `update` | `<T>(entity, where, data): Promise<{ affected: number }>` | 필터 우선 UPDATE (`updateMany`의 단축형, `delete`와 동일한 인자 순서) |
+| `softDelete` | `<T>(entity, criteria): Promise<DeleteResult>` | 소프트 삭제 |
+| `restore` | `<T>(entity, criteria): Promise<DeleteResult>` | 소프트 삭제 복원 |
+| `upsert` | `<T>(entity, data, conflictColumns?): Promise<{ affected: number }>` | INSERT ... ON CONFLICT. MySQL은 INSERT면 1, UPDATE면 2를 반환 |
+| `batchUpsert` | `<T>(entity, items[], conflictColumns?): Promise<{ affected: number }>` | 다건 upsert. MySQL 주의 사항도 같음 |
+| `update` | `<T>(entity, where, data): Promise<{ affected: number }>` | 필터 우선 UPDATE (`updateMany`의 단축형, `delete`와 같은 인자 순서) |
 | `updateMany` | `<T>(entity, data: UpdateData<T>, options): Promise<{ affected: number }>` | 조건별 일괄 UPDATE (SQL 표현식 지원) |
-| `increment` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | `SET col = col + ?`로 숫자 컬럼에 `by`(기본값 `1`)를 원자적으로 더함; `update()` 안전장치 상속 |
-| `decrement` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | 숫자 컬럼에서 `by`(기본값 `1`)를 원자적으로 뺌; `increment`의 역연산 |
+| `increment` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | 숫자 컬럼에 `by`를 `SET col = col + ?`로 원자적으로 더함. `by` 기본값은 `1`. `update()`의 안전장치를 물려받음 |
+| `decrement` | `<T>(entity, where, column: keyof T & string, by?: number): Promise<{ affected: number }>` | 숫자 컬럼에서 `by`를 원자적으로 뺌. `by` 기본값은 `1`. `increment`의 역연산 |
 
-### 구성 (저장 없음)
+### 인스턴스 생성 (저장 없음)
 
 숨은 Unit of Work 없이 엔티티 인스턴스를 만들거나 준비하는 헬퍼입니다. 결과를 `save()`에 넘기면 저장됩니다.
 
 | 메서드 | 시그니처 | 설명 |
 |--------|-----------|-------------|
-| `create` | `<T>(entity, data?): InstanceType<ClazzType<T>>` | 평범한 객체로부터 하이드레이트된 인스턴스를 만들되 저장은 안 함; 실제 클래스 인스턴스(메서드/게터/트랜스포머 적용). 배열을 넘기면 여러 개 생성 |
-| `merge` | `<T>(target, ...sources): T` | 기존 인스턴스에 부분 패치를 병합하고 그 인스턴스를 반환; 중첩 객체는 재귀 병합, 배열/`Date`/`Buffer`는 통째로 교체, `undefined`는 건너뜀. 메모리 내 연산만 |
-| `preload` | `<T>(entity, partial): Promise<InstanceType<ClazzType<T>> \| undefined>` | `partial`의 PK로 행을 로드한 뒤 나머지를 병합해 반환 — read-modify-write `save()`에 바로 사용. 완전한 PK가 없거나 매칭 행이 없으면 `undefined` (TypeORM과 동일) |
+| `create` | `<T>(entity, data?): InstanceType<ClazzType<T>>` | 평범한 객체로 하이드레이트한 인스턴스를 만들고 저장하지 않음. 메서드, 게터, 트랜스포머가 적용된 실제 클래스 인스턴스. 배열을 넘기면 여러 개 생성 |
+| `merge` | `<T>(target, ...sources): T` | 기존 인스턴스에 부분 패치를 병합하고 그 인스턴스를 반환. 중첩 객체는 재귀 병합. 배열, `Date`, `Buffer`는 교체. `undefined`는 건너뜀. 메모리 안에서만 처리 |
+| `preload` | `<T>(entity, partial): Promise<InstanceType<ClazzType<T>> \| undefined>` | `partial`의 기본 키로 행을 조회하고 나머지를 병합해 반환. read-modify-write `save()`에 바로 사용. 완전한 기본 키가 없거나 매칭 행이 없으면 `undefined` (TypeORM과 같음) |
 
-### Batch
+### 배치
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
 | `insertMany` | `<T>(entity, items[]): Promise<{ affected: number }>` | 다건 INSERT |
-| `insertManyAndReturn` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | 다건 `INSERT … RETURNING *` — 입력 순서대로 수화된 엔티티 인스턴스 반환; PostgreSQL과 SQLite 3.35+ 전용; MySQL에서 호출하면 `OrmError (UNSUPPORTED_DATABASE)` 발생 |
-| `insertIgnore` | `<T>(entity, data, conflictColumns?): Promise<{ affected: number }>` | 멱등 단건 INSERT(새로 삽입하면 1, 일치하는 행이 이미 있으면 0) — `INSERT IGNORE`(MySQL) / `INSERT … ON CONFLICT DO NOTHING`(PostgreSQL / SQLite) |
+| `insertManyAndReturn` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | 다건 `INSERT … RETURNING *`. 하이드레이트한 엔티티 인스턴스를 입력 순서대로 반환. PostgreSQL, SQLite 3.35+, MariaDB 10.5+ 전용. MySQL에서 호출하면 `OrmError (UNSUPPORTED_DATABASE)`를 던짐 |
+| `insertIgnore` | `<T>(entity, data, conflictColumns?): Promise<{ affected: number }>` | 멱등 단건 INSERT. 새로 삽입하면 1, 일치하는 행이 이미 있으면 0. MySQL은 `INSERT IGNORE`, PostgreSQL과 SQLite는 `INSERT … ON CONFLICT DO NOTHING` |
 | `saveMany` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | 다건 INSERT/UPDATE |
 | `deleteMany` | `<T>(entity, ids[]): Promise<DeleteResult>` | 기본 키로 다건 삭제. 복합 키는 행마다 객체 하나 |
 
-### Relation Batch Writes
+### 관계 배치 쓰기
 
-`@ManyToMany` 조인 테이블에 대한 방언-호환 쓰기. owning 측과 `mappedBy` 측을 모두 커버해요. 엔티티 인스턴스가 아니라 기본 키 값을 받습니다. `BaseRepository.relation(ownerId, propertyKey).add(relatedId)` / `.remove(relatedId)`로도 동일하게 호출할 수 있어요.
+`@ManyToMany` 조인 테이블에 쓰는 메서드입니다. 모든 다이얼렉트에서 같은 코드로 동작합니다. 소유 측(owning side)과 `mappedBy` 측을 모두 지원합니다. `attachRelation`과 `detachRelation`은 엔티티 인스턴스가 아니라 기본 키 값을 받습니다. `BaseRepository.relation(ownerId, propertyKey)`의 `.add(relatedId)`와 `.remove(relatedId)`도 같은 동작입니다.
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
-| `attachRelation` | `<T>(entity, ownerId: unknown, propertyKey: keyof T & string, relatedId: unknown, options?: { ignoreExisting?: boolean }): Promise<{ affected: number }>` | 조인 테이블에 (owner, related) 행을 추가합니다. `ignoreExisting`(기본값 `true`)이면 이미 있는 쌍은 중복 키 에러 대신 0행 no-op이 돼요 |
+| `attachRelation` | `<T>(entity, ownerId: unknown, propertyKey: keyof T & string, relatedId: unknown, options?: { ignoreExisting?: boolean }): Promise<{ affected: number }>` | 조인 테이블에 (owner, related) 행을 추가합니다. `ignoreExisting`이 `true`이면 이미 있는 쌍은 중복 키 에러 대신 0행 no-op이 됩니다. `ignoreExisting`의 기본값은 `true`입니다 |
 | `detachRelation` | `<T>(entity, ownerId: unknown, propertyKey: keyof T & string, relatedId: unknown): Promise<{ affected: number }>` | 조인 테이블에서 (owner, related) 행을 제거합니다. 쌍이 없으면 0 |
 
-### Aggregation
+### 집계
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
@@ -89,7 +89,7 @@ const em = new EntityManager();
 | `min` | `<T>(entity, field, where?, withDeleted?, onlyDeleted?): Promise<number>` | 최솟값 |
 | `max` | `<T>(entity, field, where?, withDeleted?, onlyDeleted?): Promise<number>` | 최댓값 |
 
-### Streaming
+### 스트리밍
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
@@ -108,41 +108,41 @@ for await (const batch of em.streamBatch(User, {}, 500)) {
 }
 ```
 
-### Transaction
+### 트랜잭션
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
-| `transaction` | `<T>(callback: (em: EntityManager) => Promise<T>, options?: TransactionOptions): Promise<T>` | 콜백을 트랜잭션으로 실행해요 (deadlock 재시도 옵션 지원) |
+| `transaction` | `<T>(callback: (em: EntityManager) => Promise<T>, options?: TransactionOptions): Promise<T>` | 콜백을 트랜잭션 안에서 실행 (데드락 재시도 옵션 지원) |
 
-### Raw Query / Analysis
+### Raw 쿼리 / 분석
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
 | `query` | `<T>(sql: string \| Sql, params?: unknown[]): Promise<T[]>` | 임의의 SQL 실행 |
-| `query` | `<Row>(shape: RowShape<Row>): RowQuery<Row>`<br>`<Row>(shape: RowShape<Row>, sql: string \| Sql, params?: unknown[]): Promise<Row[]>` | [`defineRow()` shape](./row-shapes.md)로 읽은 타입 있는 raw 행 (태그드 템플릿 러너, 또는 `(shape, sql, params?)`) |
+| `query` | `<Row>(shape: RowShape<Row>): RowQuery<Row>`<br>`<Row>(shape: RowShape<Row>, sql: string \| Sql, params?: unknown[]): Promise<Row[]>` | [`defineRow()` shape](./row-shapes.md)로 읽은 타입 있는 raw 행. 태그드 템플릿 러너나 `(shape, sql, params?)` 형태로 호출 |
 | `explain` | `<T>(entity, option?): Promise<ExplainResult>` | EXPLAIN 분석 |
 
-### Query Builder
+### 쿼리 빌더
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
 | `createQueryBuilder` | `(): BaseRawQueryBuilder` | RawQueryBuilder 생성 (자유 형식 SQL) |
 | `createQueryBuilder` | `<T>(entity, alias): SelectQueryBuilder<T>` | 타입 안전한 SelectQueryBuilder 생성 |
-| `ref` | `<T>(entity: Class<T>, alias?: string): SqlRef<T>` | 엔티티에 대한 타입 안전 `sql`-tag 프록시 (`${ref}` -> `"table" AS alias`, `${ref.col}` -> alias 한정 컬럼). [사용법 ->](./raw-sql.md#타입-참조-typed-references) |
-| `aliasRef` | `(alias: string): AliasRef` | `ref()`의 alias 전용 형제 헬퍼. CTE / derived-table 컬럼 참조에 사용. `${ref}` -> bare alias, `${ref.col}` -> `alias."col"` (`camelToSnakeCase` 적용) |
-| `createUpdateBuilder` | `<T>(entity, alias?): UpdateQueryBuilder<T>` | `qAlias` 술어 DSL 위의 `UPDATE … SET … WHERE … ORDER BY … LIMIT` 빌더. [사용법 ->](./query-builder.md#updatequerybuilder-—-타입-안전한-update-order-by-limit) |
-| `createInsertBuilder` | `<T>(entity, alias?): InsertQueryBuilder<T>` | 충돌 절에서 저장된 행을 읽을 수 있는 `INSERT … ON CONFLICT` 빌더 (`qExcluded`, `greatest`). [사용법 ->](./entity-manager-writes.md#표현식-기반-upsert-—-createinsertbuilder) |
+| `ref` | `<T>(entity: Class<T>, alias?: string): SqlRef<T>` | 엔티티의 타입 안전 `sql`-tag 프록시. `${ref}` -> `"table" AS alias`, `${ref.col}` -> alias 한정 컬럼. [사용법 ->](./raw-sql.md#타입-참조-typed-references) |
+| `aliasRef` | `(alias: string): AliasRef` | `ref()`의 alias 전용 형제 헬퍼. CTE와 파생 테이블의 컬럼 참조에 사용. `${ref}` -> bare alias, `${ref.col}` -> `alias."col"` (`camelToSnakeCase` 적용) |
+| `createUpdateBuilder` | `<T>(entity, alias?): UpdateQueryBuilder<T>` | `qAlias` 조건 DSL 위의 `UPDATE … SET … WHERE … ORDER BY … LIMIT` 빌더. [사용법 ->](./query-builder.md#updatequerybuilder-타입-안전한-update-order-by-limit) |
+| `createInsertBuilder` | `<T>(entity, alias?): InsertQueryBuilder<T>` | 충돌 절에서 저장된 행을 읽을 수 있는 `INSERT … ON CONFLICT` 빌더 (`qExcluded`, `greatest`). [사용법 ->](./entity-manager-writes.md#표현식-기반-upsert-createinsertbuilder) |
 
-### Plugin System
+### 플러그인 시스템
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
 | `extend` | `<TApi>(plugin: StingerloomPlugin<TApi>): this & TApi` | 플러그인 설치 |
 | `hasPlugin` | `(name: string): boolean` | 설치 여부 확인 |
 | `registerColumnType` | `(name: string, definition: CustomColumnTypeDefinition): void` | 커스텀 컬럼 타입을 프로세스 전역에 등록 ([ColumnTypeRegistry](#columntyperegistry)) |
-| `getPluginApi` | `<T>(name: string): T \| undefined` | 이름으로 플러그인 API 가져오기 |
+| `getPluginApi` | `<T>(name: string): T \| undefined` | 이름으로 플러그인 API 조회 |
 
-### Events
+### 이벤트
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
@@ -158,7 +158,7 @@ for await (const batch of em.streamBatch(User, {}, 500)) {
 
 ## BaseRepository
 
-엔티티별 CRUD 래퍼예요. [사용법 ->](./advanced.md)
+엔티티별 CRUD 래퍼입니다. [사용법 ->](./advanced.md)
 
 ```typescript
 const userRepo = em.getRepository(User);
@@ -166,45 +166,45 @@ const userRepo = em.getRepository(User);
 const userRepo = BaseRepository.of(User, em);
 ```
 
-`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findOneByOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `create`, `merge`, `preload`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `createInsertBuilder`, `update`, `updateMany`, `increment`, `decrement` -- EntityManager와 동일한 API를 엔티티 지정 없이 사용할 수 있어요.
+`find`, `findBy`, `findOne`, `findOneBy`, `findOneOrFail`, `findOneByOrFail`, `findWithCursor`, `findAndCount`, `pluck`, `create`, `merge`, `preload`, `save`, `delete`, `remove`, `softDelete`, `restore`, `insertMany`, `insertManyAndReturn`, `insertIgnore`, `saveMany`, `deleteMany`, `batchUpsert`, `count`, `sum`, `avg`, `min`, `max`, `explain`, `upsert`, `persist`, `stream`, `streamBatch`, `createQueryBuilder`, `createUpdateBuilder`, `createInsertBuilder`, `update`, `updateMany`, `increment`, `decrement`는 EntityManager와 같은 API입니다. 다만 엔티티를 지정하지 않고 호출합니다.
 
-**Repository 전용 헬퍼:**
+리포지토리 전용 헬퍼는 다음과 같습니다.
 
 | Method | Signature | 설명 |
 |--------|-----------|------|
-| `relation` | `(ownerId: unknown, propertyKey: keyof T & string): RelationHandle<T>` | owner 하나의 `@ManyToMany` 조인 테이블 행을 다루는 `{ add(relatedId, options?), remove(relatedId) }`. `attachRelation` / `detachRelation` 슈가 |
+| `relation` | `(ownerId: unknown, propertyKey: keyof T & string): RelationHandle<T>` | owner 하나의 `@ManyToMany` 조인 테이블 행을 다루는 `{ add(relatedId, options?), remove(relatedId) }`. `attachRelation`과 `detachRelation`의 단축형 |
 
-서브클래스에서 사용 가능한 protected 필드: `entity` (엔티티 클래스)와 `em` (EntityManager 인스턴스).
+서브클래스에서는 protected 필드 `entity`(엔티티 클래스)와 `em`(EntityManager 인스턴스)을 씁니다.
 
-## Decorators
+## 데코레이터
 
-### Entity
+### 엔티티
 
 | Decorator | 설명 |
 |-----------|------|
-| `@Entity(options?)` | 클래스를 ORM 엔티티로 등록해요. `{ name: "table_name", schema: "public" }` — `schema`는 테이블을 PostgreSQL 스키마에 고정해 테넌트 전략의 영향을 받지 않게 합니다 |
+| `@Entity(options?)` | 클래스를 ORM 엔티티로 등록합니다. 옵션은 `{ name: "table_name", schema: "public" }` 형태입니다. `schema`는 테이블을 PostgreSQL 스키마에 고정합니다. 그래서 그 테이블은 테넌트 전략의 영향을 받지 않습니다 |
 | `@Column(option?)` | 일반 컬럼 |
-| `@PrimaryGeneratedColumn(option?)` | 자동 증가 PK |
-| `@PrimaryColumn(option?)` | 수동 PK |
-| `@Index()` | 단일 컬럼 인덱스 (프로퍼티 레벨) |
+| `@PrimaryGeneratedColumn(option?)` | 자동 증가 기본 키 |
+| `@PrimaryColumn(option?)` | 수동 기본 키 |
+| `@Index()` | 단일 컬럼 인덱스 (속성 레벨) |
 | `@Index(columns, name?)` | 복합 비고유 인덱스 (클래스 레벨) |
 | `@UniqueIndex(columns, name?)` | 복합 고유 인덱스 (클래스 레벨) |
 | `@Version()` | 낙관적 잠금 버전 컬럼 |
-| `@DeletedAt()` | Soft Delete 타임스탬프 |
+| `@DeletedAt()` | 소프트 삭제 타임스탬프 |
 | `@CreateTimestamp()` | INSERT 시 자동 설정 (datetime NOT NULL) |
 | `@UpdateTimestamp()` | INSERT/UPDATE 시 자동 설정 (datetime NOT NULL) |
 
-### Relations
+### 관계
 
 | Decorator | 설명 |
 |-----------|------|
-| `@ManyToOne(getEntity, getProperty, option?)` | Many-to-one (FK 소유 측). `getProperty`는 역방향 프로퍼티를 가리켜요(`(user) => user.posts`) |
-| `@OneToMany(getEntity, option)` | One-to-many (역방향). `option.mappedBy`가 ManyToOne 프로퍼티 이름입니다 |
+| `@ManyToOne(getEntity, getProperty, option?)` | Many-to-one (외래 키 소유 측). `getProperty`는 역방향 속성을 가리킵니다(`(user) => user.posts`) |
+| `@OneToMany(getEntity, option)` | One-to-many (역방향). `option.mappedBy`는 ManyToOne 속성 이름입니다 |
 | `@OneToOne(getEntity, option?)` | One-to-one |
 | `@ManyToMany(getEntity, option?)` | Many-to-many |
-| `@RelationColumn(option?)` | @ManyToOne/@OneToOne의 FK 컬럼 선언 |
+| `@RelationColumn(option?)` | @ManyToOne/@OneToOne의 외래 키 컬럼 선언 |
 
-### Lifecycle Hooks
+### 생명주기 훅
 
 | Decorator | 시점 |
 |-----------|------|
@@ -215,7 +215,7 @@ const userRepo = BaseRepository.of(User, em);
 | `@BeforeDelete()` | DELETE 직전 |
 | `@AfterDelete()` | DELETE 직후 |
 
-### Validation
+### 검증
 
 | Decorator | 설명 |
 |-----------|------|
@@ -225,15 +225,15 @@ const userRepo = BaseRepository.of(User, em);
 | `@Min(n)` | 최소 숫자 값 |
 | `@Max(n)` | 최대 숫자 값 |
 
-### Transaction / DI
+### 트랜잭션 / DI
 
 | Decorator | 설명 |
 |-----------|------|
-| `@Transactional(isolationLevel?)` | 메서드를 트랜잭션으로 감싸요 |
-| `@InjectRepository(Entity, connectionName?)` | NestJS에서 `BaseRepository<T>` 주입 (생략 시 기본 커넥션) |
-| `@InjectEntityManager(connectionName?)` | NestJS에서 `EntityManager` 주입 (생략 시 기본 커넥션) |
+| `@Transactional(isolationLevel?)` | 메서드를 트랜잭션으로 감쌉니다 |
+| `@InjectRepository(Entity, connectionName?)` | NestJS에서 `BaseRepository<T>` 주입 (생략하면 기본 연결) |
+| `@InjectEntityManager(connectionName?)` | NestJS에서 `EntityManager` 주입 (생략하면 기본 연결) |
 
-## Type Reference
+## 타입 레퍼런스
 
 ### FindOption\<T\>
 
@@ -248,9 +248,9 @@ interface FindOption<T> {
   groupBy?: (keyof T)[];
   having?: Sql[];
   relations?: (keyof T | string)[] | RelationsObject<T>;  // 점 경로·객체 형식으로 중첩
-  withCount?: WithCountOption<T>;  // { 개수속성: "관계" } — 관계 문서 참고
+  withCount?: WithCountOption<T>;  // { 개수속성: "관계" }: 관계 문서 참고
   withDeleted?: boolean;
-  onlyDeleted?: boolean;         // Soft delete된 행만 반환 (withDeleted보다 우선)
+  onlyDeleted?: boolean;         // 소프트 삭제된 행만 반환 (withDeleted보다 우선)
   distinct?: boolean;            // SELECT DISTINCT
   timeout?: number;
   useMaster?: boolean;
@@ -270,7 +270,7 @@ enum LockMode {
 
 ### WhereClause\<T\>
 
-각 필드에는 단순 값(동등 비교), 필터 객체, `Sql` 객체, 또는 `null`을 넣을 수 있어요:
+각 필드에는 단순 값, 필터 객체, `Sql` 객체, `null` 가운데 하나를 넣습니다. 단순 값은 동등 비교로 처리합니다.
 
 ```typescript
 type WhereClause<T> = {
@@ -282,19 +282,19 @@ type WhereClause<T> = {
 };
 ```
 
-`null`은 값이라서 `IS NULL`이 됩니다. `undefined`는 키가 없는 것으로 보고 해당 필드를 쿼리에서 뺍니다. 조건을 좁히는 게 아니라 없애는 동작이라, 다음 세 가지 모양은 `InvalidQueryError`로 거부합니다.
+`null`은 값이므로 `IS NULL`이 됩니다. `undefined`는 키가 없는 것으로 보고 그 필드를 쿼리에서 뺍니다. 이 동작은 조건을 좁히지 않고 없앱니다. 그래서 다음 모양은 `InvalidQueryError`로 거부합니다.
 
 | 모양 | 동작 |
 |---|---|
-| `findOne` / `findOneBy` / `findOneOrFail` / `findOneByOrFail` / `exists`에서 명시한 필드가 전부 undefined | 거부 -- 아무 행이나 읽게 되기 때문 |
-| 연산자 피연산자, `in` / 배열 원소, `between` 경계가 undefined | 거부 -- 피연산자는 명시적인 비교이기 때문 |
-| `OR` 분기(또는 배열 형태 원소)가 아무 조건도 만들지 못함 | 거부 -- 빈 분기는 TRUE라 OR가 넓어지기 때문 |
+| `findOne` / `findOneBy` / `findOneOrFail` / `findOneByOrFail` / `exists`에서 명시한 필드가 전부 undefined | 거부. 아무 행이나 조회하게 되기 때문 |
+| 연산자 피연산자, `in` / 배열 원소, `between` 경계가 undefined | 거부. 피연산자는 명시적인 비교이기 때문 |
+| `OR` 분기(또는 배열 형태 원소)가 아무 조건도 만들지 못함 | 거부. 빈 분기는 TRUE이므로 OR의 범위가 넓어지기 때문 |
 
-그 밖의 자리에서는 undefined 필드를 계속 건너뜁니다. 목록 조회, 집계, criteria 쓰기, 그리고 정의된 필드가 같이 있는 where가 여기에 해당해요. `findByPK(E, undefined)`와 `findByPKs(E, [..., undefined])`도 거부합니다. [undefined 값](./entity-manager-querying.md#undefined-값)을 참고하세요.
+그 밖의 자리에서는 undefined 필드를 그대로 건너뜁니다. 목록 조회, 집계, criteria 쓰기, 정의된 필드가 함께 있는 where가 여기에 해당합니다. `findByPK(E, undefined)`와 `findByPKs(E, [..., undefined])`도 거부합니다. 자세한 규칙은 [undefined 값](./entity-manager-querying.md#undefined-값)에 있습니다.
 
-### Filter Operators
+### 필터 연산자
 
-연산자는 필드 타입에 따라 달라져요. `string` 필드에는 `contains`, `startsWith` 같은 추가 연산자가 제공돼요.
+연산자는 필드 타입에 따라 다릅니다. `string` 필드에는 `contains`, `startsWith` 같은 연산자가 더 있습니다.
 
 ```typescript
 // All types: BaseFilter<T>
@@ -307,11 +307,11 @@ type WhereClause<T> = {
 { like, notLike, ilike, contains, startsWith, endsWith }
 ```
 
-사용 예제는 [Querying -- WHERE Filters](./entity-manager-querying.md#where-필터)를 참고해 주세요.
+사용 예제는 [쿼리 & 페이지네이션의 WHERE 필터](./entity-manager-querying.md#where-필터)에 있습니다.
 
 ### WhereOperator (SelectQueryBuilder)
 
-3개 인자를 받는 `where()` 메서드용 타입 안전 연산자 union이에요:
+인자를 3개 받는 `where()` 메서드에서 쓰는 타입 안전 연산자 union입니다.
 
 ```typescript
 type WhereOperator =
@@ -329,7 +329,7 @@ interface TransactionOptions {
   maxRetries?: number;        // Maximum retries (default: 3)
   retryDelayMs?: number;      // Delay between retries in ms (default: 100)
 
-  // @Transactional과의 동등성 (데코레이터 없는 형태) — ./decorator-free.md 참고
+  // @Transactional과 같은 설정을 데코레이터 없이 지정합니다. ./decorator-free.md 참고
   isolationLevel?: TRANSACTION_ISOLATION_LEVEL;  // @Transactional("SERIALIZABLE")
   propagation?: TransactionPropagation | "REQUIRED" | "REQUIRES_NEW" | "NESTED";
   connectionName?: string;                       // 멀티 DB 대상 연결
@@ -373,7 +373,7 @@ class SelectQueryBuilder<T, TResult = T> {
   whereNotHas(relation: string,
               fn?: (sub: SelectQueryBuilder<any>) => void): this;
 
-  // IN (서브쿼리) — 빌드된 SelectQueryBuilder를 받습니다.
+  // IN (서브쿼리): 빌드한 SelectQueryBuilder를 받습니다.
   whereInSubquery(column: keyof T & string,
                   sub: SelectQueryBuilder<any>): this;
   whereNotInSubquery(column: keyof T & string,
@@ -411,11 +411,11 @@ class SelectQueryBuilder<T, TResult = T> {
   appendSql(fragment: Sql): this;
 
   // ── 합성 (Composition) ─────────────────────────────────
-  // 조건부 분기 — condition이 truthy일 때만 fn 적용.
+  // 조건부 분기: condition이 truthy일 때만 fn을 적용합니다.
   when(condition: boolean | (() => boolean),
        fn: (qb: this) => void,
        elseFn?: (qb: this) => void): this;
-  // 재사용 가능한 변환 적용 — fn은 (변형된) qb를 반환.
+  // 재사용하는 변환 적용: fn은 변형한 qb를 반환합니다.
   pipe(fn: (qb: this) => this): this;
   // 엔티티 클래스의 `static scopes`에 선언된 명명 스코프 적용.
   applyScope(name: string): this;
@@ -429,7 +429,7 @@ class SelectQueryBuilder<T, TResult = T> {
   getSql(): { text: string; values: any[] };
   asSubquery(alias: string): Sql;
 
-  // 명명 플레이스홀더로 사전 컴파일 — 재빌드 없이 재실행 가능.
+  // 이름 있는 플레이스홀더로 미리 컴파일합니다. 다시 빌드하지 않고 재실행합니다.
   prepare<P extends Record<string, unknown> = Record<string, unknown>>():
     CompiledQuery<TResult, P>;
   preparePartial<P extends Record<string, unknown> = Record<string, unknown>>():
@@ -438,21 +438,21 @@ class SelectQueryBuilder<T, TResult = T> {
   // ── 실행: 클래스 인스턴스 ──────────────────────────────
   getMany(): Promise<TResult[]>;
   getOne(): Promise<TResult | null>;
-  getOneOrFail(): Promise<TResult>;           // EntityNotFoundError 발생
+  getOneOrFail(): Promise<TResult>;           // EntityNotFoundError를 던짐
   getCount(): Promise<number>;
   getManyAndCount(): Promise<[TResult[], number]>;
   paginate(opts?: { page?: number; pageSize?: number }):
     Promise<PagePaginationResult<TResult>>;
   getCursor(option?: CursorPaginationOption<T>):
-    Promise<CursorPaginationResult<TResult>>;  // 키셋 페이지네이션; 복제본에서 동작 (부수효과 없음)
-  getMap<K extends ColumnOf<T>>(keyColumn: K): Promise<Map<T[K], TResult>>;  // getMany() 결과를 keyColumn 기준 Map으로 인덱싱; 중복 키는 마지막 행이 남음
-  pluck<K extends ColumnOf<T>>(column: K): Promise<Array<T[K]>>;             // 특정 컬럼 값만 flat 배열로; getMany()에 위임
+    Promise<CursorPaginationResult<TResult>>;  // 키셋 페이지네이션. 빌더의 복사본에서 실행하므로 부수 효과 없음
+  getMap<K extends ColumnOf<T>>(keyColumn: K): Promise<Map<T[K], TResult>>;  // getMany() 결과를 keyColumn 기준 Map으로 인덱싱. 중복 키는 마지막 행이 남음
+  pluck<K extends ColumnOf<T>>(column: K): Promise<Array<T[K]>>;             // 특정 컬럼 값만 1차원 배열로 반환. getMany()에 위임
   exists(): Promise<boolean>;
   getExists(): Promise<boolean>;              // exists() 별칭
-  getSum(column: ColumnOf<T>): Promise<number>;   // SUM — 빈 결과 시 0
-  getAvg(column: ColumnOf<T>): Promise<number>;   // AVG — 빈 결과 시 0
-  getMin(column: ColumnOf<T>): Promise<number>;   // MIN — 빈 결과 시 0
-  getMax(column: ColumnOf<T>): Promise<number>;   // MAX — 빈 결과 시 0
+  getSum(column: ColumnOf<T>): Promise<number>;   // SUM: 빈 결과면 0
+  getAvg(column: ColumnOf<T>): Promise<number>;   // AVG: 빈 결과면 0
+  getMin(column: ColumnOf<T>): Promise<number>;   // MIN: 빈 결과면 0
+  getMax(column: ColumnOf<T>): Promise<number>;   // MAX: 빈 결과면 0
   explain(): Promise<ExplainResult>;          // 쿼리 플랜
 
   // ── 실행: 타입이 있는 plain 객체 (역직렬화 없음) ───────
@@ -463,22 +463,20 @@ class SelectQueryBuilder<T, TResult = T> {
     Promise<PagePaginationResult<TResult>>;
 
   // ── 실행: untyped 또는 coerce된 plain 객체 ────────────
-  // `T`로 행 모양을 선언해요. 선택적인 `coerce` 맵으로
-  // 드라이버 네이티브 문자열 값(mysql2 BIGINT/DECIMAL,
-  // pg NUMERIC, 날짜 컬럼)을 숫자/Date로 직접 매핑할 수 있어요.
+  // `T`로 행 모양을 선언합니다.
+  // 선택 옵션인 `coerce` 맵은 드라이버가 문자열로 반환한 값을 숫자나 Date로 매핑합니다.
+  // mysql2 BIGINT/DECIMAL, pg NUMERIC, 날짜 컬럼이 그 예입니다.
   getRawMany<T = Record<string, unknown>>(options?: RawResultOptions<T>): Promise<T[]>;
   getRawOne<T = Record<string, unknown>>(options?: RawResultOptions<T>): Promise<T | null>;
 }
 
-// RawResultOptions<T> — 키별 coercion 맵.
+// RawResultOptions<T>: 키별 coercion 맵.
 //   coerce: { [K in keyof T]?: "number" | "bigint" | "boolean" | "date" | (raw: unknown) => T[K] }
 ```
 
-**모듈 헬퍼 — `qAlias`**
-
-`qAlias()`는 `SelectQueryBuilder`와 함께 export됩니다.
-[QueryDSL 표현식](./query-builder-querydsl.md)에서 사용되는 타입 프록시를
-반환해 컬럼 참조가 컴파일 타임 리네임에서도 안전하게 살아남도록 합니다:
+모듈 헬퍼 `qAlias()`는 `SelectQueryBuilder`와 함께 export합니다.
+`qAlias()`는 [QueryDSL 표현식](./query-builder-querydsl.md)에서 쓰는 타입 프록시를 반환합니다.
+그래서 컴파일 타임에 이름을 바꿔도 컬럼 참조가 그대로 유지됩니다.
 
 ```typescript
 import { qAlias } from "@stingerloom/orm";
@@ -489,32 +487,32 @@ const u = qAlias(User, "u");
 qb.where(u.email, "alice@example.com");
 ```
 
-`qAlias()`는 런타임에 컬럼명이 정해지는 케이스(저장된 필터 컴파일러, 동적 컬럼 DSL)를 위해 `i.field(name)` / `i.jsonField(name)` 동적 액세서도 제공해요. 또한 `@ManyToOne` / `@OneToOne`의 `fkProperty` 옵션을 사용하면 관용적이지 않은 FK 백업 속성 이름도 별도의 `@Column` 중복 없이 리졸버에 알릴 수 있어요.
+`qAlias()`는 `i.field(name)`과 `i.jsonField(name)` 동적 접근자도 제공합니다. 호출할 때 문자열로 컬럼을 고르는 경우에 씁니다. 저장된 필터 컴파일러와 동적 컬럼 DSL이 그 예입니다. `@ManyToOne`과 `@OneToOne`의 `fkProperty` 옵션은 관례와 다른 외래 키 속성 이름을 리졸버가 매핑하게 합니다. 이때 `@Column`을 따로 중복 선언하지 않아도 됩니다.
 
 ### Expressions (QueryDSL 헬퍼)
 
-`Expressions` 네임스페이스(보통 `as exp`로 alias)는 `select()`, `where()`, `groupBy()`, `orderBy()`, `having()` 안에서 사용하는 방언-호환 scalar / aggregate / 분석 헬퍼를 묶어 둔 곳이에요. 각 헬퍼는 파라미터 바인딩을 끝까지 보존하는 합성 가능한 `ScalarExpression` / `AggregateExpression` / `WindowBuilder`를 반환해요.
+`Expressions` 네임스페이스는 scalar, aggregate, 분석 헬퍼를 묶은 것입니다. 보통 `as exp`로 alias를 붙입니다. 이 헬퍼는 `select()`, `where()`, `groupBy()`, `orderBy()`, `having()` 안에서 쓰고 모든 다이얼렉트에서 동작합니다. 각 헬퍼는 `ScalarExpression`, `AggregateExpression`, `WindowBuilder` 가운데 하나를 반환합니다. 반환값은 서로 조합되고 파라미터 바인딩을 끝까지 유지합니다.
 
-전체 표면 — [QueryDSL 가이드](./query-builder-querydsl.md)를 참고해주세요. 빠른 요약:
+전체 목록은 [QueryDSL 가이드](./query-builder-querydsl.md)에 있습니다. 요약은 다음과 같습니다.
 
 | Family | Members |
 |--------|---------|
 | Null 처리 | `coalesce(a, b, …)`, `nullif(a, b)` |
-| 행 단위 최대 / 최소 | `greatest(a, b, …)`, `least(a, b, …)` — `col.greatest(…)` / `col.least(…)` 체인도 가능. PostgreSQL·MySQL은 `GREATEST`/`LEAST`, SQLite는 스칼라 `MAX`/`MIN`. NULL 처리는 엔진별로 다름 |
+| 행 단위 최대 / 최소 | `greatest(a, b, …)`, `least(a, b, …)`. `col.greatest(…)` / `col.least(…)` 체인도 가능. PostgreSQL·MySQL은 `GREATEST`/`LEAST`, SQLite는 스칼라 `MAX`/`MIN`. NULL 처리는 엔진별로 다름 |
 | Cast | `.stringValue / intValue / longValue / bigintValue / floatValue / booleanValue` (column 또는 scalar) |
 | Date / time | `currentDate / currentTime / currentTimestamp`, `dateTrunc(value, unit)`, `dateDiff(a, b, unit)`, `.addYears/Months/Days/Hours/Minutes/Seconds(n)`, `.year / month / day / hour / minute / second / dayOfWeek / dayOfMonth / dayOfYear / week` |
 | Aggregate | `count(arg)`, `sum / avg / min / max / aggregate(scalarExpr)` (`ColumnExpression`에서도 체이닝 가능) |
-| Ordered-set aggregate *(PostgreSQL 네이티브; MySQL / SQLite는 `UNSUPPORTED_OPERATION` 발생)* | `percentileCont(p, orderBy)`, `percentileDisc(p, orderBy)`, `mode(orderBy)` |
-| Window 함수 | `rowNumber / rank / denseRank / ntile(n) / percentRank / cumeDist`, 위치 기반 `lag / lead(expr, offset?, default?) / firstValue / lastValue / nthValue(expr, n)`. 전부 `.partitionBy(...)` / `.orderBy(...)` / `.rowsBetween(...)` / `.rangeBetween(...)` 후 `.as(alias)`로 마감하는 `WindowBuilder`를 반환해요. |
+| Ordered-set aggregate *(PostgreSQL 네이티브. MySQL과 SQLite는 `UNSUPPORTED_OPERATION`을 던짐)* | `percentileCont(p, orderBy)`, `percentileDisc(p, orderBy)`, `mode(orderBy)` |
+| Window 함수 | `rowNumber / rank / denseRank / ntile(n) / percentRank / cumeDist`, 위치 기반 `lag / lead(expr, offset?, default?) / firstValue / lastValue / nthValue(expr, n)`. 전부 `.partitionBy(...)` / `.orderBy(...)` / `.rowsBetween(...)` / `.rangeBetween(...)` 후 `.as(alias)`로 마감하는 `WindowBuilder`를 반환합니다. |
 | CASE | `caseBuilder()`, `cases(subject)`, 그리고 단축형 `iff(cond, a, b)`, `mapValues(subject, {…}, default?)`, `buckets(subject, [[t, r], …], default?)` |
 | 서브쿼리 | `exists(subQb)`, `notExists(subQb)`, column `.in(subQb) / .notIn(subQb) / .eq(subQb)` … |
 | 논리 | `and(...)`, `or(...)`, `not(cond)` over `ConditionLike` (column / JSON-path / aggregate / scalar) |
 | 문자열 | `.toLowerCase / toUpperCase / trim / length / substring(s, e?) / concat(...args) / indexOf(needle) / replace(from, to)`, LIKE-safe `.startsWith / endsWith / contains` (`*IgnoreCase` 형제) |
 | 산술 / 수학 | `.add / sub / mul / div / mod / neg / abs / floor / ceil / round(digits?) / sqrt`, `random()` |
-| 전문 검색 | `Conditions.fullTextSearch(columns, term, { language?, mode? })` — MySQL `MATCH … AGAINST`, PostgreSQL `to_tsvector @@ to_tsquery` |
-| 탈출구 | ``Expressions.raw<T>(sql`…`)``, `qb.selectSchema(zodSchema)` (Zod / Valibot / Effect — `TResult` 좁히기) |
+| 전문 검색 | `Conditions.fullTextSearch(columns, term, { language?, mode? })`. MySQL은 `MATCH … AGAINST`, PostgreSQL은 `to_tsvector @@ to_tsquery` |
+| 탈출구 | ``Expressions.raw<T>(sql`…`)``, `qb.selectSchema(zodSchema)` (Zod / Valibot / Effect, `TResult` 좁히기) |
 
-### RawQueryBuilder -- Set Operations, CTE, Window Functions
+### RawQueryBuilder: 집합 연산, CTE, 윈도 함수
 
 [사용법 ->](./query-builder.md)
 
@@ -549,7 +547,7 @@ interface WindowColumn {
 
 ### RowValidator / ArrayValidator
 
-[사용법 ->](./query-builder-execution.md#결과-검증-—-validate)
+[사용법 ->](./query-builder-execution.md#결과-검증-validate)
 
 ```typescript
 // Row-level: validates each row individually
@@ -619,7 +617,7 @@ interface ColumnOption {
   scale?: number;
   enumValues?: string[];   // PostgreSQL ENUM
   enumName?: string;       // PostgreSQL ENUM type name
-  renamedFrom?: string;    // 예전 DB 컬럼 이름 — 이름 변경을 drop + add로 보지 않게 합니다
+  renamedFrom?: string;    // 예전 DB 컬럼 이름: 이름 변경을 drop + add로 보지 않게 합니다
 }
 ```
 
@@ -636,12 +634,12 @@ type KnownColumnType =
 type ColumnType = KnownColumnType | (string & {});
 ```
 
-20개의 내장 `KnownColumnType` 값은 자동 완성으로 제공됩니다. 그 외에도
-[`ColumnTypeRegistry`](#columntyperegistry)에 등록된 임의 문자열
-(예: `"geometry"`, `"vector"`)도 허용되며, 다이얼렉트별 DDL은 등록된
-정의에서 해석됩니다.
+내장 `KnownColumnType` 값 20개는 자동 완성으로 제공됩니다.
+[`ColumnTypeRegistry`](#columntyperegistry)에 등록한 임의 문자열도 허용합니다.
+`"geometry"`, `"vector"`가 그 예입니다.
+다이얼렉트별 DDL은 등록된 정의로 해석합니다.
 
-### Relation Options
+### 관계 옵션
 
 ```typescript
 interface ManyToOneOption {
@@ -679,16 +677,16 @@ interface ManyToManyOption<T> {
 type CascadeOption = boolean | ("insert" | "update" | "delete" | "remove")[];
 
 interface RelationColumnOption {
-  name?: string;              // FK 컬럼명 (생략 시 {propertyName}Id로 추론)
-  type?: ColumnType;          // FK 컬럼 타입 (생략 시 대상 PK 타입 추론)
+  name?: string;              // 외래 키 컬럼 이름 (생략하면 {propertyName}Id로 추론)
+  type?: ColumnType;          // 외래 키 컬럼 타입 (생략하면 대상 기본 키 타입으로 추론)
   nullable?: boolean;         // 기본값: true
-  referencedColumn?: string;  // 대상 참조 컬럼 (기본값: PK)
+  referencedColumn?: string;  // 대상 참조 컬럼 (기본값: 기본 키)
 }
 ```
 
-> `mappedBy`와 `inverseSide`는 대상 엔티티의 프로퍼티 이름 자동 완성을 지원해요. 임의의 문자열도 허용돼요.
+> `mappedBy`와 `inverseSide`는 대상 엔티티의 속성 이름을 자동 완성합니다. 임의의 문자열도 허용합니다.
 
-### Configuration Options
+### 설정 옵션
 
 ```typescript
 interface DatabaseClientOptions {
@@ -706,7 +704,7 @@ interface DatabaseClientOptions {
   queryTimeout?: number;
   pool?: PoolOptions;
   retry?: RetryOptions;
-  onConnectionError?: (error: OrmError) => void; // 구문 밖에서 끊긴 풀 연결 (PostgreSQL, MySQL/MariaDB)
+  onConnectionError?: (error: OrmError) => void; // SQL 문을 실행하지 않는 동안 끊긴 풀 연결 (PostgreSQL, MySQL/MariaDB)
   logging?: boolean | LoggingOptions;
   replication?: ReplicationConfig;
   plugins?: StingerloomPlugin[];  // Auto-install plugins on register()
@@ -781,7 +779,7 @@ interface DeleteEvent<T> {
   entityClass: new (...args: any[]) => T;
   criteria: any;
   manager: EntityManager;
-  affected?: number; // after 이벤트에만 설정되며, 일치하는 행이 없으면 after 이벤트는 발화하지 않음
+  affected?: number; // after 이벤트에만 설정합니다. 일치하는 행이 없으면 after 이벤트가 발생하지 않습니다
 }
 ```
 
@@ -832,7 +830,7 @@ interface ITenantMigrationRunner {
 interface TenantSyncResult { created: string[]; skipped: string[]; }
 ```
 
-구현체: `PostgresTenantMigrationRunner`, `MySqlTenantMigrationRunner`, `SqliteTenantMigrationRunner`
+구현체는 `PostgresTenantMigrationRunner`, `MySqlTenantMigrationRunner`, `SqliteTenantMigrationRunner`입니다.
 
 ### Migration
 
@@ -890,7 +888,7 @@ interface RenamedColumn {
 }
 ```
 
-`SchemaDiff#diff(entities, queryRunner, dialect)`가 이 값을 반환합니다. 프로그래밍 방식 흐름은 [마이그레이션](./migrations.md#프로그래밍-방식-api)에서 다룹니다.
+`SchemaDiff#diff(entities, queryRunner, dialect)`가 이 값을 반환합니다. 프로그래밍 방식 흐름은 [마이그레이션](./migrations.md#프로그래밍-방식-api)에 있습니다.
 
 ### MigrationHooks
 
@@ -924,9 +922,9 @@ class MigrationCli {
 type MigrationCommand = "migrate:run" | "migrate:rollback" | "migrate:status" | "migrate:generate";
 ```
 
-CLI 실행: `npx stingerloom migrate:run|rollback|status|generate`
+CLI 실행 명령은 `npx stingerloom migrate:run|rollback|status|generate`입니다.
 
-관련 클래스: `MigrationRunner`, `MigrationCli`, `SchemaDiff`, `SchemaDiffMigrationGenerator`
+관련 클래스는 `MigrationRunner`, `MigrationCli`, `SchemaDiff`, `SchemaDiffMigrationGenerator`입니다.
 
 ### EntityMetadataView
 
@@ -1000,7 +998,7 @@ interface CustomColumnTypeDefinition {
 }
 ```
 
-### Test Utilities
+### 테스트 유틸리티
 
 ```typescript
 // @stingerloom/orm/testing
@@ -1015,10 +1013,11 @@ class InMemoryDriver implements Partial<ISqlDriver>;
 
 [사용법 ->](./seeding.md)
 
-`src/seeding/`에서 재내보내집니다. 추상 클래스 `Seeder`를 상속한 클래스를
-`SeederRunner`와 짝지어 데이터베이스를 재현 가능한 픽스처나 프로덕션 기본값으로
-채웁니다. 실행 이력은 `__seeds` 테이블에 추적되어 각 시더는 환경당 한 번만
-실행됩니다.
+`src/seeding/`에서 다시 export합니다.
+추상 클래스 `Seeder`를 상속한 클래스를 `SeederRunner`와 함께 씁니다.
+그러면 데이터베이스에 재현 가능한 픽스처나 프로덕션 기본값을 채웁니다.
+실행 이력은 `__seeds` 테이블에 기록합니다.
+그래서 각 시더는 환경마다 한 번만 실행합니다.
 
 ```typescript
 interface SeederContext {
@@ -1028,7 +1027,7 @@ interface SeederContext {
 abstract class Seeder {
   readonly name: string;                       // 기본값은 constructor.name
   abstract run(ctx: SeederContext): Promise<void>;
-  revert?(ctx: SeederContext): Promise<void>;  // 선택, revertLast()에서 호출
+  revert?(ctx: SeederContext): Promise<void>;  // 선택 사항. revertLast()에서 호출
 }
 
 interface SeederResult {
@@ -1067,12 +1066,14 @@ class SeederRunner {
 
 [사용법 ->](./introspection.md)
 
-`src/introspection/`(그리고 `@stingerloom/orm/introspection`)에서 재내보내집니다.
-방언별 카탈로그(`pg_catalog`, `INFORMATION_SCHEMA`, SQLite `PRAGMA`)를 방언 중립적인
-스키마 IR로 읽고, 거기서 데코레이터 또는 code-first 스타일의 엔티티 소스 코드를
-생성합니다. 컬럼마다 ORM 타입은 ORM 자신의 컬럼 정의 빌더로 후보를 렌더링해 고르므로,
-엔티티가 재현하지 못하는 부분에는 `// NOTE:` 주석이 붙습니다. 출력은 라운드 트립이
-안정적이라 — 생성된 엔티티를 빈 스키마에 다시 적용한 뒤 인트로스펙트해도 같은 파일이 나옵니다.
+`src/introspection/`과 `@stingerloom/orm/introspection`에서 다시 export합니다.
+다이얼렉트별 카탈로그를 다이얼렉트에 중립적인 스키마 IR로 읽습니다.
+카탈로그는 `pg_catalog`, `INFORMATION_SCHEMA`, SQLite `PRAGMA`입니다.
+그리고 이 IR로 데코레이터 스타일이나 code-first 스타일의 엔티티 소스 코드를 생성합니다.
+컬럼마다 ORM 타입은 ORM의 컬럼 정의 빌더로 후보를 렌더링해서 고릅니다.
+그래서 엔티티가 재현하지 못하는 부분에는 `// NOTE:` 주석이 붙습니다.
+출력은 라운드 트립에서 안정적입니다.
+생성된 엔티티를 빈 스키마에 다시 적용하고 인트로스펙트해도 같은 파일이 나옵니다.
 
 ```typescript
 type IntrospectionDialect = "mysql" | "postgres" | "sqlite";
@@ -1088,7 +1089,7 @@ interface GeneratedEntity {
 interface IntrospectionGeneratorOptions {
   schema?: string;                                  // 기본값: "public" (PostgreSQL)
   excludeTables?: string[];
-  includeTables?: string[];                         // 설정 시, 이 테이블들만 생성
+  includeTables?: string[];                         // 설정하면 이 테이블만 생성
   codeBuilderOptions?: EntityCodeBuilderOptions;    // 예: { importPath: "../orm" }
 }
 
@@ -1112,7 +1113,7 @@ class IntrospectionGenerator {
   /** @deprecated readTable()을 쓰세요 */ getIndexes(table: string): Promise<DbIndex[]>;
 }
 
-// 편의 래퍼 — DatabaseClient로 접속해 파일을 디스크에 기록합니다.
+// 편의 래퍼: DatabaseClient로 연결하고 파일을 디스크에 기록합니다.
 // `npx stingerloom introspect` CLI 명령의 백엔드이기도 합니다.
 interface IntrospectionCliOptions {
   outputDir?: string;             // 기본값: "./entities"
@@ -1133,7 +1134,7 @@ function runIntrospect(
   cliOptions?: IntrospectionCliOptions,
 ): Promise<IntrospectionCliResult>;
 
-// 하위 레벨 헬퍼 (역시 재내보내짐)
+// 하위 레벨 헬퍼 (이것도 다시 export합니다)
 class EntityCodeBuilder {
   constructor(options?: EntityCodeBuilderOptions);
   build(tableName: string, columns: DbColumn[],
@@ -1159,9 +1160,9 @@ class IntrospectionTypeMapper {
 }
 ```
 
-## Errors
+## 에러
 
-ORM이 던지는 에러는 모두 `OrmError`입니다. `OrmErrorCode`의 `code`, 해결 힌트인 `suggestion`(없으면 `null`), 다른 에러를 감쌀 때의 `cause`를 담습니다. `suggestion`은 `message` 끝에도 `Suggestion:` 줄로 붙습니다. 고유 키나 외래 키를 어긴 문장은 [`UniqueConstraintViolationError` 또는 `ForeignKeyViolationError`](#제약-조건-위반)로 실패합니다. 그 밖에 문장이 데이터베이스에서 받는 에러(NOT NULL이나 CHECK 위반, 문법 오류 등)는 드라이버가 던진 그대로 올라옵니다.
+ORM이 던지는 에러는 모두 `OrmError`입니다. `OrmError`는 `OrmErrorCode`의 `code`, 해결 힌트인 `suggestion`, 다른 에러를 감쌀 때의 `cause`를 담습니다. `suggestion`이 없으면 값은 `null`입니다. `suggestion`은 `message` 끝에도 `Suggestion:` 줄로 붙습니다. 고유 키나 외래 키를 어긴 SQL 문은 [`UniqueConstraintViolationError` 또는 `ForeignKeyViolationError`](#제약-조건-위반)로 실패합니다. SQL 문이 데이터베이스에서 받는 그 밖의 에러는 드라이버가 던진 그대로 전달됩니다. NOT NULL이나 CHECK 위반, 문법 에러가 그 예입니다.
 
 ```typescript
 try {
@@ -1175,7 +1176,7 @@ try {
 }
 ```
 
-`ValidationError`는 `actual`과 `expected`도 담습니다. `actual`은 측정한 값입니다. `@MinLength` / `@MaxLength`는 길이, `@Min` / `@Max`는 값 자체예요.
+`ValidationError`는 `actual`과 `expected`도 담습니다. `actual`은 측정한 값입니다. `@MinLength`와 `@MaxLength`에서는 길이이고 `@Min`과 `@Max`에서는 값 자체입니다.
 
 ```typescript
 try {
@@ -1189,35 +1190,35 @@ try {
 }
 ```
 
-`cause`에는 `ORM_CONNECTION_FAILED`, `ORM_SCHEMA_SYNC_FAILED`, `ORM_QUERY_TIMEOUT`, `ORM_UNIQUE_VIOLATION`, `ORM_FK_VIOLATION` 뒤의 드라이버 에러와 `ORM_TRANSACTION_ROLLBACK_FAILED` 뒤의 원래 에러가 담깁니다. 그래서 그 에러의 필드를 그대로 읽을 수 있습니다. `(e.cause as { code?: string }).code`는 `"ECONNREFUSED"`, `"28P01"` 같은 PostgreSQL SQLSTATE, `"ER_BAD_DB_ERROR"` 같은 MySQL 코드입니다([어떤 실패가 `register()`를 실패시키는지](./configuration.md#실패한-시도로-치는-경우)).
+`cause`에는 `ORM_CONNECTION_FAILED`, `ORM_SCHEMA_SYNC_FAILED`, `ORM_QUERY_TIMEOUT`, `ORM_UNIQUE_VIOLATION`, `ORM_FK_VIOLATION` 뒤의 드라이버 에러와 `ORM_TRANSACTION_ROLLBACK_FAILED` 뒤의 원래 에러가 담깁니다. 그래서 그 에러의 필드도 그대로 남아 있습니다. `(e.cause as { code?: string }).code`는 `"ECONNREFUSED"`, `"28P01"` 같은 PostgreSQL SQLSTATE, `"ER_BAD_DB_ERROR"` 같은 MySQL 코드 가운데 하나입니다. 어떤 실패가 `register()`를 실패시키는지는 [실패한 시도로 치는 경우](./configuration.md#실패한-시도로-치는-경우)에 있습니다.
 
 | Error | 코드 | 던지는 경우 |
 |-------|------|-------------|
-| `OrmError` | 전부 | 기본 클래스. 하위 클래스가 없는 코드는 이 클래스로 직접 던집니다 |
-| `ValidationError` | `ORM_VALIDATION_FAILED` | 유효성 검증 데코레이터가 값을 거부할 때 (`actual`, `expected` 포함) |
+| `OrmError` | 전부 | 기본 클래스. 서브클래스가 없는 코드는 이 클래스로 직접 던집니다 |
+| `ValidationError` | `ORM_VALIDATION_FAILED` | 검증 데코레이터가 값을 거부할 때 (`actual`, `expected` 포함) |
 | `InvalidQueryError` | `ORM_INVALID_QUERY` | 쿼리 옵션이 없는 컬럼을 가리키거나 형식이 잘못됐을 때 |
 | `EntityNotFoundError` | `ORM_ENTITY_NOT_FOUND` | `findOneOrFail()` 등이 행을 찾지 못했을 때 |
-| `EntityMetadataNotFoundError` | `ORM_ENTITY_METADATA_NOT_FOUND` | 클래스가 엔티티가 아니거나 그 커넥션에 등록되지 않았을 때 |
+| `EntityMetadataNotFoundError` | `ORM_ENTITY_METADATA_NOT_FOUND` | 클래스가 엔티티가 아니거나 그 연결에 등록되지 않았을 때 |
 | `PrimaryKeyNotFoundError` | `ORM_PRIMARY_KEY_NOT_FOUND` | 작업에 필요한 기본 키를 엔티티가 선언하지 않았을 때 |
-| `DeleteWithoutConditionsError` | `ORM_DELETE_WITHOUT_CONDITIONS` | 조건이 비어 있어 모든 행을 지우게 될 삭제를 실행할 때 |
+| `DeleteWithoutConditionsError` | `ORM_DELETE_WITHOUT_CONDITIONS` | 조건이 비어 있어서 모든 행을 삭제하는 DELETE를 실행하려 할 때 |
 | `OptimisticLockError` | `ORM_OPTIMISTIC_LOCK_FAILED` | `@Version` 검사에서 행이 바뀐 것을 발견했을 때 |
 | `AdvisoryLockError` | `ORM_ADVISORY_LOCK_FAILED` | 마이그레이션·시더 잠금을 제한 시간 안에 얻지 못했을 때 |
-| `UnsupportedFeatureError` | `ORM_UNSUPPORTED_OPERATION` | 연결한 데이터베이스 버전에 DDL 문장이 필요로 하는 기능이 없을 때 |
-| `UniqueConstraintViolationError` | `ORM_UNIQUE_VIOLATION` | 문장이 중복된 기본 키나 고유 값을 저장하려 할 때. 드라이버 에러가 `cause`이고 `constraint`, `table`, `columns`도 있음 |
-| `ForeignKeyViolationError` | `ORM_FK_VIOLATION` | 행이 없는 부모를 가리키거나, 참조 중인 부모를 삭제하거나 키를 바꿀 때. 드라이버 에러가 `cause`이고 `constraint`, `table`도 있음 |
+| `UnsupportedFeatureError` | `ORM_UNSUPPORTED_OPERATION` | 연결한 데이터베이스 버전에 DDL 문이 필요로 하는 기능이 없을 때 |
+| `UniqueConstraintViolationError` | `ORM_UNIQUE_VIOLATION` | SQL 문이 중복된 기본 키나 고유 값을 저장하려 할 때. 드라이버 에러가 `cause`이고 `constraint`, `table`, `columns`도 있음 |
+| `ForeignKeyViolationError` | `ORM_FK_VIOLATION` | 행이 없는 부모를 가리키거나 참조 중인 부모를 삭제하거나 그 키를 바꿀 때. 드라이버 에러가 `cause`이고 `constraint`, `table`도 있음 |
 | `QueryTimeoutError` | `ORM_QUERY_TIMEOUT` | PostgreSQL이나 MySQL/MariaDB가 `timeout` / `queryTimeout`을 넘긴 읽기를 취소했을 때. 드라이버 에러가 `cause` |
-| `DatabaseNotConnectedError` | `ORM_NOT_CONNECTED` | 그 커넥션 이름으로 등록된 것이 없을 때 (예: `register()` 전의 쿼리) |
+| `DatabaseNotConnectedError` | `ORM_NOT_CONNECTED` | 그 연결 이름으로 등록된 것이 없을 때 (예: `register()` 전의 쿼리) |
 | `DatabaseConnectionFailedError` | `ORM_CONNECTION_FAILED` | 쿼리가 연결을 얻지 못했을 때 (서버 다운, 풀 고갈). 드라이버 에러가 `cause`이고 `status: 500`도 있음 |
 | `NotSupportedDatabaseTypeError` | `ORM_UNSUPPORTED_DATABASE` | `type`이 ORM에 드라이버가 없는 데이터베이스일 때. `status: 500`도 있음 |
 | `TransactionError` | `ORM_TRANSACTION_FAILED` | deprecated. ORM 어디에서도 던지지 않으므로 `instanceof TransactionError`는 맞는 경우가 없습니다. 롤백 실패는 `ORM_TRANSACTION_ROLLBACK_FAILED` 코드의 `OrmError`입니다 |
 
-`register()`도 열지 못한 연결을 `ORM_CONNECTION_FAILED` 코드의 `OrmError`로 알립니다. `DatabaseConnectionFailedError`와 `NotSupportedDatabaseTypeError`는 예전에는 별도의 `Exception` 클래스를 상속했고 `code`가 없었어요. `Exception`은 지금도 export되지만, 이를 상속하는 ORM 에러는 없습니다.
+`register()`도 열지 못한 연결을 `ORM_CONNECTION_FAILED` 코드의 `OrmError`로 알립니다. `DatabaseConnectionFailedError`와 `NotSupportedDatabaseTypeError`는 예전에는 별도의 `Exception` 클래스를 상속했고 `code`가 없었습니다. `Exception`은 지금도 export합니다. 하지만 이 클래스를 상속하는 ORM 에러는 없습니다.
 
-`ORM_CONNECTION_LOST`는 던져지지 않는 유일한 코드입니다. 아무 구문도 돌고 있지 않은 풀 연결을 서버가 닫으면 그 에러를 받을 호출자가 없어요. 그래서 이 `OrmError`는 [`onConnectionError`](./configuration.md#시작-이후-끊긴-연결) 옵션으로 전달되고, 옵션이 없으면 경고 로그로 남습니다. 드라이버 에러는 `cause`에 담깁니다.
+`ORM_CONNECTION_LOST`는 ORM이 던지지 않는 유일한 코드입니다. 실행 중인 SQL 문이 없는 풀 연결을 서버가 닫으면 그 에러를 받을 호출자가 없습니다. 그래서 이 `OrmError`는 [`onConnectionError`](./configuration.md#시작-이후-끊긴-연결) 옵션으로 전달합니다. 옵션을 설정하지 않았으면 경고 로그로 남깁니다. 드라이버 에러는 `cause`에 담습니다.
 
 ### 제약 조건 위반
 
-중복 키와 외래 키 위반은 데이터베이스와 쓰기 경로에 상관없이 `OrmError`로 실패합니다. `save()`, 배치·upsert 메서드, 쿼리 빌더, 쓰기 버퍼의 flush, 원시 `em.query()` 모두 같습니다. 메시지는 데이터베이스가 보낸 그대로이고 드라이버 에러는 `cause`에 담기므로, 드라이버 코드(`23505`, errno `1062`, `SQLITE_CONSTRAINT_UNIQUE`)로 확인하던 코드는 `e.cause`에서 같은 값을 찾으면 됩니다. COMMIT 시점에 검사되는 지연(deferred) 제약 조건이 실패해도 `em.transaction()`이 같은 에러를 던집니다.
+중복 키와 외래 키 위반은 데이터베이스와 쓰기 경로에 상관없이 `OrmError`로 실패합니다. `save()`, 배치 메서드, upsert 메서드, 쿼리 빌더, 쓰기 버퍼의 flush, raw `em.query()`가 모두 같습니다. 메시지는 데이터베이스가 보낸 그대로입니다. 그리고 드라이버 에러는 `cause`에 담깁니다. 그래서 드라이버 코드로 확인하던 코드는 `e.cause`에서 같은 값을 찾으면 됩니다. 드라이버 코드는 `23505`, errno `1062`, `SQLITE_CONSTRAINT_UNIQUE` 같은 값입니다. COMMIT 시점에 검사하는 지연(deferred) 제약 조건이 실패해도 `em.transaction()`이 같은 에러를 던집니다.
 
 ```typescript
 try {
@@ -1235,7 +1236,7 @@ try {
 }
 ```
 
-나머지 필드에는 데이터베이스가 제약 조건에 대해 알려 주는 정보가 담기고, 알려 주지 않는 항목은 `undefined`입니다. `columns`와 `table`은 엔티티 속성 이름이 아니라 데이터베이스 이름이에요. 외래 키의 `table`은 문장이 참조의 어느 쪽을 썼든 외래 키를 가진 테이블입니다.
+나머지 필드에는 데이터베이스가 보고한 제약 조건 정보가 담깁니다. 데이터베이스가 보고하지 않은 항목은 `undefined`입니다. `columns`와 `table`은 엔티티 속성 이름이 아니라 데이터베이스의 이름입니다. 외래 키의 `table`은 SQL 문이 참조의 어느 쪽에 썼든 외래 키를 가진 테이블입니다.
 
 | 필드 | PostgreSQL | MySQL / MariaDB | SQLite |
 |------|------------|-----------------|--------|
@@ -1245,9 +1246,9 @@ try {
 | `ForeignKeyViolationError.constraint` | 있음 | 있음 | 없음 |
 | `ForeignKeyViolationError.table` | 있음 | 있음 | 없음 |
 
-NOT NULL이나 CHECK 위반은 변환하지 않고 드라이버 에러 그대로 올라옵니다.
+NOT NULL이나 CHECK 위반은 변환하지 않고 드라이버 에러 그대로 전달됩니다.
 
-이전 버전에서는 이런 위반이 드라이버 에러 그대로 올라왔고, `OrmErrorCode.UNIQUE_VIOLATION` / `FK_VIOLATION`을 만드는 곳도 없었습니다. 또 PostgreSQL과 MySQL/MariaDB에서 COMMIT이 실패하면(지연 제약 조건, 직렬화 실패) `em.transaction()`은 `ORM_TRANSACTION_ROLLBACK_FAILED`로, `@Transactional` 메서드는 연결 에러로 잘못 알렸어요. 이제 둘 다 COMMIT이 받은 에러 그대로 실패하고, 롤백 처리도 다른 실패와 똑같이 진행됩니다.
+이전 버전에서는 이런 위반이 드라이버 에러 그대로 전달됐습니다. `OrmErrorCode.UNIQUE_VIOLATION`과 `FK_VIOLATION`을 생성하는 곳도 없었습니다. PostgreSQL과 MySQL/MariaDB에서 COMMIT이 실패할 때도 잘못 알렸습니다. 지연 제약 조건이나 직렬화 실패가 그런 경우입니다. 이때 `em.transaction()`은 `ORM_TRANSACTION_ROLLBACK_FAILED`로 알렸고 `@Transactional` 메서드는 연결 에러로 알렸습니다. 이제는 둘 다 COMMIT이 받은 에러 그대로 실패합니다. 롤백도 다른 실패와 똑같이 진행합니다.
 
 ### OrmErrorCode
 
@@ -1309,17 +1310,17 @@ enum OrmErrorCode {
 }
 ```
 
-`QUERY_ERROR`와 `VALIDATION_ERROR`는 deprecated된 별칭입니다. 각각 중복되던 코드인 `INVALID_QUERY`, `VALIDATION_FAILED`와 같은 값을 가지므로 어느 이름으로 확인해도 같은 에러가 걸리고, `VALIDATION_FAILED`는 `ValidationError`에서만 나옵니다.
+`QUERY_ERROR`와 `VALIDATION_ERROR`는 deprecated된 별칭입니다. 각각 중복되던 코드인 `INVALID_QUERY`, `VALIDATION_FAILED`와 같은 값입니다. 그래서 어느 이름으로 확인해도 같은 에러가 걸립니다. `VALIDATION_FAILED`는 `ValidationError`에서만 나옵니다.
 
 이전 버전에서는 같은 개념에 코드가 두 개씩 있었습니다.
 
-- `"ORM_QUERY_ERROR"`는 선언한 컬럼이 빠진 `em.query(shape)` 결과, 실패한 `getRawMany()` 변환, 잘못된 ORDER BY 방향, 쓴 행을 다시 읽지 못한 쓰기에서 나왔습니다. 이제는 `"ORM_INVALID_QUERY"`로 알리고, `OrmErrorCode.QUERY_ERROR`로 확인하는 코드도 그대로 걸립니다.
-- `"ORM_VALIDATION_ERROR"`는 스키마 검사에서 나왔습니다. 렌더링할 수 없는 값을 돌려주는 `@ComputedColumn` 빌더, 잘못된 `@FullTextIndex` 언어, enum 값이나 다른 DDL 리터럴에 든 null 바이트가 그 경우예요. 이제는 `"ORM_SCHEMA_ERROR"`로 알리므로, `OrmErrorCode.VALIDATION_ERROR`로 확인하는 코드에는 대신 `ValidationError`가 걸립니다.
+- `"ORM_QUERY_ERROR"`는 선언한 컬럼이 빠진 `em.query(shape)` 결과, 실패한 `getRawMany()` 변환, 잘못된 ORDER BY 방향, 쓴 행을 다시 조회하지 못한 쓰기에서 나왔습니다. 이제는 `"ORM_INVALID_QUERY"`로 알립니다. `OrmErrorCode.QUERY_ERROR`로 확인하는 코드에도 그대로 걸립니다.
+- `"ORM_VALIDATION_ERROR"`는 스키마 검사에서 나왔습니다. 렌더링하지 못하는 값을 반환하는 `@ComputedColumn` 빌더, 잘못된 `@FullTextIndex` 언어, enum 값이나 다른 DDL 리터럴에 든 null 바이트가 그 경우입니다. 이제는 `"ORM_SCHEMA_ERROR"`로 알립니다. 그래서 `OrmErrorCode.VALIDATION_ERROR`로 확인하는 코드에는 대신 `ValidationError`가 걸립니다.
 - `master`나 `slaves`가 없는 `replication` 옵션은 `"ORM_VALIDATION_FAILED"`가 아니라 `"ORM_INVALID_CONFIG"`로 알립니다.
 
 `e.code`를 예전 문자열과 비교하던 코드는 새 문자열로 바꿔야 합니다.
 
-## EntitySchema (Decorator-Free Entity Definition)
+## EntitySchema (데코레이터 없는 엔티티 정의)
 
 [사용법 ->](./entities.md#데코레이터-없이-엔티티-정의하기-entityschema) · [데코레이터 → 대안 전체 매핑 ->](./decorator-free.md)
 
@@ -1343,12 +1344,12 @@ interface EntitySchemaOptions<T> {
   indexes?: { columns: string[]; name?: string; options?: AdvancedIndexOptions }[];  // 복합 비고유 인덱스
   fullTextIndexes?: { columns: string[]; name?: string; language?: string }[];  // @FullTextIndex 대응
   nonTenant?: boolean;                                     // @NonTenantEntity 대응
-  hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;  // 라이프사이클 훅
+  hooks?: Partial<Record<HookEvent, Extract<keyof T, string>>>;  // 생명주기 훅
 
   // 상속 매핑 (@Inheritance, @DiscriminatorColumn, @DiscriminatorValue 대체)
   inheritance?: InheritanceSchemaDef;                      // 루트 엔티티: 전략 선언
-  discriminatorColumn?: DiscriminatorColumnSchemaDef;      // 루트 엔티티: discriminator 컬럼 설정
-  discriminatorValue?: string;                             // 자식 엔티티: discriminator 값
+  discriminatorColumn?: DiscriminatorColumnSchemaDef;      // 루트 엔티티: 구분 컬럼 설정
+  discriminatorValue?: string;                             // 자식 엔티티: 구분 값
 }
 
 interface InheritanceSchemaDef {
@@ -1378,11 +1379,11 @@ interface ColumnSchemaDef {
   enumName?: string;
   name?: string;
   renamedFrom?: string;                       // 예전 DB 컬럼 이름 (이름 변경 힌트)
-  transform?: (raw: unknown) => any;          // @deprecated — transformer 사용
-  transformer?: ColumnTransformer;            // @Column({ transformer }) — 양방향
+  transform?: (raw: unknown) => any;          // @deprecated: transformer를 사용
+  transformer?: ColumnTransformer;            // @Column({ transformer }): 양방향
   generationStrategy?: "increment" | "uuid" | "uuid-v7";  // @PrimaryGeneratedColumn(strategy)
   jsonIndex?: JsonIndexOptions;               // 이 컬럼의 @JsonIndex()
-  tenant?: boolean;                           // @TenantColumn() — 테넌트 구분 컬럼 표시
+  tenant?: boolean;                           // @TenantColumn(): 테넌트 구분 컬럼 표시
 
   // Special column flags
   index?: boolean;              // Equivalent to @Index()
@@ -1412,7 +1413,7 @@ type RelationSchemaDef =
   | { kind: "manyToMany"; target: () => ClazzType; joinTable?: JoinTableOption; mappedBy?: string };
 ```
 
-> `relationColumn`은 명시적 FK 컬럼 메타데이터(`name`, `type`, `nullable`, `referencedColumn`)를 담습니다 — `@RelationColumn()` 대응. [데코레이터 없이 사용하기](./decorator-free.md#외래-키-컬럼-relationcolumn)를 참고하세요.
+> `relationColumn`은 명시적인 외래 키 컬럼 메타데이터를 담습니다(`name`, `type`, `nullable`, `referencedColumn`). `@RelationColumn()`에 대응합니다. 자세한 내용은 [데코레이터 없이 사용하기](./decorator-free.md#외래-키-컬럼-relationcolumn)에 있습니다.
 
 ## defineRow (Raw 결과 타입)
 
@@ -1428,23 +1429,23 @@ const rows: Row[] = await em.query(shape)`SELECT ...`;
 
 | Export | 설명 |
 |--------|------|
-| `defineRow(columns, options?)` | `t` 컬럼 빌더로 얼린 `RowShape`를 만듭니다. 아무것도 등록하지 않으며, 관계·계산 컬럼 빌더는 `SCHEMA_ERROR`를 던집니다 |
+| `defineRow(columns, options?)` | `t` 컬럼 빌더로 얼린(frozen) `RowShape`를 만듭니다. 아무것도 등록하지 않습니다. 관계 빌더와 계산 컬럼 빌더는 `SCHEMA_ERROR`를 던집니다 |
 | `InferRow<S>` | shape의 행 타입 |
 | `InferRowColumns<Cols>` | 컬럼 맵의 행 타입 |
-| `RowShape<Row>` / `RowColumns` / `RowQuery<Row>` / `DefineRowOptions` | 보조 타입 (`RowQuery`는 `em.query(shape)`가 돌려주는 태그드 러너) |
+| `RowShape<Row>` / `RowColumns` / `RowQuery<Row>` / `DefineRowOptions` | 보조 타입 (`RowQuery`는 `em.query(shape)`가 반환하는 태그드 러너) |
 | `isRowShape(value)` | shape 타입 가드 |
 
-## Utilities
+## 유틸리티
 
 | Export | 설명 |
 |--------|------|
 | `ClazzType<T>` | `new (...args: any[]) => T` |
-| `FindResult<T, S, R, W>` | 조회가 돌려주는 엔티티의 타입을 `select`(S), `relations`(R), `withCount`(W)로 좁힌 것: 선택한 프로퍼티, 로드한 관계, 써 넣은 개수, 메서드. `select`가 있는 `relations` 항목은 그 관계를 좁힙니다. 그 밖에는 `T` |
+| `FindResult<T, S, R, W>` | 조회가 반환하는 엔티티의 타입을 `select`(S), `relations`(R), `withCount`(W)로 좁힌 것. 선택한 속성, 로드한 관계, 채운 개수, 메서드를 담습니다. `select`가 있는 `relations` 항목은 그 관계를 좁힙니다. 그 밖에는 `T` |
 | `SelectFindOption<T, S, R, W>` / `RelationsFindOption<T, R>` | 조회 메서드가 결과를 좁히는 옵션 모양: `select`가 있는 `FindOption<T>`, 또는 객체 형식 `relations`가 있는 `FindOption<T>` |
-| `EntityResult<T>` | **Deprecated** -- `T \| T[]`였지만, `find()`는 `T[]`, `save()`는 `T`로 대체됐어요 |
+| `EntityResult<T>` | deprecated. 예전에는 `T \| T[]`였습니다. 지금은 `find()`는 `T[]`를 반환하고 `save()`는 `T`를 반환합니다 |
 | `DeepPartial<T>` | Deep partial 타입 |
-| `Relation<T>` | 단수 관계 프로퍼티용 identity 래퍼 — `design:type`을 `Object`로 지워 상호 참조 엔티티가 ESM에서 로드되게 합니다 ([관계](./relations.md) 참고) |
-| `WhereClause<T>` | 타입 안전한 WHERE 조건 -- 컬럼 동등 비교에 더해 연산자(`gt`, `in`, `like`, …)와 `AND` / `OR` / `NOT` 지원 |
+| `Relation<T>` | 단수 관계 속성용 identity 래퍼. `design:type`을 `Object`로 지워서 서로 참조하는 엔티티를 ESM에서도 로드하게 합니다 ([관계](./relations.md) 참고) |
+| `WhereClause<T>` | 타입 안전한 WHERE 조건. 컬럼 동등 비교, 연산자(`gt`, `in`, `like`, …), `AND` / `OR` / `NOT` 지원 |
 | `RawQueryBuilderFactory` | Query builder 팩토리 |
 | `MetadataContext` | AsyncLocalStorage 기반 테넌트 컨텍스트 |
 | `Logger` | 내부 로깅 유틸리티 |

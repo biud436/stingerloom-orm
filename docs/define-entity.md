@@ -112,11 +112,11 @@ Every field value must be a **called** builder. A value `defineEntity` does not 
 | `t.boolean()` | `boolean` | `boolean` |
 | `t.datetime()` / `t.timestamp()` / `t.timestamptz()` / `t.date()` | `Date` | matching temporal type |
 | `t.blob()` | `Buffer` | `blob` |
-
-`t.bigint()` defaults to `bigintMode: "number"`: the property is a plain `number`, and a stored value beyond ±2^53 throws `BIGINT_PRECISION_LOSS` on read instead of being rounded. Pass `{ mode: "string" }` or `{ mode: "bigint" }` for a lossless representation — the inferred type follows the mode. See [bigint Columns and bigintMode](./entities.md#bigint-columns-and-bigintmode) for the driver contract.
 | `t.json<T>()` / `t.jsonb<T>()` | `T` (default `unknown`) | `json` / `jsonb` |
 | `t.array<T>(elementType?)` | `T[]` | `array` (PostgreSQL `element[]`, default `TEXT[]`) |
 | `t.enum(["a", "b"])` | `"a" \| "b"` | `enum` |
+
+`t.bigint()` defaults to `bigintMode: "number"`: the property is a plain `number`, and a stored value beyond ±2^53 throws `BIGINT_PRECISION_LOSS` on read instead of being rounded. Pass `{ mode: "string" }` or `{ mode: "bigint" }` for a lossless representation — the inferred type follows the mode. See [bigint Columns and bigintMode](./entities.md#bigint-columns-and-bigintmode) for the driver contract.
 
 `t.decimal()` is the exact type for money and other values that must not drift by a rounding error, and `t.double()` the binary float for measurements. `t.decimal()` defaults to `decimalMode: "number"`: a stored value a JS number cannot hold exactly throws `DECIMAL_PRECISION_LOSS` on read instead of being rounded. Pass `{ mode: "string" }` as the third argument to read the exact digits; the inferred type follows. See [double and decimal Columns](./entities.md#double-and-decimal-columns).
 
@@ -649,7 +649,7 @@ export const Issue = defineEntity("issues", {
 -- MySQL
 `cycleTimeHours` INT GENERATED ALWAYS AS (TIMESTAMPDIFF(HOUR, `created_at`, `completed_at`)) VIRTUAL
 -- PostgreSQL
-"cycleTimeHours" INTEGER GENERATED ALWAYS AS (EXTRACT(EPOCH FROM ("completed_at" - "created_at")) / 3600) VIRTUAL
+"cycleTimeHours" INTEGER GENERATED ALWAYS AS (EXTRACT(EPOCH FROM ("completed_at" - "created_at")) / 3600) STORED
 ```
 
 The context `e` exposes the full Expressions DSL (`e.iff`, `e.caseBuilder`, `e.coalesce`, `e.dateDiff`, `e.col(name)`). See the decorator guide's [dialect-portable expressions](./entities.md#dialect-portable-expressions-builder-form) for the full DSL.

@@ -1,0 +1,564 @@
+# Stingerloom ORM - Project Context
+
+## 프로젝트 개요
+
+TypeScript 기반의 ORM으로, PostgreSQL/MySQL/SQLite를 지원하며 Docker OverlayFS 방식의 **레이어드 메타데이터 시스템**을 통해 멀티테넌시를 지원합니다.
+
+- **패키지명:** `@stingerloom/orm` (v3.0.0)
+- **패키지 매니저:** pnpm
+- **npm 배포:** https://www.npmjs.com/package/@stingerloom/orm
+- **진입점:** `dist/index.js` (CJS) / `dist/esm/index.js` (ESM) / `dist/index.d.ts`
+- **서브패스:** `@stingerloom/orm/nestjs`
+- **CLI:** `stingerloom` (마이그레이션, 인트로스펙션)
+
+---
+
+## 디렉토리 구조
+
+```
+/
+├── src/
+│   ├── core/                   # EntityManager, BaseRepository, SelectQueryBuilder,
+│   │   │                       # RawQueryBuilder, SchemaRegistrar, QueryTracker,
+│   │   │                       # CascadeHandler, RelationLoader, ResultTransformer
+│   │   ├── generators/         # SchemaGenerator, SchemaDiff, SchemaDiffMigrationGenerator,
+│   │   │                       # NamingStrategy, SnakeNamingStrategy
+│   │   ├── deserializer/       # ClassTransformerDeserializer, DeserializerRegistry
+│   │   └── plugin/             # StingerloomPlugin, WriteBuffer (Unit of Work)
+│   ├── decorators/             # @Entity, @Column, @ComputedColumn, @ManyToOne, @OneToMany,
+│   │                           # @ManyToMany, @OneToOne, @Index, @UniqueIndex, @FullTextIndex,
+│   │                           # @Version, @CreateTimestamp, @UpdateTimestamp, @DeletedAt,
+│   │                           # @InjectRepository, @InjectEntityManager, @Transactional,
+│   │                           # @Hooks, @Validation, @PrimaryColumn, @PrimaryGeneratedColumn
+│   ├── dialects/
+│   │   ├── mysql/              # MySqlDriver, MySqlConnector, MySqlDataSource, MySqlTenantMigrationRunner
+│   │   ├── postgres/           # PostgresDriver, PostgresConnector, PostgresDataSource, PostgresTenantMigrationRunner
+│   │   ├── sqlite/             # SqliteDriver, SqliteConnector, SqliteDataSource, SqliteTenantMigrationRunner
+│   │   ├── SqlDriver.ts        # ISqlDriver 인터페이스
+│   │   ├── FindOption.ts       # 쿼리 옵션 인터페이스
+│   │   ├── TransactionSessionManager.ts
+│   │   ├── ReplicationRouter.ts
+│   │   └── ConnectionLeakDetector.ts
+│   ├── metadata/               # LayeredMetadataStore, MetadataLayer, MetadataContext,
+│   │                           # MultiTenantMetadataManager (AsyncLocalStorage 기반)
+│   ├── scanner/                # EntityScanner, ColumnScanner, ManyToOneScanner 등 (TypeDI @Service)
+│   ├── migration/              # MigrationRunner, Migration, MigrationCli, cli-entry
+│   ├── seeding/                # Seeder, SeederRunner
+│   ├── introspection/          # IntrospectionGenerator, EntityCodeBuilder, TypeMapper
+│   ├── schema/                 # defineEntity 코드 우선 빌더 (t 필드 빌더, InferEntity),
+│   │                           # EntitySchema (데코레이터 없는 엔티티 정의)
+│   ├── integration/
+│   │   └── nestjs/             # StingerloomOrmModule, @InjectRepository, @InjectEntityManager
+│   ├── types/                  # ColumnType, CascadeType, ReferentialAction, DeepPartial 등
+│   ├── utils/                  # Logger, ReflectManager, uuid-v7, camelToSnakeCase 등
+│   └── errors/                 # OrmError, OrmErrorCode + 16개 커스텀 에러 클래스
+├── __tests__/
+│   ├── unit/                   # 359개 유닛 테스트 파일 (6,866 tests)
+│   └── integration/            # 311개 통합 테스트 파일 (sqlite/ 197개 포함, INTEGRATION_TEST=true 필요)
+├── examples/
+│   ├── nestjs-cats/            # NestJS 기본 예제 (CRUD, EntitySubscriber, cursor pagination)
+│   ├── nestjs-blog/            # NestJS 블로그 예제 (M2M, soft delete, upsert, 57 e2e tests)
+│   ├── nestjs-linear-clone/    # Linear/Jira식 이슈 트래커 (재귀 CTE, 윈도 함수, SKIP LOCKED 큐)
+│   ├── nestjs-multitenant/     # NestJS 멀티테넌시 예제 (PostgreSQL 스키마 격리)
+│   ├── nestjs-todo/            # NestJS 최소 CRUD 예제
+│   ├── nestjs-todo-sqlite/     # NestJS SQLite 예제
+│   └── vanilla-todo-sqlite/    # 비 NestJS code-first 스크립트 예제 (defineEntity, SQLite in-memory)
+├── mcp/                        # MCP 서버 (MySQL, PostgreSQL 직접 접근)
+├── docs/                       # 영어 문서 (52개 파일)
+│   └── ko/                     # 한국어 문서 (52개 파일)
+├── .claude/agents/             # 에이전트 전문가 정의 (5개)
+├── dist/                       # 빌드 결과물 (gitignored)
+├── package.json
+├── tsconfig.json               # CJS 빌드
+├── tsconfig.esm.json           # ESM 빌드
+└── jest.config.js
+```
+
+---
+
+## 핵심 아키텍처
+
+### 1. 레이어드 메타데이터 시스템 (멀티테넌시)
+
+Docker OverlayFS와 동일한 개념:
+- **Public Layer (하위):** 기본 스키마 (모든 엔티티 포함, 읽기 전용)
+- **Tenant Layer (상위):** 테넌트별 수정 사항 (Copy-on-Write)
+- **Context Switching:** `MetadataContext.run(tenantId, callback)` (AsyncLocalStorage 기반)
+- **Fallback:** 테넌트 레이어에 없으면 Public Layer에서 조회
+- **동시성 안전:** `resolveContext()`가 AsyncLocalStorage 우선 조회 → 인스턴스 상태 fallback
+
+관련 파일: `src/metadata/LayeredMetadataStore.ts`, `MetadataLayer.ts`, `MetadataContext.ts`, `MultiTenantMetadataManager.ts`
+
+**중요:**
+- 메타데이터는 전역 싱글톤이 아니라 레이어 기반으로 격리되어야 함
+- 프로덕션 코드에서 `setContext()` 사용 금지 (deprecated) → `MetadataContext.run()` 사용
+- `getAllInContext()`는 public + 대상 컨텍스트 레이어만 병합 (다른 테넌트 데이터 격리)
+
+### 2. 드라이버/다이얼렉트 추상화
+
+**인터페이스:** `src/dialects/SqlDriver.ts` (`ISqlDriver`)
+
+구현 드라이버:
+| 드라이버 | 식별자 래핑 | PK 생성 | 스키마 지원 |
+|---------|------------|---------|------------|
+| MySQL | 백틱 (`) | AUTO_INCREMENT | 미지원 |
+| PostgreSQL | 큰따옴표 (") | SERIAL / RETURNING | 지원 (schema.table) |
+| SQLite | 큰따옴표 (") | INTEGER PRIMARY KEY | 미지원 |
+
+새 드라이버 작성 시 `ISqlDriver` 인터페이스 완전 구현 필수.
+
+**SQL Injection 방지 원칙:**
+- 사용자 입력 값은 반드시 파라미터 바인딩 사용 (`sql-template-tag` 활용)
+- 테이블명/컬럼명은 `escapeIdentifier()` 메서드로 래핑
+- DDL 쿼리에서도 모든 식별자는 드라이버별 escape 처리
+
+### 3. ColumnType 매핑
+
+```typescript
+type ColumnType = "varchar" | "int" | "number" | "float" | "double" | "bigint"
+                | "boolean" | "datetime" | "timestamp" | "timestamptz" | "date"
+                | "text" | "longtext" | "blob" | "char"
+                | "json" | "jsonb" | "enum" | "array" | "uuid";
+```
+
+각 드라이버에서 `castType(type: ColumnType): string` 메서드로 DB별 타입으로 변환.
+
+### 4. 트랜잭션 관리
+
+모든 쿼리는 자동으로 트랜잭션으로 래핑됨:
+1. `TransactionSessionManager` 생성
+2. DB 연결
+3. `START TRANSACTION` (MySQL) / `BEGIN` (PostgreSQL)
+4. 쿼리 실행
+5. `COMMIT` 또는 에러 시 `ROLLBACK`
+
+관련 파일: `src/dialects/TransactionSessionManager.ts`
+
+### 5. Synchronize 모드
+
+| 모드 | CREATE | ADD | ALTER | DROP | RENAME |
+|------|--------|-----|-------|------|--------|
+| `true` | O | O | O | O | O |
+| `"safe"` | O | O | X (요약 warn + logDDL 시 스킵 문장 로그) | X (동일) | X (동일) |
+| `"dry-run"` | 로그만 | 로그만 | 로그만 | 로그만 | 로그만 |
+| `false` | X | X | X | X | X |
+
+**표의 범위는 컬럼 단위** — DROP은 DROP COLUMN을 뜻한다. synchronize는 어떤 모드에서도 테이블을 삭제하지 않는다(`SchemaDiff.detectDroppedTables`는 SchemaDiff API 전용 옵션이고 synchronize·`migrate:generate` 어느 쪽에서도 켜지지 않음).
+
+**옵션 객체 폼** (Issue #331): 단일 값에 묶여 있던 *복원력 / 파괴적 변경 안전성 / DDL 가시성* 세 관심사를 분리.
+```ts
+synchronize: {
+  mode: true | "safe" | "dry-run",
+  continueOnError: boolean,        // false → DDL 실패 시 부팅 중단 (default: true)
+  failOnDestructiveChange: boolean, // true → DROP / 좁히는 ALTER throw (default: false)
+  logDDL: boolean,                  // true → 모든 DDL을 info 로그 (default: false)
+}
+```
+- 단일 값 폼(`true`, `"safe"`, `"dry-run"`, `false`)은 backward-compatible — 위 기본값으로 정규화됨
+- 정규화: `normalizeSynchronizePolicy()` → `SynchronizePolicy` (싱글 truth)
+- 에러 코드: `OrmErrorCode.SCHEMA_SYNC_FAILED`, `SCHEMA_SYNC_DESTRUCTIVE_CHANGE`
+
+관련 파일: `src/core/SchemaRegistrar.ts` (`applySchemaDiff()`, `handleDdlError()`, `assertDestructiveAllowed()`), `src/core/DatabaseClientOptions.ts` (`SynchronizeOption`, `normalizeSynchronizePolicy()`), `src/core/generators/SchemaDiff.ts`
+
+### 6. NamingStrategy
+
+플러그인 방식의 네이밍 전략:
+- `NamingStrategy` 인터페이스: `tableName()`, `columnName()`, `joinColumnName()`
+- `SnakeNamingStrategy`: camelCase → snake_case 자동 변환
+- `ResultTransformer`에서 DB 컬럼명 → 엔티티 속성명 역매핑
+- SELECT, INSERT, UPDATE, DELETE, soft-delete, restore 전 연산에 적용
+
+관련 파일: `src/core/generators/NamingStrategy.ts`, `src/core/generators/SnakeNamingStrategy.ts`
+
+### 7. 데코레이터 메타데이터 시스템
+
+```typescript
+@Entity()                    // ENTITY_TOKEN 심볼로 메타데이터 저장
+@Column(options)             // design:type 자동 추론, ColumnType 매핑
+@ComputedColumn(expr)        // 계산 컬럼
+@PrimaryGeneratedColumn()    // auto-increment, "uuid" (UUIDv4) 또는 "uuid-v7" (UUIDv7)
+@PrimaryColumn()             // 복합 PK
+@ManyToOne(() => Entity, (e) => e.inverse, { joinColumn: "fk_column" })
+@OneToMany(() => Entity, { mappedBy: "owner" })
+@ManyToMany(() => Entity)
+@OneToOne(() => Entity)
+@Index()
+@UniqueIndex(["a", "b"])
+@FullTextIndex(["body"])
+@Version()                   // 낙관적 잠금
+@CreateTimestamp()            // INSERT 시 자동 시각 설정
+@UpdateTimestamp()            // INSERT/UPDATE 시 자동 시각 설정
+@DeletedAt()                 // Soft Delete
+@BeforeInsert() 등            // 생명주기 훅 (Before/After Insert·Update·Delete)
+@NotNull() / @MaxLength(n) 등 // 유효성 검사
+@Transactional()             // 트랜잭션 데코레이터
+@InjectRepository(Entity)    // NestJS 리포지토리 주입
+@InjectEntityManager()       // NestJS EntityManager 주입
+```
+
+스캐너 체계: `EntityScanner` → `ColumnScanner` → `ManyToOneScanner` → `OneToManyScanner` → `ManyToManyScanner` → `OneToOneScanner` (TypeDI @Service)
+
+### 8. 플러그인 시스템
+
+```typescript
+em.extend(myPlugin)  // dayjs-style 플러그인 등록
+```
+
+- `StingerloomPlugin` 인터페이스 + `PluginContext`
+- 의존성/충돌 검증, LIFO shutdown
+- 내장 플러그인: `bufferPlugin()` (WriteBuffer / Unit of Work)
+
+---
+
+## 개발 워크플로우
+
+### 빌드
+```bash
+pnpm build          # dist/ 생성 (CJS + ESM)
+```
+
+### 테스트
+```bash
+pnpm test           # Jest 전체 테스트 실행
+pnpm test -- --testPathPattern="<패턴>"  # 특정 테스트
+```
+
+### 문서 개발
+```bash
+pnpm docs:dev       # VitePress 개발 서버
+pnpm docs:build     # 프로덕션 빌드
+```
+
+### 예제 실행
+```bash
+pnpm build          # 먼저 빌드
+cd examples/nestjs-cats
+pnpm install
+pnpm start          # NestJS 서버 시작
+```
+
+---
+
+## 테스트 구조
+
+### 유닛 테스트 (`__tests__/unit/`)
+359개 파일, 6,866개 테스트 (2026-11-13 기준, 0 failures)
+
+### 통합 테스트 (`__tests__/integration/`)
+311개 파일 (2026-11-13 기준, `INTEGRATION_TEST=true` 필요)
+- MySQL/PostgreSQL 듀얼 드라이버: `crud-basic`, `relations-one-to-many`, `soft-delete`, `aggregate`, `batch-operations`, `lifecycle-hooks`, `one-to-one`, `many-to-many`, `schema-generator`, `entity-subscriber`, `upsert`, `complex-queries`
+- PostgreSQL 전용: `postgres-driver.test.ts`, `postgres-driver-ddl.test.ts`, `multi-tenancy-postgres.test.ts`
+- MySQL 전용: `mysql-driver-ddl.test.ts`
+- SQLite (in-memory): `sqlite/` 197개 파일, 1,959 tests (crud, relations, DDL, transactions, soft-delete, batch, hooks, queries 등)
+- `snake-naming-strategy.test.ts` — NamingStrategy 통합 테스트
+
+### e2e 테스트 (`examples/`)
+- `examples/nestjs-cats/` — NestJS 기본 예제 (EntitySubscriber, cursor pagination)
+- `examples/nestjs-blog/` — NestJS 블로그 예제 (57 e2e tests, M2M, soft delete, upsert)
+- `examples/nestjs-linear-clone/` — 프로덕션급 SQL 패턴 예제 (재귀 CTE, 윈도 함수, FOR UPDATE SKIP LOCKED, 낙관적 잠금)
+- `examples/nestjs-multitenant/` — PostgreSQL 멀티테넌시 예제 (TenantMigrationRunner)
+- `examples/nestjs-todo/` — NestJS 최소 CRUD 예제
+
+---
+
+## 핵심 의존성
+
+### 런타임 (dependencies)
+| 패키지 | 용도 |
+|-------|-----|
+| `class-transformer` | 객체 직렬화/역직렬화 |
+| `sql-template-tag` | 파라미터화된 SQL 쿼리 빌드 |
+| `typedi` | 의존성 주입 (스캐너 등록) |
+
+### 피어 (peerDependencies, 모두 optional)
+| 패키지 | 용도 |
+|-------|-----|
+| `reflect-metadata` | 데코레이터 메타데이터 반영 |
+| `mysql2` | MySQL 드라이버 |
+| `pg` | PostgreSQL 드라이버 |
+| `better-sqlite3` | SQLite 드라이버 |
+| `@nestjs/common`, `@nestjs/core` | NestJS 통합 |
+| `fast-glob` | 엔티티 glob 패턴 해석 |
+
+---
+
+## 현재 구현 상태
+
+### 완료 (전체)
+- CRUD (Create, Read, Update, Delete)
+- 관계: @ManyToOne, @OneToMany, @ManyToMany, @OneToOne
+- Eager / Lazy 로딩
+- 트랜잭션 (@Transactional, 격리 수준, Savepoint, 데드락 재시도)
+- MySQL / PostgreSQL / SQLite 드라이버
+- PostgreSQL ENUM 타입 + ENUM 값 동기화, 스키마 한정 식별자
+- NestJS 통합 (StingerloomOrmModule, @InjectRepository, @InjectEntityManager, multi-DB connectionName)
+- 마이그레이션 시스템 + CLI (`npx stingerloom migrate:run|rollback|status|generate`)
+- 연결 풀링 (PoolOptions), Connection Leak Detection
+- Schema Generation (syncSchema/DDL) + Synchronize true/safe/dry-run 모드
+- Soft Delete (@DeletedAt), Cascade, Batch 연산
+- 유효성 검사 데코레이터, 생명주기 훅
+- Aggregate (count/sum/avg/min/max)
+- SelectQueryBuilder (getMany/getPartialMany/getRawMany, JOIN/WHERE/GROUP BY/HAVING)
+- RawQueryBuilder (CTE, Window Functions, Set Operations)
+- 이벤트 시스템, EntitySubscriber 패턴
+- N+1 감지 + 슬로우 쿼리 경고 (QueryTracker)
+- 커서 기반 페이지네이션 (findWithCursor)
+- findAndCount() — `[T[], count]` 원자적 반환
+- Upsert (INSERT ON CONFLICT / ON DUPLICATE KEY)
+- @UniqueIndex 복합 고유 인덱스, @FullTextIndex
+- EXPLAIN 쿼리 (ExplainResult 타입)
+- 쿼리 타임아웃 (per-query / connection-level)
+- Read Replica (읽기/쓰기 분리)
+- 복합 PK (@PrimaryColumn)
+- 상속 매핑 STI/TPT/TPC (@Inheritance, @DiscriminatorColumn, @DiscriminatorValue, InheritanceResolver — PR #239, docs 4페이지 EN/KO)
+- Raw Query 제네릭 + Connection Retry
+- 멀티테넌시 레이어드 메타데이터 + AsyncLocalStorage 동시성 안전
+- TenantMigrationRunner (PostgreSQL 스키마 기반 자동 프로비저닝)
+- Schema Diff 기반 Migration 자동 생성 (SchemaDiff + SchemaDiffMigrationGenerator + 컬럼 리네임 감지)
+- ManyToMany 중간 테이블 DDL 자동 생성
+- 멀티 DB 지원 (named connections)
+- propagateShutdown() — 리소스 정리 라이프사이클
+- NamingStrategy (SnakeNamingStrategy 내장)
+- UUID 컬럼 타입 + UUIDv4("uuid") / UUIDv7("uuid-v7") 지원
+- 컬럼 트랜스포머 (@Column({ transformer }))
+- 계산 컬럼 (@ComputedColumn)
+- 플러그인 시스템 (em.extend(), WriteBuffer/UoW)
+- 시딩 시스템 (Seeder, SeederRunner)
+- 인트로스펙션 (DB 스키마 → 엔티티 클래스 자동 생성)
+- EntitySchema (데코레이터 없는 엔티티 정의)
+- defineEntity 코드 우선 빌더 (t 필드 빌더, InferEntity 타입 추론, 데코레이터 없는 생명주기 훅)
+- stream() AsyncGenerator 기반 스트리밍
+- distinct, DISTINCT ON (PostgreSQL)
+- validate() / validateArray() 결과 검증 훅
+- Dual CJS/ESM 빌드
+- 영어 문서 (52페이지) + 한국어 문서 (52페이지)
+- SQL Injection 전 드라이버 감사 완료
+- WriteBuffer 1차 캐시 (PK findOne → Identity Map 히트 시 DB 스킵)
+- SelectQueryBuilder 14개 생산성 메서드 (when, pipe, whereHas, whereInSubquery, applyScope 등)
+- QueryDSL (qAlias) + Entity-aware JOIN + Relation-based auto-join
+- 테넌트 프로비저닝 tableFilter 옵션
+- @CreateTimestamp / @UpdateTimestamp 커스텀 타입 지원
+- @RelationColumn 데코레이터
+- exists() / findByPK() / findByPKs() / findOneOrFail()
+- batchUpsert / streamBatch
+- NOWAIT / SKIP LOCKED 잠금
+- Index hints (MySQL / PostgreSQL)
+- assertTenantContext() 테넌트 컨텍스트 경고
+- 중첩 관계 로딩(점 경로·객체 형식) + 관계별 where / orderBy / take / skip / withDeleted / select
+- 관계 필터 (some / none / every / is / isNot) + withCount 관계 카운트
+- find() 결과 타입 추론 (`FindResult` — select·관계 select가 반환 타입을 좁힘)
+- defineRow() / em.query(shape) 미매핑 테이블 타입 읽기
+- createInsertBuilder (INSERT … SELECT, executeAndReturn) + 쿼리 결과 캐시
+
+### 현재 안정성 상태 (v3.0.0 준비 main, 2026-11-01 기준)
+- **테스트:** 0 failures — 유닛 6,866 + SQLite 통합 1,959 (2026-11-13) + 실 PostgreSQL 777 / 실 MariaDB 629 (2026-10-03 검증, MySQL은 192.168.35.227:3306 원격 MariaDB) + stress 19 + temporal TZ 매트릭스 88×4존
+- **예제:** 7개 프로젝트 (nestjs-cats, nestjs-blog, nestjs-linear-clone, nestjs-multitenant, nestjs-todo, nestjs-todo-sqlite, vanilla-todo-sqlite) — NestJS 예제는 전부 NestJS 11, 타입 체크 7/7 통과 (2026-11-01 검증, prisma-import-demo는 2026-11-08 제거)
+- **보안:** SQL Injection 취약점 수정 완료, 전 드라이버 감사 완료
+- **격리:** 테넌트 간 메타데이터 유출 차단, AsyncLocalStorage 동시성 안전 확보
+
+---
+
+## 팀 역할 분담
+
+에이전트 정의: `.claude/agents/*.md` (Claude Code 팀 시스템 사용)
+
+### dialect-engineer (다이얼렉트 엔지니어)
+- DB 드라이버 구현/유지 (MySQL, PostgreSQL, SQLite)
+- SQL Injection 방지 감사 및 수정
+- `ISqlDriver` 인터페이스 준수, 파라미터 바인딩 검증
+
+### test-engineer (테스트 엔지니어)
+- 유닛/통합 테스트 작성 (`__tests__/`)
+- 회귀 테스트, 엣지 케이스 커버리지 확보
+- 테스트 건강성 유지 (0 failures 보장)
+
+### arch-reviewer (아키텍처 리뷰어)
+- 레이어드 메타데이터 원칙 준수 검토
+- AsyncLocalStorage 동시성 안전성 감사
+- 성능, 메모리 누수, 타입 안전성 검토
+
+### docs-expert (문서 전문가) — **model: sonnet**
+- 프로덕션 품질 문서 작성 (API 레퍼런스, 가이드, 튜토리얼)
+- 소스코드-문서 일치 검증
+- 영어 주, 한국어 현지화
+
+### example-tester (예제 통합 테스터)
+- 예제 프로젝트 타입 체크 (`tsc --noEmit`)
+- 빌드 검증, e2e 테스트 유지
+- ORM API 변경 시 예제 동기화
+
+---
+
+## 코딩 컨벤션
+
+- **식별자 escape:** 드라이버의 `wrapIdentifier()` 또는 `escapeIdentifier()` 반드시 사용
+- **파라미터 바인딩:** 사용자 값은 `sql-template-tag`의 템플릿 리터럴 사용
+- **메타데이터 격리:** 전역 상태 사용 금지, 레이어를 통한 접근만 허용
+- **동시성 안전:** `setContext()` 대신 `MetadataContext.run()` 사용 (프로덕션 코드)
+- **TypeScript strict:** strict 모드 활성화, any 타입 사용 자제
+- **경로 별칭:** `@/` → `src/` (tsconfig paths)
+
+---
+
+## 중요 파일 위치
+
+| 파일 | 설명 |
+|-----|-----|
+| `src/index.ts` | 패키지 공개 API 진입점 |
+| `src/core/EntityManager.ts` | 엔티티 매니저 (CRUD 진입점) |
+| `src/core/BaseRepository.ts` | 기본 리포지토리 패턴 |
+| `src/core/SelectQueryBuilder.ts` | DSL 쿼리 빌더 (getMany/getPartialMany/getRawMany) |
+| `src/core/RawQueryBuilder.ts` | SQL 쿼리 빌더 (CTE, Window, Set Operations) |
+| `src/core/SchemaRegistrar.ts` | 엔티티 등록 + synchronize 모드 적용 |
+| `src/core/ResultTransformer.ts` | 결과 역직렬화 + NamingStrategy 역매핑 |
+| `src/core/QueryTracker.ts` | N+1 감지 + 슬로우 쿼리 추적 |
+| `src/core/generators/SchemaGenerator.ts` | DDL 생성 |
+| `src/core/generators/SchemaDiff.ts` | 스키마 비교 (마이그레이션 자동 생성) |
+| `src/core/generators/NamingStrategy.ts` | NamingStrategy 인터페이스 |
+| `src/core/generators/SnakeNamingStrategy.ts` | camelCase → snake_case 변환 |
+| `src/core/plugin/StingerloomPlugin.ts` | 플러그인 시스템 인터페이스 |
+| `src/dialects/SqlDriver.ts` | ISqlDriver 인터페이스 |
+| `src/dialects/mysql/MySqlDriver.ts` | MySQL 드라이버 구현 |
+| `src/dialects/postgres/PostgresDriver.ts` | PostgreSQL 드라이버 구현 |
+| `src/dialects/sqlite/SqliteDriver.ts` | SQLite 드라이버 구현 |
+| `src/dialects/ReplicationRouter.ts` | Read Replica 라우팅 |
+| `src/dialects/TransactionSessionManager.ts` | 트랜잭션 세션 관리 |
+| `src/metadata/LayeredMetadataStore.ts` | 레이어드 메타데이터 핵심 |
+| `src/metadata/MetadataContext.ts` | AsyncLocalStorage 기반 컨텍스트 |
+| `src/integration/nestjs/index.ts` | NestJS 모듈 진입점 |
+| `src/DatabaseClient.ts` | DB 연결 싱글톤 |
+
+---
+
+## 문서를 쓰는 원칙
+
+- 문서는 필요한 만큼만 작게 씁니다. 큰 문서 묶음을 한 번에 만들지 않습니다.
+- 메인테이너만 내릴 수 있는 결정은 문서에서 대신 내리지 않습니다. 먼저 묻고 답을 받은 뒤에 씁니다. 이 프로젝트에서 메인테이너만 내릴 수 있는 결정은 아래와 같습니다.
+  - 공개 API의 이름과 모양
+  - 기존 동작의 변경과 에러 코드의 의미
+  - 배포 시점과 버전
+  - 메인테이너가 이전에 내린 지시와 어긋나는 방향
+- 그 밖의 결정은 에이전트가 근거를 들어 내립니다. 그리고 PR 본문이나 보고에 "에이전트 결정"이라고 밝힙니다.
+- 결론을 먼저 씁니다. 배경과 근거는 그 뒤에 씁니다.
+- 문서는 색인에서 상세 내용으로 내려가는 구조로 만듭니다. `docs/`에서는 VitePress 사이드바가 색인입니다(`docs/.vitepress/config.mts`). 새 페이지를 만들면 사이드바에 넣습니다. 한 페이지에 여러 주제를 몰아 쓰지 않습니다. 검토하는 사람이 색인에서 시작해 필요한 곳만 펼쳐 보게 하려는 것입니다.
+- `docs/`는 영어 문서이고 `docs/ko/`는 같은 페이지의 한국어 문서입니다. 한쪽을 고치면 다른 쪽도 같은 커밋에서 고칩니다.
+- 모든 문서는 처음 보는 사람이 이해할 수 있게 씁니다. 쉬운 말로 먼저 설명하고 세부는 뒤에 둡니다. 비유는 자연스럽게 맞을 때만 씁니다. 비유 때문에 잘 쓰지 않는 단어나 어색한 표현을 쓰지 않습니다.
+- 모든 한국어 문장은 검수합니다. 아래 "교정 절차"의 패턴 검사로 끝내지 않습니다. 커밋하기 전에는 그 커밋에서 바뀐 한국어 문장을 검수자가 모두 읽습니다. 검수자는 그 문장을 쓰지 않은 사람이어야 합니다. 에이전트가 쓴 문장은 다른 에이전트가 검수합니다.
+
+## 한국어 작성 규칙
+
+이 규칙은 `docs/ko/`, 이 파일, `internal/`의 한국어 문서에 적용합니다. `docs/ko/` 코드 예시에 붙는 한국어 주석은 "코드 주석 작성 규칙"도 함께 따릅니다. 코드, 식별자, 커밋 메시지, PR, `src/` 주석, 테스트는 영어로 쓰고 프로젝트 관례를 따릅니다. 제품 이름은 원어를 유지합니다. `docs/ko/index.md`의 랜딩 문구는 영어를 유지합니다. 기술 용어는 규칙 17을 따릅니다.
+
+1. 한 문장에는 정보를 하나만 담습니다. 절이 셋 이상 이어지면 문장을 나누거나 목록으로 바꿉니다.
+2. 연결어미(~고, ~며, ~지만, ~면, ~므로, ~는데, ~어서, ~려면) 뒤에 쉼표를 붙이지 않습니다.
+3. 조사와 어미를 생략하지 않습니다. 본문은 완결된 문장으로 끝냅니다. 명사만 나열해서 문장을 끝내지 않습니다. 표의 칸과 목록의 짧은 이름표는 예외입니다.
+4. 본문은 합니다체로 씁니다. 해요체는 권유나 가벼운 안내에만 가끔 섞습니다. 한 문서를 해요체로 채우지 않습니다. 반말(~한다)은 쓰지 않습니다.
+5. 대상 하나에는 이름 하나만 씁니다. 같은 대상을 행, 레코드, 로우처럼 바꿔 부르지 않습니다. 이름은 `internal/korean-glossary.md`를 따릅니다. 용어집에 없는 용어는 먼저 용어집에 추가합니다.
+6. 같은 내용을 여러 문서에 되풀이하지 않습니다. 한 문서에만 쓰고 다른 문서에서는 링크로 가리킵니다. `docs/ko/`의 각 페이지가 `docs/`의 같은 페이지와 내용을 맞추는 것은 되풀이가 아닙니다.
+7. 볼드는 용어를 정의할 때만 씁니다. 옵션이나 항목을 하나씩 설명하는 목록의 머리말도 정의로 봅니다. 강조하려고 볼드를 쓰지 않습니다.
+8. 문장 중간에 괄호를 끼워 넣지 않습니다. 출처, 참조, 기본값 같은 보충 설명은 문장이나 절의 끝에 둡니다. 규칙 17처럼 용어 바로 뒤에 원어나 코드 이름을 붙이는 괄호는 예외입니다.
+9. 선택지를 A안, K1 같은 기호로 부르지 않습니다. 짧은 이름으로 부릅니다.
+10. "~할 수 있습니다"는 가능성을 말할 때만 씁니다. 사실이면 단정합니다.
+11. 문장을 "또한", "따라서", "즉"으로 연달아 시작하지 않습니다.
+12. 번역투를 피합니다. "~를 통해", "~에 대해", "~에 있어서", "~되어지다", "~에 의해"는 다른 표현으로 바꿉니다. 동작을 나타내는 낱말은 용어집의 "동작을 나타내는 말" 표를 따릅니다. 고친 예시는 "코드 주석 작성 규칙"에 있습니다.
+13. 영어 문서를 문장 단위로 옮기지 않습니다. 사실만 가져와 한국어로 새로 씁니다. 문단 순서와 문장 경계도 다시 잡습니다. 영어 부사나 대명사를 그대로 옮긴 표현도 쓰지 않습니다. 예를 들어 silently를 "조용히"로, your를 "당신의"로 옮기지 않습니다.
+14. 문서 자신을 소개하는 문장을 쓰지 않습니다. "이 가이드에서는 ~를 다룹니다"나 "~를 아래에 모아 뒀습니다" 대신 바로 내용으로 들어갑니다.
+15. 절 제목은 한국 개발 문서에서 흔히 쓰는 명사형으로 짓습니다. "타입 변경", "새 경고와 로그"가 그 예입니다. "~하는 곳"이나 "~하는 것"으로 끝나는 서술형 제목은 번역투입니다.
+16. 대시(—, --)를 쓰지 않습니다. 콜론이나 접속사로 바꿉니다.
+17. 개발 용어를 한국어로 억지로 옮기지 않습니다. 예를 들어 source를 "원천"으로, hook을 "갈고리"로 옮기지 않습니다. 개발자들이 실제로 쓰는 음차가 있으면 음차로 씁니다. 처음 나올 때는 원어를 붙입니다. 커밋(commit), 마이그레이션(migration)이 그 예입니다. 굳어진 음차가 없거나 잘 모르겠으면 upsert처럼 영어를 그대로 씁니다. 자연스러운 한국어 낱말이 이미 널리 쓰이면 그 낱말을 씁니다.
+
+고친 예시입니다.
+
+| 고치기 전 | 고친 뒤 |
+|---|---|
+| SQLite는 설정이 간단하지만, 쓰기는 한 번에 하나뿐이고, 스키마 한정이 없으며, 트랜잭션은 차례로 대기합니다. | SQLite는 설정이 간단합니다. 하지만 쓰기는 한 번에 하나만 실행합니다. 스키마 한정 식별자도 지원하지 않습니다. 트랜잭션은 차례로 대기합니다. |
+| 풀이 끊긴 연결 폐기 후 다음 쿼리 시 새 연결. | 풀은 끊긴 연결을 버립니다. 그리고 다음 쿼리를 실행할 때 새 연결을 엽니다. |
+| 파라미터 바인딩을 통해 SQL 인젝션을 막을 수 있다. | 파라미터 바인딩으로 SQL 인젝션을 막습니다. |
+
+규칙 1~3은 서로 맞물려 있습니다. 조사와 어미를 살리라는 말은 문장을 길게 쓰라는 뜻이 아닙니다. 짧은 문장을 여러 개 쓰되 각 문장은 완결된 형태로 씁니다.
+
+## 코드 주석 작성 규칙
+
+`docs/ko/` 코드 예시에 붙는 한국어 주석의 규칙입니다. 나중에 읽는 사람이 바로 이해하게 하려는 것입니다. 코드는 바꾸지 않고 주석만 다룹니다.
+
+1. 주석의 첫 줄에는 그 기능의 핵심 내용을 짧게 적습니다. 한 줄을 띄운 뒤 상세 내용을 적습니다.
+2. 상세 내용은 한 줄에 한 문장씩 씁니다. 내용이 길면 빈 줄로 단락을 나눕니다.
+3. 선언에 붙는 주석은 한 문장이어도 여러 줄 블록으로 씁니다. 함수, 클래스, 엔티티 속성, 메서드, 내보내는 상수가 여기에 해당합니다. 함수 본문 안에서 특정 줄을 설명하는 `//` 주석은 한 줄로 씁니다.
+4. 상세 내용은 되도록 앞뒤 문장이 이어지게 씁니다. "그래서", "반면", "다만", "그리고"로 문장 사이의 관계를 드러냅니다. 억지로 잇지는 않습니다. 접속사는 두 문장의 실제 관계와 맞아야 합니다. 앞 문장이 뒤 문장의 이유가 아니면 "그래서"를 쓰지 않습니다.
+5. 동작을 나타내는 낱말은 개발 문서에서 굳어진 한자어를 씁니다. 목록은 용어집의 "동작을 나타내는 말" 표에 있습니다.
+6. 영어 문장을 직역하지 않습니다. 코드나 파일을 주어로 세워 "안다", "정한다"고 쓰지 않습니다. 다만 "이 인터페이스만 알고 있으면 됩니다"처럼 필요한 범위를 말하는 표현은 자연스러우므로 씁니다.
+7. 뜻이 둘로 읽히는 쉬운 말 대신 명확한 낱말을 씁니다. 지나치게 풀어 쓰지도 않습니다.
+8. 앞에서 말한 값을 "두 값"처럼 숫자로 다시 가리키지 않습니다. 이름을 그대로 씁니다. 속성을 가리킬 때는 생성 일시(createdAt)처럼 코드 이름을 붙입니다.
+9. 에러 메시지와 로그 문구는 ORM이 영어로 출력하므로 번역하지 않습니다. 설명하는 문장만 이 규칙을 따릅니다.
+10. 속성에는 "이름", "삭제 일시"처럼 짧은 이름표를 다는 것으로 충분합니다. 이때는 문장으로 끝맺지 않아도 됩니다. 동작이나 조건을 설명해야 할 때만 한 줄 띄우고 문장으로 덧붙입니다.
+
+```typescript
+@Entity()
+export class Post {
+  /**
+   * 제목
+   */
+  @Column()
+  title!: string;
+
+  /**
+   * 삭제 일시
+   *
+   * 값이 있으면 소프트 삭제된 행으로 보고 find()의 결과에서 제외합니다.
+   */
+  @DeletedAt()
+  deletedAt?: Date | null;
+}
+
+/**
+ * id에 해당하는 게시글을 삭제합니다.
+ *
+ * 삭제한 행이 있으면 true를 반환합니다.
+ * 반대로 해당하는 행이 존재하지 않았으면 false를 반환합니다.
+ */
+async function removePost(id: number): Promise<boolean> {
+  const result = await em.delete(Post, { id });
+  return result.affected > 0;
+}
+```
+
+고친 예시입니다.
+
+| 고치기 전 | 고친 뒤 | 이유 |
+|---|---|---|
+| EntityManager는 이 계약만 압니다. | EntityManager는 이 인터페이스만 알고 있으면 됩니다. | 코드가 안다고 단정했습니다. "knows only"를 직역한 것입니다. |
+| 드라이버 선택은 DatabaseClient가 한곳에서 정합니다. | 어떤 드라이버를 쓸지는 DatabaseClient에서 결정합니다. | 클래스를 주어로 세웠습니다. "정합니다"보다 "결정합니다"가 분명합니다. |
+| find()는 행 배열을 돌려줍니다. | find()는 행 배열을 반환합니다. | "돌려주다"는 return의 직역입니다. |
+| 두 시각은 ORM이 채웁니다. | 생성 일시(createdAt)와 수정 일시(updatedAt)는 ORM이 채웁니다. | "두 시각"은 앞의 값을 숫자로 가리켰습니다. |
+| id가 없으면 넣고 있으면 행을 통째로 바꿉니다. | id가 없으면 삽입합니다. 있으면 행을 교체합니다. | 지나치게 풀어 썼습니다. 그리고 "넣고 있으면"은 진행형으로도 읽힙니다. |
+| id의 행을 지웁니다. | id에 해당하는 행을 삭제합니다. | 굳어진 한자어 동사를 씁니다. |
+| 드라이버를 바꿔도 아래 동작은 유지해야 합니다. 그래서 EntityManager는 ISqlDriver에만 의존합니다. | EntityManager는 ISqlDriver만 알고 있으면 됩니다. 그래서 드라이버를 바꿀 때는 구현만 교체하면 됩니다. | 앞 문장이 뒤 문장의 이유가 아닌데 "그래서"로 이었습니다. |
+| 처음 넣은 시각(created_at) | 생성 일시(createdAt) | 용어집의 이름과 코드의 속성 이름을 씁니다. |
+
+## 교정 절차
+
+문서를 다 쓴 뒤 아래 명령으로 패턴을 셉니다. zsh에서는 `$f`가 파일 단위로 나뉘지 않으므로 bash에서 실행합니다.
+
+```bash
+f=$(ls AGENTS.md docs/ko/*.md)   # 검사할 파일
+grep -noE "[가-힣](하면|므로|하고|지만|으나|는데|이면|려면|어서|아서|하여|해서|며|고)," $f   # 연결어미 뒤 쉼표
+grep -no "\*\*" $f                                          # 볼드
+grep -noE "—| -- " $f                                       # 대시
+grep -noE "할 수 있|될 수 있|쓸 수 있" $f                    # 가능 표현
+grep -noE "(^|\. )(또한|따라서|즉|나아가)[ ,]" $f            # 문장 첫머리 접속사
+grep -noE "[을를] 통해|에 대해|에 있어서|되어지|에 의해" $f   # 번역투
+grep -noE "조용|당신의|모아 뒀|정리했습니다|이 가이드에서는|이 페이지에서는|돌려줍" $f   # 이 프로젝트에서 지적받은 표현
+```
+
+연결어미 뒤 쉼표와 대시는 0개가 목표입니다. 다만 코드 블록 안의 `--`는 명령줄 인자이므로 그대로 둡니다. 볼드는 용어 정의에만 남깁니다. 나머지 항목은 하나씩 읽고 필요한 것만 남깁니다.
+
+숫자만 맞추고 끝내지 않습니다. 고친 문장을 처음부터 다시 읽습니다. 기계적으로 바꾸다가 뜻이 달라진 곳이 없는지 확인합니다. 낱말을 일괄로 바꿨다면 뒤에 붙은 조사도 확인합니다. 예를 들어 "로우"를 "행"으로 바꿨다면 "로우를"은 "행을"로 고쳐야 합니다.
+
+절 제목을 바꾸면 그 제목의 앵커도 바뀝니다. 그 앵커를 가리키는 링크도 함께 고칩니다. 그리고 `pnpm docs:check`로 깨진 링크가 없는지 확인합니다.
+
+독자가 모를 만한 약어는 처음 나올 때 풀어 씁니다.
+
+## 참고 자료
+
+- im-not-ai: 한국어 AI 문체 패턴 85개를 정리한 도구입니다. https://github.com/epoko77-ai/im-not-ai
+- KatFishNet: LLM이 쓴 한국어의 쉼표, 띄어쓰기, 품사 분포를 측정한 논문입니다. https://arxiv.org/abs/2503.00032

@@ -65,7 +65,7 @@ These helpers build or prepare entity instances without a hidden unit of work �
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `insertMany` | `<T>(entity, items[]): Promise<{ affected: number }>` | Multi-row INSERT |
-| `insertManyAndReturn` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | Multi-row `INSERT … RETURNING *` — returns hydrated instances in input order; PostgreSQL and SQLite 3.35+ only; throws `OrmError (UNSUPPORTED_DATABASE)` on MySQL |
+| `insertManyAndReturn` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | Multi-row `INSERT … RETURNING *` — returns hydrated instances in input order; PostgreSQL, SQLite 3.35+ and MariaDB 10.5+ only; throws `OrmError (UNSUPPORTED_DATABASE)` on MySQL |
 | `insertIgnore` | `<T>(entity, data, conflictColumns?): Promise<{ affected: number }>` | Idempotent single-row INSERT (1 if inserted, 0 if a matching row existed) — `INSERT IGNORE` (MySQL) / `INSERT … ON CONFLICT DO NOTHING` (PostgreSQL / SQLite) |
 | `saveMany` | `<T>(entity, items[]): Promise<InstanceType<ClazzType<T>>[]>` | Multi-row INSERT/UPDATE |
 | `deleteMany` | `<T>(entity, ids[]): Promise<DeleteResult>` | Multi-row delete by primary key; one object per row for a composite key |

@@ -1,27 +1,27 @@
-# Events & Subscribers
+# 이벤트 & 구독자
 
 ## 이벤트가 필요한 이유
 
-`User` 엔티티가 있다고 가정해볼게요. 사용자가 생성될 때 이런 작업이 필요해요:
+`User` 엔티티가 있다고 해 봅시다. 사용자가 생성될 때 다음 작업이 필요합니다.
 1. 환영 이메일 발송
 2. 감사 로그 기록
 3. 캐시 무효화
 
-이 로직을 사용자 생성 서비스에 전부 넣을 수도 있지만, 그러면 사용자 생성 코드가 이메일, 감사 로그, 캐시를 모두 알아야 해요. 사이드 이펙트가 추가될 때마다 같은 서비스를 수정해야 하고, 코드가 점점 엉키게 돼요.
+이 로직을 사용자 생성 서비스에 전부 넣을 수도 있습니다. 하지만 그러면 사용자 생성 코드가 이메일, 감사 로그, 캐시를 모두 다뤄야 합니다. 부수 효과가 추가될 때마다 같은 서비스를 수정해야 하고 코드는 점점 엉킵니다.
 
-이벤트는 **발생한 일**(사용자 생성)과 **그에 대한 반응**(이메일, 로그, 캐시)을 **분리**해줘요. 생성자는 이벤트를 발행하고, 리스너들은 독립적으로 반응해요. 서로의 존재를 알 필요가 없어요.
+이벤트는 사용자 생성처럼 발생한 일과 이메일, 로그, 캐시처럼 그 일에 반응하는 작업을 분리합니다. 사용자를 생성하는 쪽은 이벤트를 발행하고 리스너는 각자 독립적으로 반응합니다. 양쪽은 서로의 존재를 몰라도 됩니다.
 
-Stingerloom은 세 가지 수준의 이벤트 처리를 제공해요:
+Stingerloom은 세 가지 수준의 이벤트 처리를 제공합니다.
 
-1. **Lifecycle hooks** (`@BeforeInsert`, `@AfterUpdate`, ...) -- 엔티티 클래스에 직접 붙이는 데코레이터
-2. **Global event listeners** (`em.on()`) -- 모든 엔티티에 대해 실행되는 콜백
-3. **Entity subscribers** (`EntitySubscriber`) -- 특정 엔티티의 이벤트 로직을 캡슐화하는 클래스
+1. **Lifecycle hooks** (`@BeforeInsert`, `@AfterUpdate`, ...): 엔티티 클래스에 직접 붙이는 데코레이터
+2. **Global event listeners** (`em.on()`): 모든 엔티티에서 실행되는 콜백
+3. **Entity subscribers** (`EntitySubscriber`): 특정 엔티티의 이벤트 로직을 캡슐화하는 클래스
 
 ---
 
-## Lifecycle Hooks -- 엔티티 자체의 이벤트
+## 생명주기 훅: 엔티티 자체의 이벤트
 
-엔티티 라이프사이클 이벤트에 반응하는 가장 간단한 방법이에요. 엔티티 클래스에 데코레이터를 붙이면 되고, 별도 등록이 필요 없어요 -- ORM이 메타데이터를 통해 자동으로 인식해요.
+엔티티 생명주기 이벤트에 반응하는 가장 간단한 방법입니다. 엔티티 클래스에 데코레이터를 붙이기만 하면 됩니다. 별도로 등록할 필요는 없습니다. ORM이 메타데이터에서 훅을 자동으로 찾습니다.
 
 ```typescript
 import { Entity, Column, BeforeInsert, AfterUpdate } from "@stingerloom/orm";
@@ -46,7 +46,7 @@ export class Post {
 }
 ```
 
-각 hook이 실행되는 타이밍을 SQL 기준으로 보면 이래요:
+각 훅이 실행되는 시점을 SQL 기준으로 보면 다음과 같습니다.
 
 ```
   Your code:  em.save(Post, { title: "Hello World" })
@@ -61,30 +61,30 @@ export class Post {
   @AfterInsert fires   -->  (if you had one, it would run here)
 ```
 
-핵심은 이거예요: **before hook은 데이터를 변경할 수 있어요** (SQL 실행 전이니까요). 반면 **after hook은 사이드 이펙트 전용**이에요 (SQL이 이미 실행된 후거든요).
+핵심은 다음과 같습니다. before 훅은 SQL보다 먼저 실행되므로 데이터를 변경할 수 있습니다. 반면 after 훅은 SQL을 실행한 뒤에 호출되므로 부수 효과에만 씁니다.
 
-### 사용 가능한 Hooks
+### 사용 가능한 훅
 
-| Decorator | 실행 시점 | 데이터 변경 가능? | 활용 예시 |
+| Decorator | 실행 시점 | 데이터 변경 가능 | 활용 예시 |
 |-----------|----------|-----------------|----------|
-| `@BeforeInsert()` | `INSERT` SQL 전 | Yes | slug 생성, 기본값 설정, 유효성 검사 |
+| `@BeforeInsert()` | `INSERT` SQL 전 | Yes | slug 생성, 기본값 설정, 검증 |
 | `@AfterInsert()` | `INSERT` SQL 후 | No (이미 저장됨) | 알림 발송, 생성 로그 |
-| `@BeforeUpdate()` | `UPDATE` SQL 전 | Yes | 파생 필드 재계산, 유효성 검사 |
+| `@BeforeUpdate()` | `UPDATE` SQL 전 | Yes | 파생 필드 재계산, 검증 |
 | `@AfterUpdate()` | `UPDATE` SQL 후 | No (이미 저장됨) | 변경 로그, webhook 트리거 |
 | `@BeforeDelete()` | `DELETE` SQL 전 | No | 권한 확인, 제약 조건 체크 |
 | `@AfterDelete()` | `DELETE` SQL 후 | No (이미 삭제됨) | 관련 리소스 정리 |
 
-### Hooks vs. 다른 방식
+### 훅과 다른 방식 비교
 
-Hook은 **엔티티 고유의 로직**에 가장 적합해요 -- 어떤 서비스에서 저장하든 항상 실행되어야 하는 것들이요. 예를 들어 title에서 slug를 생성하는 건 Post가 어떻게 만들어지든 항상 필요하잖아요.
+훅은 엔티티 고유의 로직에 가장 적합합니다. 어떤 서비스에서 저장하든 항상 실행되어야 하는 로직이 여기에 해당합니다. 예를 들어 title에서 slug를 생성하는 일은 Post를 어떻게 만들든 항상 필요합니다.
 
-만약 **엔티티에 대한 반응** (이메일 발송, 캐시 갱신)이라면, subscriber나 global listener를 사용하는 게 맞아요. 엔티티가 이메일 서비스를 알 필요는 없으니까요.
+이메일 발송이나 캐시 갱신처럼 엔티티에 반응하는 로직이라면 구독자나 전역 리스너(global listener)를 쓰세요. 엔티티는 이메일 서비스에 의존하지 않아야 하기 때문입니다.
 
 ---
 
-## Global Event Listeners -- 모든 엔티티에 반응하기
+## 전역 이벤트 리스너: 모든 엔티티에 반응하기
 
-Global listener는 시스템의 **모든 엔티티**에 대해 실행돼요. EntityManager의 `em.on()`으로 등록해요.
+Global listener는 시스템의 모든 엔티티에서 실행됩니다. EntityManager의 `em.on()`으로 등록합니다.
 
 ```typescript
 // Log every insert across all entities
@@ -98,7 +98,7 @@ em.on("afterDelete", ({ entity, data }) => {
 });
 ```
 
-Global listener의 SQL 타임라인이에요:
+Global listener의 SQL 타임라인은 다음과 같습니다.
 
 ```
   Your code:  em.save(User, { name: "Alice" })
@@ -141,41 +141,41 @@ em.removeAllListeners();
 | `beforeRestore` | `restore()` 전 |
 | `afterRestore` | `restore()` 후 |
 
-soft-delete·restore 이벤트는 delete 이벤트와 똑같은 criteria 기반 페이로드(`{ entity, data }`, 여기서 `data`는 WHERE criteria)를 넘겨줍니다. `updateMany()`는 이 global 채널로 엔티티 클래스와 SET 페이로드를 담아 `beforeUpdate` / `afterUpdate`를 발화해요.
+소프트 삭제 이벤트와 restore 이벤트는 delete 이벤트와 똑같은 criteria 기반 페이로드 `{ entity, data }`를 넘깁니다. 여기서 `data`는 WHERE criteria입니다. `updateMany()`는 이 global 채널에서 엔티티 클래스와 SET 페이로드를 담아 `beforeUpdate` / `afterUpdate`를 발행합니다.
 
 ### 일치하는 행이 없는 쓰기
 
-criteria 기반 쓰기 -- `delete()`, `deleteMany()`, `softDelete()`, `restore()`, `update()` / `updateMany()`, `increment()` / `decrement()` -- 의 after 이벤트는 문장이 한 행 이상을 보고했을 때만 발화하고, 그 행 수를 페이로드의 `affected`로 넘겨줍니다.
+criteria 기반 쓰기는 `delete()`, `deleteMany()`, `softDelete()`, `restore()`, `update()` / `updateMany()`, `increment()` / `decrement()`입니다. 이 쓰기의 after 이벤트는 데이터베이스가 보고한 행 수가 1 이상일 때만 발생합니다. 그리고 그 행 수를 페이로드의 `affected`로 넘깁니다.
 
 ```typescript
 em.on("afterDelete", ({ entity, data, affected }) => {
   console.log(`[AUDIT] ${entity.name}: ${affected}행 삭제`, data);
 });
 
-await em.delete(User, { id: 9999 }); // 없는 행: beforeDelete는 발화하고 afterDelete는 발화하지 않음
+await em.delete(User, { id: 9999 }); // 없는 행: beforeDelete는 발생하고 afterDelete는 발생하지 않음
 ```
 
-before 이벤트는 그대로 발화합니다. 행 수는 문장을 실행해야 알 수 있기 때문이에요. `softDelete()`는 살아 있던 행만, `restore()`는 soft-delete된 행만 세므로 같은 호출을 반복하면 after 이벤트가 나가지 않습니다. `affected`는 데이터베이스가 보고한 값, 즉 WHERE에 일치한 행 수이며 MySQL에서는 값이 바뀌지 않은 행도 포함합니다. `save()`도 같은 규칙을 따릅니다. 일치하는 행이 없는 UPDATE는 `afterUpdate`를 발화하는 대신 `EntityNotFoundError`를 던져요.
+before 이벤트는 그대로 발생합니다. 행 수는 SQL 문을 실행해야 알 수 있기 때문입니다. `softDelete()`는 소프트 삭제되지 않은 행만 세고 `restore()`는 소프트 삭제된 행만 셉니다. 그래서 같은 호출을 반복하면 after 이벤트가 발생하지 않습니다. `affected`는 데이터베이스가 보고한 값으로 WHERE에 일치한 행 수입니다. MySQL에서는 값이 바뀌지 않은 행도 포함합니다. `save()`도 같은 규칙을 따릅니다. 일치하는 행이 없는 UPDATE는 `afterUpdate`를 발행하지 않고 `EntityNotFoundError`를 던집니다.
 
-### 언제 Global Listener를 쓸까?
+### 전역 리스너를 쓰는 경우
 
-모든 엔티티에 적용되는 **횡단 관심사(cross-cutting concerns)**에 이상적이에요:
+Global listener는 모든 엔티티에 적용되는 횡단 관심사(cross-cutting concerns)에 알맞습니다.
 
-- **감사 로깅** -- 모든 테이블의 모든 변경 기록
-- **메트릭** -- 초당 insert/update/delete 횟수 집계
-- **디버깅** -- 개발 중 모든 DB 작업 로깅
+- **감사 로깅**: 모든 테이블의 모든 변경 기록
+- **메트릭**: 초당 insert/update/delete 횟수 집계
+- **디버깅**: 개발 중 모든 데이터베이스 작업 로깅
 
-특정 엔티티에만 반응해야 한다면 (예: User 변경 시 캐시 무효화), EntitySubscriber를 대신 사용하세요.
+User가 바뀔 때 캐시를 무효화하는 것처럼 특정 엔티티에만 반응해야 한다면 EntitySubscriber를 쓰세요.
 
 ---
 
-## EntitySubscriber -- 엔티티별 이벤트 클래스
+## EntitySubscriber: 엔티티별 이벤트 클래스
 
-`EntitySubscriber`는 가장 강력한 방식이에요. 특정 엔티티의 모든 이벤트 로직을 하나의 전용 클래스에 캡슐화할 수 있어요. Global listener와 달리, 관심 있는 엔티티의 이벤트만 받아요.
+`EntitySubscriber`는 가장 강력한 방식입니다. 특정 엔티티의 모든 이벤트 로직을 전용 클래스 하나에 캡슐화할 수 있습니다. Global listener와 달리 구독자는 대상 엔티티의 이벤트만 받습니다.
 
-### 전체 예제: Audit Trail
+### 전체 예제: 감사 추적
 
-User 엔티티의 모든 변경을 기록하는 subscriber예요:
+User 엔티티의 모든 변경을 기록하는 구독자입니다.
 
 ```typescript
 // user-audit.subscriber.ts
@@ -221,7 +221,7 @@ class UserAuditSubscriber implements EntitySubscriber<User> {
 }
 ```
 
-### Subscriber의 SQL 타임라인
+### 구독자의 SQL 타임라인
 
 ```
   Your code:  em.save(User, { name: "Alice", email: "alice@example.com" })
@@ -253,44 +253,44 @@ em.addSubscriber(new UserAuditSubscriber());
 em.removeSubscriber(subscriber);
 ```
 
-### 전체 Subscriber 이벤트 목록
+### 전체 구독자 이벤트 목록
 
-EntitySubscriber는 global listener보다 더 많은 이벤트를 지원해요. 트랜잭션 라이프사이클 이벤트도 포함돼요:
+EntitySubscriber는 전역 리스너보다 더 많은 이벤트를 지원합니다. 트랜잭션 생명주기 이벤트도 포함됩니다.
 
 | Method | 실행 시점 | 활용 예시 |
 |--------|----------|----------|
-| `afterLoad(entity)` | DB에서 엔티티를 로드한 후 | 필드 복호화, 파생 값 계산 |
-| `beforeInsert(event)` | INSERT 전 | 유효성 검사, 데이터 보강/변환 |
+| `afterLoad(entity)` | 데이터베이스에서 엔티티를 로드한 후 | 필드 복호화, 파생 값 계산 |
+| `beforeInsert(event)` | INSERT 전 | 검증, 데이터 보강/변환 |
 | `afterInsert(event)` | INSERT 후 | 감사 로그, 환영 이메일 발송 |
-| `beforeUpdate(event)` | UPDATE 전 | 변경 유효성 검사, 필드 diff 추적 |
+| `beforeUpdate(event)` | UPDATE 전 | 변경 검증, 필드 diff 추적 |
 | `afterUpdate(event)` | UPDATE 후 | 캐시 무효화, 구독자 알림 |
 | `beforeDelete(event)` | DELETE 전 | 권한 확인, 보호된 삭제 방지 |
 | `afterDelete(event)` | DELETE 후 | 파일 정리, 검색 인덱스 제거 |
-| `beforeSoftDelete(event)` | `softDelete()` 전 | soft-delete 가드, 상태 스냅샷 |
+| `beforeSoftDelete(event)` | `softDelete()` 전 | 소프트 삭제 가드, 상태 스냅샷 |
 | `afterSoftDelete(event)` | `softDelete()` 후 | 아카이빙 전파, 알림 |
 | `beforeRestore(event)` | `restore()` 전 | 복원 가드 |
 | `afterRestore(event)` | `restore()` 후 | 재인덱싱, 캐시 재준비 |
 | `beforeTransactionStart()` | BEGIN 전 | 진단, 로깅 |
 | `afterTransactionStart()` | BEGIN 후 | 진단, 로깅 |
-| `beforeTransactionCommit()` | COMMIT 전 | 최종 유효성 검사, 사이드 이펙트 일괄 처리 |
+| `beforeTransactionCommit()` | COMMIT 전 | 최종 검증, 부수 효과 일괄 처리 |
 | `afterTransactionCommit()` | COMMIT 후 | 도메인 이벤트를 메시지 큐에 발행 |
 | `beforeTransactionRollback()` | ROLLBACK 전 | 로깅 |
 | `afterTransactionRollback()` | ROLLBACK 후 | 정리, 알림 |
 
-모든 메서드는 선택 사항이에요 -- 필요한 것만 구현하면 돼요. `beforeSoftDelete` / `afterSoftDelete` / `beforeRestore` / `afterRestore`는 `beforeDelete` / `afterDelete`와 같은 criteria 기반 `DeleteEvent`(`{ entityClass, criteria, manager }`)를 받아요. 단일 행이 아니라 일괄 `WHERE`를 대상으로 실행되기 때문입니다. `afterDelete` / `afterSoftDelete` / `afterRestore`에서는 `affected`도 함께 담기며, 일치하는 행이 없으면 이 세 이벤트는 발화하지 않습니다([일치하는 행이 없는 쓰기](#일치하는-행이-없는-쓰기) 참고).
+모든 메서드는 선택 사항입니다. 필요한 메서드만 구현하면 됩니다. `beforeSoftDelete` / `afterSoftDelete` / `beforeRestore` / `afterRestore`는 `beforeDelete` / `afterDelete`와 같은 criteria 기반 `DeleteEvent`(`{ entityClass, criteria, manager }`)를 받습니다. 하이드레이트된 행 하나가 아니라 일괄 `WHERE`를 대상으로 실행되기 때문입니다. `afterDelete` / `afterSoftDelete` / `afterRestore`의 이벤트에는 `affected`도 담깁니다. 그리고 일치하는 행이 없으면 이 세 이벤트는 발생하지 않습니다. 자세한 내용은 [일치하는 행이 없는 쓰기](#일치하는-행이-없는-쓰기)를 참고하세요.
 
 ### afterLoad 보장
 
-`afterLoad`는 **엔티티를 반환하는 모든 조회 경로**에서 발화돼요 -- 믿고 설계해도 되는 보장이에요:
+`afterLoad`는 엔티티를 반환하는 모든 조회 경로에서 발생합니다. 이 보장을 전제로 설계해도 됩니다.
 
-| 조회 경로 | `afterLoad` 발화? |
+| 조회 경로 | `afterLoad` 발생 |
 |-----------|------------------|
 | `find()` / `findOne()` | 예 |
 | 커서 페이지네이션 (`findWithCursor()`) | 예 |
 | 쿼리 빌더 `getMany()` / `getOne()` / `getManyAndCount()` / `paginate()` | 예 (엔티티 결과만) |
-| `getRawMany()` / `getPartialMany()` | 아니요 -- raw/partial 조회는 절대 발화하지 않아요 |
+| `getRawMany()` / `getPartialMany()` | 아니요: raw/partial 조회에서는 절대 발생하지 않음 |
 
-구독자가 `afterLoad`에서 필드를 복호화하거나 파생 값을 계산한다면, 엔티티가 어떤 경로로 로드됐든 훅이 실행된다고 믿어도 돼요. 서비스를 `find()`에서 쿼리 빌더로 바꿔도 훅이 슬그머니 빠지는 일은 없어요. 반대로 raw/partial 프로젝션은 손대지 않는 것도 보장돼요.
+구독자가 `afterLoad`에서 필드를 복호화하거나 파생 값을 계산한다고 해 봅시다. 이때 엔티티가 어떤 경로로 로드됐든 훅은 실행됩니다. 서비스를 `find()`에서 쿼리 빌더로 바꿔도 훅이 빠지지 않습니다. 반대로 raw/partial 프로젝션에는 훅이 손대지 않는다는 것도 보장됩니다.
 
 ### 활용 예시
 
@@ -324,7 +324,7 @@ class OrderNotificationSubscriber implements EntitySubscriber<Order> {
 }
 ```
 
-**도메인 이벤트 발행 (commit 후에만):**
+**도메인 이벤트 발행 (커밋 후에만):**
 ```typescript
 class PaymentEventSubscriber implements EntitySubscriber<Payment> {
   listenTo() { return Payment; }
@@ -340,9 +340,9 @@ class PaymentEventSubscriber implements EntitySubscriber<Payment> {
 
 ---
 
-## NestJS Integration
+## NestJS 통합
 
-NestJS에서는 `OnModuleInit` 라이프사이클 훅을 사용해서 모듈 초기화 시점에 subscriber를 등록해요:
+NestJS에서는 `OnModuleInit` 생명주기 훅으로 모듈을 초기화할 때 구독자를 등록합니다.
 
 ```typescript
 import { Injectable, OnModuleInit } from "@nestjs/common";
@@ -367,35 +367,35 @@ export class AppService implements OnModuleInit {
 
 ---
 
-## 어떤 방식을 선택할까?
+## 방식 선택 기준
 
-판단 기준이에요:
+다음 질문으로 판단하세요.
 
-**"이 로직이 누가 저장하든 항상 실행되어야 하나요?"**
-- Yes -- 엔티티 클래스에 **lifecycle hook** (`@BeforeInsert` 등)을 사용하세요.
-- 예시: slug 생성, 기본 상태값 설정.
+**"누가 저장하든 이 로직이 항상 실행되어야 하나요?"**
+- 그렇다면 엔티티 클래스에 생명주기 훅(`@BeforeInsert` 등)을 쓰세요.
+- 예시: slug 생성, 기본 상태값 설정
 
 **"이 로직이 시스템의 모든 엔티티에 적용되어야 하나요?"**
-- Yes -- **global listener** (`em.on()`)를 사용하세요.
-- 예시: 모든 변경 감사 로깅, 메트릭용 연산 횟수 집계.
+- 그렇다면 전역 리스너(`em.on()`)를 쓰세요.
+- 예시: 모든 변경의 감사 로깅, 메트릭용 연산 횟수 집계
 
-**"이 로직이 특정 엔티티 하나에만 적용되고, 외부 시스템과 연동되나요?"**
-- Yes -- **EntitySubscriber**를 사용하세요.
-- 예시: User 생성 시 이메일 발송, Product 변경 시 캐시 무효화.
+**"이 로직이 특정 엔티티 하나에만 적용되고 외부 시스템과 연동되나요?"**
+- 그렇다면 EntitySubscriber를 쓰세요.
+- 예시: User 생성 시 이메일 발송, Product 변경 시 캐시 무효화
 
 요약 표:
 
 | 필요한 기능 | 사용할 방식 |
 |------------|-----------|
-| 저장 전 엔티티 데이터 변경 | `@BeforeInsert()` / `@BeforeUpdate()` hooks |
+| 저장 전 엔티티 데이터 변경 | `@BeforeInsert()` / `@BeforeUpdate()` 훅 |
 | 모든 엔티티에 전역 반응 (로깅, 메트릭) | `em.on()` |
 | 특정 엔티티에 반응 (감사, 캐시, 알림) | `EntitySubscriber` |
-| 트랜잭션 라이프사이클에 반응 (commit, rollback) | `EntitySubscriber` |
+| 트랜잭션 생명주기에 반응 (커밋, 롤백) | `EntitySubscriber` |
 
 ---
 
-## Next Steps
+## 다음 단계
 
-- [Entities](./entities.md) -- 엔티티 정의, 컬럼, 유효성 검사 데코레이터
-- [Transactions](./transactions.md) -- 트랜잭션 관리와 격리 수준
-- [API Reference](./api-reference.md) -- EntitySubscriber 타입 시그니처
+- [Entities](./entities.md): 엔티티 정의, 컬럼, 검증 데코레이터
+- [Transactions](./transactions.md): 트랜잭션 관리와 격리 수준
+- [API Reference](./api-reference.md): EntitySubscriber 타입 시그니처

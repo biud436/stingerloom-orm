@@ -1,16 +1,16 @@
-# Write Buffer — Advanced
+# Write Buffer: 고급편
 
-이 페이지는 WriteBuffer의 고급 기능을 다뤄요. 먼저 [Write Buffer — Basics](./write-buffer.md)를 읽고, Identity Map, dirty checking, 엔티티 상태, `flush()`를 이해한 뒤에 진행해 주세요.
+WriteBuffer의 고급 기능을 쓰려면 Identity Map, 변경 추적(dirty checking), 엔티티 상태, `flush()`를 먼저 이해해야 합니다. 아직 읽지 않았다면 [Write Buffer: 기본편](./write-buffer.md)부터 읽으세요.
 
 ---
 
-## Lazy Loading
+## 지연 로딩
 
-### N+1 문제와 Lazy Loading이 필요한 이유
+### N+1 문제와 지연 로딩이 필요한 이유
 
-블로그에 게시글과 작성자가 있다고 해볼게요. 게시글 10개를 불러오면, 각 게시글의 작성자 정보도 필요할 거예요. 두 가지 방법이 있어요:
+게시글과 작성자가 있는 블로그를 생각해 보겠습니다. 게시글 10개를 조회하면 대개 각 게시글의 작성자도 필요합니다. 방법은 두 가지입니다.
 
-**Eager loading** — 한 번에 전부 불러오기:
+**즉시 로딩**(eager loading): 한 번에 전부 로드하기
 ```typescript
 const posts = await buf.find(Post, { relations: ["author"] });
 ```
@@ -20,7 +20,7 @@ LEFT JOIN "user" ON "user"."id" = "post"."authorId"
 -- 1 query, all data at once
 ```
 
-**Lazy loading** — 필요할 때 불러오기:
+**지연 로딩**(lazy loading): 필요할 때 로드하기
 ```typescript
 const posts = await buf.find(Post);
 // authors are NOT loaded yet — just the post columns
@@ -37,13 +37,13 @@ SELECT * FROM "user" WHERE "id" = $2   -- post 2's author
 -- ... 10 separate queries (the "N+1" problem)
 ```
 
-Lazy loading은 비효율적으로 보여요 — 쿼리 1개면 될 걸 11개나 실행하니까요. 그런데 왜 존재할까요?
+지연 로딩은 낭비처럼 보입니다. 쿼리 1개면 될 일을 11개로 실행하기 때문입니다. 그래도 지연 로딩이 필요한 이유가 있습니다.
 
-관계 데이터를 **안 쓸 때**도 있기 때문이에요. 목록 화면에서 게시글 제목만 필요한 경우, 작성자 10명의 아바타, 소개, 설정 등을 전부 불러오면 대역폭과 메모리 낭비예요. Lazy loading은 **실제로 접근할 때만 로드하겠다**는 뜻이에요.
+관계 데이터를 아예 쓰지 않을 때도 있기 때문입니다. 목록 화면에는 게시글 제목만 필요할 수 있습니다. 이때 작성자 10명의 아바타, 소개, 설정까지 전부 즉시 로딩하면 대역폭과 메모리가 낭비됩니다. 지연 로딩은 실제로 접근할 때만 로드한다는 뜻입니다.
 
-WriteBuffer는 관계 프로퍼티를 자동으로 lazy proxy로 초기화해요. 로드되지 않은 관계에 접근하면 DB 쿼리가 실행되고, 로드된 엔티티는 버퍼의 Identity Map에 등록돼요.
+WriteBuffer는 관계 속성을 자동으로 지연 로딩 프록시(lazy proxy)로 초기화합니다. 로드되지 않은 관계에 접근하면 DB 쿼리가 실행됩니다. 그리고 로드된 엔티티는 버퍼의 Identity Map에 등록됩니다.
 
-### Lazy proxy의 동작 방식
+### 지연 로딩 프록시의 동작 방식
 
 ```typescript
 const buf = em.buffer();
@@ -59,18 +59,18 @@ const author = await post.author;
 console.log(post.author.name);  // "Alice" — works directly
 ```
 
-네 가지 관계 타입 모두에서 동작해요:
+네 가지 관계 타입 모두에서 동작합니다.
 
-| Relation | Lazy proxy가 반환하는 값 |
+| 관계 | 프록시가 반환하는 값 |
 |----------|---------------------------|
 | `@ManyToOne` | Promise → 단일 부모 엔티티 |
 | `@OneToMany` | Promise → 자식 엔티티 배열 |
 | `@OneToOne` | Promise → 단일 관련 엔티티 |
-| `@ManyToMany` | Promise → 관련 엔티티 배열 (pivot 테이블을 먼저 조회) |
+| `@ManyToMany` | Promise → 관련 엔티티 배열 (조인 테이블을 먼저 조회) |
 
-### Promise 함정 — 첫 번째 접근만 해당
+### Promise 함정: 첫 번째 접근만 해당
 
-JavaScript 언어 제약 때문에, property getter는 동기적이에요. Lazy proxy가 DB 쿼리 결과를 동기적으로 반환할 수는 없어요. 그래서 첫 번째 접근은 **Promise**를 반환해요:
+JavaScript의 속성 getter는 언어 제약 때문에 동기적으로 동작합니다. 그래서 프록시는 DB 쿼리 결과를 동기적으로 반환할 수 없습니다. 첫 번째 접근이 Promise를 반환하는 것은 이 때문입니다.
 
 ```typescript
 // ✗ WRONG — post.author is a Promise on first access
@@ -81,11 +81,11 @@ const author = await post.author;
 console.log(author.name);  // "Alice"
 ```
 
-첫 번째 `await` 이후에는 proxy가 실제 값으로 교체돼요. 이후 접근은 모두 동기적이에요.
+첫 번째 `await` 뒤에는 프록시가 실제 값으로 교체됩니다. 그 뒤의 접근은 모두 동기적입니다.
 
 ### Promise 함정을 피하는 세 가지 패턴
 
-**1. `relations`로 Eager load** — proxy도 Promise도 없어요:
+**1. `relations`로 즉시 로딩하기:** 프록시도 Promise도 없습니다.
 ```typescript
 const post = await buf.findOne(Post, {
   where: { id: 1 },
@@ -101,46 +101,46 @@ WHERE "post"."id" = $1
 console.log(post.author.name);  // "Alice" — works immediately, no await
 ```
 
-**2. 첫 접근 시 항상 `await`하기:**
+**2. 첫 접근에서 항상 `await`하기:**
 ```typescript
 const author = await post.author;
 // From here, post.author is safe to use synchronously
 ```
 
-**3. 직접 할당으로 proxy 교체하기:**
+**3. 직접 할당해서 프록시 교체하기:**
 ```typescript
 post.comments = [myComment];  // proxy is replaced with your array
 // No DB query, no Promise
 ```
 
-### 직렬화는 안전해요 — 로드 안 된 관계는 건너뜁니다
+### 안전한 직렬화: 로드되지 않은 관계는 건너뜀
 
-로드되지 않은 lazy 프로퍼티는 **non-enumerable**입니다. `JSON.stringify`, 객체 스프레드, `Object.keys`, 로그 출력, 테스트 pretty-printer가 전부 그 프로퍼티를 건너뛰어요 — 숨은 쿼리도, 방치된 Promise도 생기지 않습니다:
+로드되지 않은 지연 로딩 속성은 non-enumerable입니다. 그래서 `JSON.stringify`, 객체 스프레드, `Object.keys`, 로그 출력, 테스트 pretty-printer는 모두 그 속성을 건너뜁니다. 숨은 쿼리도 실행되지 않고 방치된 Promise도 생기지 않습니다.
 
 ```typescript
 const post = await buf.findOne(Post, { where: { id: 1 } });
 
 JSON.stringify(post);
-// → {"id":1,"title":"..."} — "author"도 "comments"도 없음, 쿼리 0회
+// → {"id":1,"title":"..."}: "author"와 "comments"가 없고 쿼리도 실행되지 않습니다
 
-await post.comments;      // 관계를 materialize
+await post.comments;      // 관계를 로드합니다
 JSON.stringify(post);
-// → {"id":1,"title":"...","comments":[...]} — 로드된 관계는 정상 직렬화
+// → {"id":1,"title":"...","comments":[...]}: 로드된 관계는 정상적으로 직렬화됩니다
 ```
 
-관계가 한번 로드되면(또는 직접 할당하면) 프로퍼티는 평범한 enumerable 값이 되어 다른 필드처럼 직렬화됩니다. 즉 직렬화 결과는 항상 **실제로 로드된 것만** 반영해요 — `res.json(entity)` 같은 API 응답이 예상치 못한 lazy load 쿼리를 유발하지 않습니다.
+관계를 한 번 로드하거나 직접 할당하면 그 속성은 평범한 enumerable 값이 됩니다. 그리고 다른 필드처럼 직렬화됩니다. 그래서 직렬화 결과에는 항상 실제로 로드된 것만 들어갑니다. `res.json(entity)` 같은 API 응답이 예상하지 못한 지연 로딩 쿼리를 실행하는 일도 없습니다.
 
-직접 프로퍼티 접근은 그대로예요: `post.comments`를 읽으면 여전히 lazy load가 실행됩니다. 로드가 실패하면 `await`한 호출자에게는 Promise가 reject되지만, await 없이 버려진 동기 접근이 unhandled rejection으로 프로세스를 죽이는 일은 없어요 — 다음 접근에서 쿼리를 다시 시도합니다.
+속성에 직접 접근할 때의 동작은 그대로입니다. `post.comments`를 읽으면 여전히 지연 로딩이 실행됩니다. 로드가 실패하면 `await`한 호출자에게는 Promise가 거부됩니다. 하지만 await 없이 버려진 동기 접근이 unhandled rejection으로 프로세스를 종료시키는 일은 없습니다. 그리고 다음에 접근할 때 쿼리를 다시 시도합니다.
 
-버퍼의 쓰기 경로도 같은 원칙을 따라요: `flush()`, `detach()`, cascade 순회는 **이미 로드된** 관계만 걷습니다. 로드 안 된 컬렉션을 들여다보려고 flush 도중에 몰래 fetch하는 일은 없습니다.
+버퍼의 쓰기 경로도 같은 원칙을 따릅니다. `flush()`, `detach()`, cascade 순회는 이미 로드된 관계만 순회합니다. 로드되지 않은 컬렉션을 확인하려고 flush 도중에 조회하는 일은 없습니다.
 
 ---
 
-## Pessimistic Locking
+## 비관적 잠금
 
-### Dirty checking만으로 부족한 경우
+### 변경 추적만으로 부족한 경우
 
-Dirty checking은 로드와 flush 사이에 **내가** 변경한 것을 감지해요. 하지만 **다른 트랜잭션**이 그 사이에 변경하면 어떻게 될까요?
+변경 추적은 로드와 flush 사이에 내가 바꾼 값을 찾아냅니다. 그렇다면 그 사이에 다른 트랜잭션이 값을 바꾸면 어떻게 될까요?
 
 ```
 Transaction A: read balance = 100
@@ -150,9 +150,9 @@ Transaction B: balance -= 30, flush → UPDATE SET balance = 70
                                        ↑ WRONG — should be 20!
 ```
 
-Transaction B는 A의 변경을 몰랐어요. 최종 잔액이 20이어야 하는데 70이 돼버렸어요. 이게 **lost update** 문제예요.
+트랜잭션 B는 A가 바꾼 값을 알지 못했습니다. 그래서 최종 잔액은 20이어야 하는데 70이 됐습니다. 이것이 **갱신 손실**(lost update) 문제입니다.
 
-Pessimistic locking은 읽기 시점에 행을 잠가서 이 문제를 방지해요. 다른 트랜잭션은 잠금이 해제될 때까지 대기해요:
+비관적 잠금(pessimistic locking)은 읽는 시점에 행을 잠가서 이 문제를 막습니다. 다른 트랜잭션은 잠금이 풀릴 때까지 기다려야 합니다.
 
 ```typescript
 import { LockMode } from "@stingerloom/orm";
@@ -183,18 +183,18 @@ COMMIT
 
 | Mode | SQL | 동작 |
 |------|-----|------|
-| `PESSIMISTIC_WRITE` | `FOR UPDATE` | **배타적 잠금** — 다른 트랜잭션이 이 행을 읽거나 쓸 수 없어요 |
-| `PESSIMISTIC_READ` | `FOR SHARE` (PostgreSQL) / `LOCK IN SHARE MODE` (MySQL) | **공유 잠금** — 다른 트랜잭션이 읽을 수는 있지만 쓸 수 없어요 |
+| `PESSIMISTIC_WRITE` | `FOR UPDATE` | 배타 잠금: 다른 트랜잭션이 이 행을 읽거나 쓸 수 없음 |
+| `PESSIMISTIC_READ` | `FOR SHARE` (PostgreSQL) / `LOCK IN SHARE MODE` (MySQL) | 공유 잠금: 다른 트랜잭션이 읽을 수는 있지만 쓸 수 없음 |
 
-`lock` 옵션은 `em.findOne()`이나 `em.find()`에서도 직접 사용할 수 있어요 (버퍼 없이도요).
+`lock` 옵션은 버퍼 없이 `em.findOne()`이나 `em.find()`에서도 바로 쓸 수 있습니다.
 
 ---
 
-## Bulk DML
+## 대량 DML
 
-### updateMany / deleteMany — 엔티티별 추적이 필요 없을 때
+### updateMany / deleteMany: 엔티티별 추적이 필요 없을 때
 
-조건에 따라 많은 행을 한 번에 업데이트하거나 삭제해야 할 때, 각 엔티티를 개별 로드할 필요가 없어요. `active = false`로 설정하려고 유저 10,000명을 로드하는 건 너무 비효율적이에요:
+조건에 맞는 많은 행을 한 번에 갱신하거나 삭제할 때가 있습니다. 이때 엔티티를 하나씩 로드할 필요는 없습니다. `active = false`로 바꾸려고 사용자 10,000명을 로드하면 지나치게 느립니다.
 
 ```typescript
 const buf = em.buffer();
@@ -224,13 +224,13 @@ DELETE FROM "session" WHERE "expired" = $1
 COMMIT;
 ```
 
-이 작업들은 flush 시 raw SQL로 실행되며, 추적 중인 엔티티 연산 **이후에** 수행돼요. 추적 중인 엔티티가 조건에 해당하면, 버퍼가 메모리 상태도 동기화해요:
-- Bulk update: 조건에 맞는 추적 엔티티에 SET 값이 메모리에서도 적용돼요
-- Bulk delete: 조건에 맞는 추적 엔티티가 Identity Map에서 제거돼요
+이 작업은 flush할 때 raw SQL 문으로 실행됩니다. 실행 순서는 추적 중인 엔티티의 연산이 모두 끝난 뒤입니다. 추적 중인 엔티티가 조건에 맞으면 버퍼는 메모리의 상태도 맞춰 둡니다.
+- Bulk update: 조건에 맞는 추적 엔티티에 SET 값을 메모리에서도 적용합니다.
+- Bulk delete: 조건에 맞는 추적 엔티티를 Identity Map에서 제거합니다.
 
-### Batch INSERT — 여러 행을 하나의 구문으로
+### Batch INSERT: 여러 행을 SQL 문 하나로
 
-기본적으로 유저 3명을 persist하면 INSERT 3개가 개별 실행돼요. `batchInsert: true`로 설정하면 하나의 multi-row INSERT로 합쳐져요:
+기본 설정에서는 사용자 3명을 persist하면 INSERT 3개가 따로 실행됩니다. `batchInsert: true`로 설정하면 multi-row INSERT 하나로 합쳐집니다.
 
 ```typescript
 const buf = em.buffer({ batchInsert: true });
@@ -242,7 +242,7 @@ buf.persist(user3);
 await buf.flush();
 ```
 
-**`batchInsert` 없이** (3 round-trip):
+**`batchInsert` 없이** (라운드 트립 3번):
 ```sql
 INSERT INTO "user" ("name", "email") VALUES ($1, $2) RETURNING "id";
 INSERT INTO "user" ("name", "email") VALUES ($3, $4) RETURNING "id";
@@ -251,24 +251,31 @@ INSERT INTO "user" ("name", "email") VALUES ($5, $6) RETURNING "id";
 
 **`batchInsert: true`** (그룹당 INSERT 한 번):
 ```sql
--- PostgreSQL (RETURNING이 생성된 키와 함께 각 행을 돌려줌)
+-- PostgreSQL (RETURNING이 생성된 키와 함께 각 행을 반환함)
 INSERT INTO "user" ("name", "email")
 VALUES ($1, $2), ($3, $4), ($5, $6)
 RETURNING *
 
--- MySQL (키는 LAST_INSERT_ID()부터 이어지고, 행은 SELECT 한 번으로 다시 읽음)
+-- MySQL (키는 LAST_INSERT_ID()부터 이어지고 행은 SELECT 한 번으로 다시 조회함)
 INSERT INTO `user` (`name`, `email`)
 VALUES (?, ?), (?, ?), (?, ?);
 SELECT ... FROM `user` WHERE `id` IN (?, ?, ?)
 ```
 
-그룹은 `saveMany()`가 씁니다. 그래서 행마다 `save()`와 똑같이 컬럼 기본값, 트랜스포머, JSON 값, `tenant_column`의 테넌트 컬럼, 생명주기 훅, 이벤트, 구독자가 적용됩니다. 그다음 버퍼가 생성된 키와 데이터베이스가 채운 값을 순서대로 각 인스턴스에 옮겨 적어요.
+그룹은 `saveMany()`로 저장합니다. 그래서 각 행에는 `save()`와 똑같이 컬럼 기본값, 트랜스포머, JSON 값, `tenant_column`의 테넌트 컬럼, 생명주기 훅, 이벤트, 구독자가 적용됩니다. 그다음 버퍼는 생성된 키와 데이터베이스가 채운 값을 순서대로 각 인스턴스에 옮겨 적습니다.
 
-다음 경우에는 여전히 `save()`로 한 행씩 씁니다. 인스턴스가 하나뿐일 때, 복합 기본 키일 때, SQLite일 때, 그리고 `SINGLE_TABLE`이나 `JOINED` 계층의 엔티티일 때입니다. 이 계층의 행에는 discriminator가 필요하고, `JOINED` 자식은 테이블 두 개에 걸쳐 있기 때문입니다. 인스턴스에 키가 이미 있으면 `saveMany()`도 한 행씩 씁니다.
+다음과 같은 그룹은 여전히 `save()`로 한 행씩 저장합니다.
 
-### Batch UPDATE — 여러 행을 하나의 구문으로
+- 인스턴스가 하나뿐일 때
+- 복합 기본 키일 때
+- SQLite일 때
+- `SINGLE_TABLE`이나 `JOINED` 계층의 엔티티일 때. 이 계층의 행에는 구분 값이 필요하고 `JOINED` 자식은 테이블 두 개에 나뉘어 있기 때문입니다.
 
-`batchUpdate: true`로 설정하면, 같은 타입의 dirty 엔티티 여러 개를 `CASE WHEN`으로 한 번에 업데이트해요:
+인스턴스에 키가 이미 있으면 `saveMany()`도 한 행씩 저장합니다.
+
+### Batch UPDATE: 여러 행을 SQL 문 하나로
+
+`batchUpdate: true`로 설정하면 같은 타입의 dirty 엔티티 여러 개를 `CASE WHEN`을 쓴 SQL 문 하나로 갱신합니다.
 
 ```typescript
 const buf = em.buffer({ batchUpdate: true });
@@ -281,14 +288,14 @@ users[2].name = "Charlie";
 await buf.flush();
 ```
 
-**`batchUpdate` 없이** (3 round-trip):
+**`batchUpdate` 없이** (라운드 트립 3번):
 ```sql
 UPDATE "user" SET "name" = $1 WHERE "id" = $2;
 UPDATE "user" SET "name" = $3 WHERE "id" = $4;
 UPDATE "user" SET "name" = $5 WHERE "id" = $6;
 ```
 
-**`batchUpdate: true`** (1 round-trip):
+**`batchUpdate: true`** (라운드 트립 1번):
 ```sql
 UPDATE "user" SET
   "name" = CASE
@@ -300,13 +307,13 @@ UPDATE "user" SET
 WHERE "id" IN ($7, $8, $9)
 ```
 
-`CASE WHEN`이 각 PK를 새 값에 매핑해요. `ELSE "name"`은 매칭되지 않는 행의 원래 값을 유지하는 안전장치예요 — `WHERE IN`이 이미 업데이트 범위를 제한하고 있지만요.
+`CASE WHEN` 식은 각 기본 키를 새 값에 매핑합니다. `ELSE "name"`은 매칭되지 않는 행이 원래 값을 유지하게 합니다. `WHERE IN`이 이미 갱신 범위를 제한하므로 이 절은 만일을 대비한 안전장치입니다.
 
 ---
 
-## Flush Events
+## flush 이벤트
 
-Flush 중 연산 타입별로 콜백을 등록할 수 있어요. 감사 로그, 캐시 무효화, 데이터 변경 후 알림 전송 등에 유용해요:
+flush 중에 실행되는 콜백을 연산 타입별로 등록할 수 있습니다. 감사 로그, 캐시 무효화, 데이터 변경 뒤의 알림 전송에 유용합니다.
 
 ```typescript
 const buf = em.buffer();
@@ -326,14 +333,14 @@ buf.onFlushEvent("postInsert", (event) => {
 |-------|-----------|---------|
 | `preInsert` | 각 INSERT 전 | `{ entity, instance, data }` |
 | `postInsert` | 각 INSERT 후 | `{ entity, instance, data }` |
-| `preUpdate` | 각 UPDATE 전 | `{ entity, instance, data }` — `data` = 변경된 컬럼만 |
+| `preUpdate` | 각 UPDATE 전 | `{ entity, instance, data }` (`data` = 변경된 컬럼만) |
 | `postUpdate` | 각 UPDATE 후 | `{ entity, instance, data }` |
-| `preDelete` | 각 DELETE 전 | `{ entity, criteria }` — `criteria` = WHERE 조건 |
+| `preDelete` | 각 DELETE 전 | `{ entity, criteria }` (`criteria` = WHERE 조건) |
 | `postDelete` | 각 DELETE 후 | `{ entity, criteria }` |
 
-이벤트는 배치 경로에서도 발화합니다. `batchInsert` / `batchUpdate`를 켜도 멀티로우 INSERT나 CASE WHEN UPDATE에 포함된 엔티티마다 `preInsert`/`postInsert`, `preUpdate`/`postUpdate` 쌍이 각각 실행돼요. `preInsert`/`preUpdate`는 배치 SQL을 만들기 전에 발화하므로, 리스너에서 엔티티를 수정하면 그대로 반영됩니다 — per-row 경로와 같은 계약이에요.
+이벤트는 배치 경로에서도 실행됩니다. `batchInsert`나 `batchUpdate`를 켜도 multi-row INSERT나 CASE WHEN UPDATE에 들어간 엔티티마다 `preInsert`/`postInsert` 쌍이나 `preUpdate`/`postUpdate` 쌍이 따로 실행됩니다. `preInsert`와 `preUpdate`는 배치 SQL 문을 만들기 전에 실행됩니다. 그래서 리스너에서 엔티티를 수정하면 그 값이 저장됩니다. 행 단위 경로와 같은 계약입니다.
 
-엔티티 생명주기 훅(`@BeforeInsert`, `@BeforeUpdate` 등, 또는 defineEntity `hooks`)은 flush가 `save()` / `saveMany()`로 쓸 때 실행됩니다. 모든 INSERT가 여기에 해당하고, 변경된 인스턴스의 UPDATE도 마찬가지입니다. 단 `batchUpdate`가 CASE WHEN 구문 하나로 합친 UPDATE에서는 훅이 실행되지 않습니다. 훅은 인스턴스의 컬럼 값을 담은 복사본에서 실행되기 때문에, 훅이 컬럼에 쓴 값은 저장된 뒤 인스턴스로 옮겨지고, 그 밖에 `this`에 넣은 값은 복사본에만 남습니다.
+엔티티 생명주기 훅은 flush가 `save()`나 `saveMany()`로 저장할 때 실행됩니다. `@BeforeInsert`, `@BeforeUpdate` 같은 데코레이터나 defineEntity의 `hooks`가 여기에 해당합니다. 모든 INSERT와 변경된 인스턴스의 UPDATE에서 훅이 실행됩니다. 다만 `batchUpdate`가 CASE WHEN SQL 문 하나로 합친 UPDATE에서는 훅이 실행되지 않습니다. 훅은 인스턴스의 컬럼 값을 담은 복사본에서 실행됩니다. 그래서 훅이 컬럼에 쓴 값은 저장된 뒤 인스턴스로 옮겨집니다. 반면 그 밖에 `this`에 넣은 값은 복사본에만 남습니다.
 
 ### 예시: 감사 로그
 
@@ -350,9 +357,9 @@ buf.onFlushEvent("postUpdate", (event) => {
 
 ---
 
-## Read-only Entities
+## 읽기 전용 엔티티
 
-엔티티를 read-only로 지정하면 flush 시 dirty checking을 건너뛰어요. 실수로 프로퍼티를 수정해도 변경 사항이 DB에 반영되지 않아요:
+엔티티를 read-only로 지정하면 flush할 때 변경 추적을 건너뜁니다. 실수로 속성을 수정해도 변경 사항은 DB에 저장되지 않습니다.
 
 ```typescript
 const buf = em.buffer();
@@ -365,19 +372,19 @@ await buf.flush();        // ...but NO UPDATE is generated
 buf.isReadOnly(config);  // true
 ```
 
-참조 데이터(코드 테이블, 설정 값 등) 처럼 버퍼를 통해 절대 수정하면 안 되는 데이터에 사용하세요. 성능적으로도 약간의 이점이 있어요 — 버퍼가 read-only 엔티티의 snapshot 비교를 건너뛰니까요.
+코드 테이블이나 설정 값 같은 참조 데이터처럼 버퍼로 절대 수정하면 안 되는 데이터에 사용하세요. 성능에도 약간 이점이 있습니다. 버퍼가 read-only 엔티티의 스냅샷 비교를 건너뛰기 때문입니다.
 
 ---
 
-## Change Tracking Policy
+## 변경 추적 정책
 
-### Dirty checking의 비용
+### 변경 추적의 비용
 
-`flush()`를 호출할 때마다, 버퍼는 추적 중인 모든 엔티티의 현재 상태를 snapshot과 비교해요. 엔티티 10개면 순식간이에요. 하지만 10,000개라면 — deep equality 비교 10,000번은 무시 못 해요.
+`flush()`를 호출할 때마다 버퍼는 추적 중인 모든 엔티티의 현재 상태를 스냅샷과 비교합니다. 엔티티가 10개라면 순식간입니다. 하지만 10,000개라면 깊은 비교(deep equality)를 10,000번 해야 하므로 비용을 무시할 수 없습니다.
 
-### DEFERRED_IMPLICIT (기본값) — 전부 검사
+### DEFERRED_IMPLICIT (기본값): 전부 검사
 
-추적 중인 모든 엔티티를 flush 시 변경 여부 확인해요. 모든 상황에서 정확하고, 기본값이에요:
+flush할 때 추적 중인 모든 엔티티의 변경 여부를 확인합니다. 어떤 상황에서도 정확하며 이 정책이 기본값입니다.
 
 ```typescript
 const buf = em.buffer();
@@ -387,9 +394,9 @@ user.name = "updated";
 await buf.flush();  // automatically detects the change
 ```
 
-### DEFERRED_EXPLICIT — 명시적으로 지정한 것만 검사
+### DEFERRED_EXPLICIT: 명시적으로 지정한 것만 검사
 
-Explicit tracking에서는 직접 dirty로 표시한 엔티티만 검사해요:
+명시적 추적에서는 직접 dirty로 표시한 엔티티만 검사합니다.
 
 ```typescript
 import { ChangeTrackingPolicy, bufferPlugin } from "@stingerloom/orm";
@@ -414,22 +421,22 @@ UPDATE "user" SET "name" = $1 WHERE "id" = $2
 -- parameters: ['updated', 1]
 ```
 
-### 언제 어떤 정책을 쓸까
+### 정책 선택 기준
 
-| Policy | flush당 dirty check 비용 | 적합한 경우 |
+| 정책 | flush당 변경 검사 비용 | 적합한 경우 |
 |--------|---------------------------|------------|
 | `DEFERRED_IMPLICIT` | O(추적 중인 전체 엔티티) | 대부분의 애플리케이션 (추적 엔티티 1,000개 미만) |
 | `DEFERRED_EXPLICIT` | O(표시된 엔티티만) | 읽기 위주 워크로드에서 추적 엔티티는 많지만 변경은 적은 경우 |
 
 ---
 
-## Flush Modes
+## flush 모드
 
-### 버퍼가 언제 자동으로 flush할까?
+### 자동 flush 시점
 
-기본값(`MANUAL`)에서는 버퍼가 자동 flush하지 않아요 — 준비됐을 때 직접 `flush()`를 호출해야 해요. 그래서 새 유저를 `persist()`하고 바로 `find()`하면, 아직 메모리에만 있기 때문에 결과에 나타나지 않아요.
+기본값인 `MANUAL`에서는 버퍼가 자동으로 flush하지 않습니다. 준비가 되면 직접 `flush()`를 호출해야 합니다. 그래서 새 사용자를 `persist()`한 뒤 바로 `find()`로 모든 사용자를 조회하면 새 사용자는 결과에 나타나지 않습니다. 아직 메모리에만 있기 때문입니다.
 
-Flush mode는 쿼리 전에 버퍼가 대기 중인 작업을 자동 flush할지 제어해요:
+flush 모드에 따라 버퍼가 쿼리를 실행하기 전에 대기 중인 작업을 자동으로 flush할지가 달라집니다.
 
 ```typescript
 import { FlushMode, bufferPlugin } from "@stingerloom/orm";
@@ -439,12 +446,12 @@ em.extend(bufferPlugin({ flushMode: FlushMode.AUTO }));
 
 | Mode | 동작 | 사용 시점 |
 |------|------|-----------|
-| `MANUAL` | 자동 flush 없음. 직접 `flush()`를 호출해요. | 완전한 제어, 최고의 성능. DB 접근 타이밍을 직접 결정해요. |
-| `AUTO` | 대기 중인 작업이 있으면 `find()`/`findOne()` 전에 자동 flush해요. | 쿼리가 항상 대기 중인 변경을 반영해요. 쿼리당 약간의 오버헤드가 있어요. |
-| `COMMIT` | `MANUAL`의 deprecated 별칭 — 동작이 완전히 같습니다. | 새 코드에서는 사용하지 마세요. 버퍼는 트랜잭션 생명주기에 묶여 있지 않아 JPA식 "커밋 시점 flush"를 구현할 수 없어요. |
-| `ALWAYS` | 대기 작업 유무와 관계없이 모든 쿼리 전에 자동 flush해요. | 디버깅 전용 — DB와 버퍼가 항상 동기화돼요. |
+| `MANUAL` | 자동 flush 없음. 직접 `flush()`를 호출합니다. | 완전한 제어, 최고의 성능. DB에 접근할 시점을 직접 결정합니다. |
+| `AUTO` | 대기 중인 작업이 있으면 `find()`/`findOne()` 전에 자동으로 flush합니다. | 쿼리 결과에 대기 중인 변경이 항상 반영됩니다. 쿼리마다 약간의 오버헤드가 있습니다. |
+| `COMMIT` | `MANUAL`의 deprecated 별칭입니다. 동작이 완전히 같습니다. | 새 코드에서는 사용하지 마세요. 버퍼는 트랜잭션 생명주기에 묶여 있지 않습니다. 그래서 JPA식 "커밋 시점 flush"를 지원할 수 없습니다. |
+| `ALWAYS` | 대기 중인 작업이 없어도 모든 쿼리 전에 자동으로 flush합니다. | 디버깅 전용. DB와 버퍼가 항상 동기화됩니다. |
 
-### 예시: AUTO mode
+### 예시: AUTO 모드
 
 ```typescript
 const buf = em.buffer();  // flushMode: AUTO
@@ -457,17 +464,17 @@ const users = await buf.find(User, {});
 // Alice IS in the results
 ```
 
-AUTO mode 없이는 Alice를 결과에서 보려면 `find()` 전에 `buf.flush()`를 호출해야 해요.
+AUTO 모드를 쓰지 않을 때 결과에서 Alice를 보려면 `find()` 전에 `buf.flush()`를 호출해야 합니다.
 
 ---
 
 ## PersistentCollection
 
-버퍼가 `@OneToMany`나 `@ManyToMany` 관계를 가진 엔티티를 추적할 때, 컬렉션의 snapshot(배열에 어떤 항목이 있는지)을 저장해요. Flush 시 현재 배열을 snapshot과 비교해서 적절한 INSERT/DELETE 연산을 생성해요.
+버퍼는 `@OneToMany`나 `@ManyToMany` 관계를 가진 엔티티를 추적할 때 컬렉션의 스냅샷을 저장합니다. 스냅샷에는 배열에 어떤 항목이 있는지가 기록됩니다. flush할 때는 현재 배열을 스냅샷과 비교해서 필요한 INSERT와 DELETE 연산을 생성합니다.
 
-미묘한 점이 있어요: 버퍼는 flush 시점에만 확인해요. 배열에 항목을 push해도, diff를 수행할 때까지 버퍼가 모를 수 있어요. `DEFERRED_EXPLICIT` change tracking에서는 아예 놓칠 수도 있고요.
+다만 주의할 점이 있습니다. 버퍼는 flush 시점에만 확인합니다. 배열에 항목을 push해도 버퍼는 컬렉션을 비교하기 전까지 그 사실을 모릅니다. `DEFERRED_EXPLICIT` 변경 추적 정책에서는 변경을 아예 놓칠 수도 있습니다.
 
-`wrapCollection()`은 배열을 Proxy로 감싸서 변경을 실시간으로 감지하는 방법이에요:
+`wrapCollection()`은 배열을 Proxy로 감싸서 이 문제를 해결합니다. 이 Proxy는 변경을 실시간으로 감지합니다.
 
 ```typescript
 const buf = em.buffer();
@@ -483,21 +490,21 @@ post.comments.push(new Comment({ body: "auto-detected!" }));
 // The proxy fires onChange → marks the parent as dirty
 ```
 
-Proxy는 모든 배열 변경 메서드를 가로채요:
+Proxy는 배열을 변경하는 모든 메서드를 가로챕니다.
 - `push`, `pop`, `shift`, `unshift`, `splice`
 - `sort`, `reverse`, `fill`, `copyWithin`
-- Index 할당: `arr[0] = newValue`
-- Length 변경: `arr.length = 0`
+- 인덱스 할당: `arr[0] = newValue`
+- 길이 변경: `arr.length = 0`
 
-`Array.isArray()`, spread (`[...arr]`), 구조 분해 할당과 완전히 호환돼요.
+`Array.isArray()`, 스프레드(`[...arr]`), 구조 분해 할당과도 완전히 호환됩니다.
 
 ---
 
-## Nested Unit of Work
+## 중첩 Unit of Work
 
 ### 문제: 부분 롤백
 
-실패할 수 있는 작업을 시도하되, 전체 트랜잭션은 중단하고 싶지 않을 때가 있어요:
+실패할 수 있는 작업을 시도하면서도 전체 트랜잭션은 중단하고 싶지 않을 때가 있습니다.
 
 ```typescript
 // Scenario: importing 100 products from a CSV
@@ -513,11 +520,11 @@ for (const row of csvRows) {
 await buf.flush();  // If ONE product fails, ALL 100 are rolled back!
 ```
 
-### 해결: SAVEPOINT를 사용하는 중첩 버퍼
+### 해결: 세이브포인트를 사용하는 중첩 버퍼
 
-중첩 버퍼는 연산을 `SAVEPOINT`로 감싸요. SAVEPOINT는 트랜잭션 내의 "체크포인트"예요. 중첩 버퍼가 실패하면 그 연산만 롤백되고 — 부모 버퍼의 작업은 보존돼요.
+중첩 버퍼는 연산을 `SAVEPOINT`로 감쌉니다. 세이브포인트는 트랜잭션 안의 "체크포인트"입니다. 중첩 버퍼가 실패하면 그 연산만 롤백되고 부모 버퍼의 작업은 보존됩니다.
 
-SAVEPOINT는 트랜잭션 *안*에서만 존재하므로, 전체 워크플로우를 `em.transaction()`으로 감싸야 합니다. 부모든 중첩이든 모든 `flush()`는 자체 트랜잭션을 여는 대신 이 바깥 트랜잭션에 합류해요:
+세이브포인트는 트랜잭션 안에서만 존재합니다. 그래서 워크플로 전체를 `em.transaction()` 안에서 실행해야 합니다. 부모 버퍼든 중첩 버퍼든 모든 `flush()`는 자기 트랜잭션을 여는 대신 이 바깥 트랜잭션에 합류합니다.
 
 ```typescript
 await em.transaction(async () => {
@@ -541,7 +548,7 @@ await em.transaction(async () => {
 });
 ```
 
-SQL 타임라인은 이렇게 돼요:
+SQL 실행 순서는 다음과 같습니다.
 
 ```sql
 BEGIN;                                   -- em.transaction()
@@ -561,21 +568,21 @@ INSERT INTO "product" ...;               -- success
 COMMIT;                                  -- products 1 and 3 saved, product 2 skipped
 ```
 
-중첩 flush가 성공한 뒤에 바깥 `em.transaction()` 자체가 실패하면, 그 롤백이 중첩 작업까지 되돌립니다 — SAVEPOINT가 정말로 바깥 트랜잭션의 일부이기 때문이에요.
+중첩 flush가 성공한 뒤에 바깥 `em.transaction()` 자체가 실패하면 그 롤백이 중첩 작업까지 되돌립니다. 세이브포인트가 실제로 바깥 트랜잭션의 일부이기 때문입니다.
 
-**`em.transaction()` 래핑을 생략하면 안 됩니다.** 래핑이 없으면 모든 `flush()`가 각자 트랜잭션을 열고 즉시 커밋해요. 중첩 버퍼의 SAVEPOINT는 자기 flush 범위를 벗어나지 못하므로, 작업이 곧바로 독립 커밋되고 나중에 "부모"를 롤백해도 되돌릴 수 없습니다. 중첩 `flush()`가 바깥 트랜잭션 없이 실행되면 버퍼가 경고 로그를 남깁니다.
+`em.transaction()`으로 감싸는 일을 생략하면 안 됩니다. 감싸지 않으면 모든 `flush()`가 각자 트랜잭션을 열고 바로 커밋합니다. 그러면 중첩 버퍼의 세이브포인트는 자기 flush 범위 밖으로 넓어지지 못합니다. 그래서 작업이 곧바로 따로 커밋되고 나중에 "부모"를 롤백해도 되돌릴 수 없습니다. 중첩 `flush()`가 바깥 트랜잭션 없이 실행되면 버퍼가 경고 로그를 남깁니다.
 
 ### 중첩 버퍼를 사용하면 좋은 경우
 
-- **부분 롤백** — 전체 트랜잭션을 중단하지 않고 실패할 수 있는 작업 시도
-- **조건부 삽입** — 제약 조건 위반이 아니면 삽입, 위반이면 건너뛰기
-- **다단계 워크플로우** — 각 단계가 독립적으로 성공하거나 실패할 수 있음
+- **부분 롤백**: 전체 트랜잭션을 중단하지 않고 실패할 수 있는 작업을 시도할 때
+- **조건부 삽입**: 제약 조건을 위반하지 않으면 삽입하고 위반하면 건너뛸 때
+- **다단계 워크플로**: 각 단계가 따로 성공하거나 실패할 수 있을 때
 
 ---
 
-## Accumulate and Retry Pattern
+## 누적 후 재시도 패턴
 
-`retainAfterFlush: true` (기본값)로 설정하면, flush 성공 후 추적 중인 엔티티의 snapshot을 다시 찍어요. 이걸로 축적-flush-축적-flush 사이클을 구현할 수 있어요:
+`retainAfterFlush`의 기본값은 `true`입니다. 이 설정에서는 flush가 성공한 뒤 버퍼가 추적 중인 엔티티의 스냅샷을 다시 찍습니다. 그래서 변경을 모았다가 flush하고 다시 모았다가 flush하는 사이클을 만들 수 있습니다.
 
 ```typescript
 const buf = em.buffer({ retainAfterFlush: true });
@@ -604,7 +611,7 @@ UPDATE "user" SET "age" = $1 WHERE "id" = $2
 -- name is NOT included — it's already "Alice" in the refreshed snapshot
 ```
 
-Flush가 실패하면 큐가 보존되어서, 문제를 수정하고 재시도할 수 있어요:
+flush가 실패하면 큐가 보존됩니다. 그래서 문제를 고친 뒤 다시 시도할 수 있습니다.
 
 ```typescript
 try {
@@ -617,31 +624,31 @@ try {
 
 ---
 
-## Configuration Reference
+## 설정 레퍼런스
 
-모든 옵션은 `bufferPlugin()` (전역 기본값) 또는 `em.buffer()` (인스턴스별 오버라이드)에 전달할 수 있어요:
+모든 옵션은 `bufferPlugin()`이나 `em.buffer()`에 넘길 수 있습니다. `bufferPlugin()`에 넘긴 값은 전역 기본값이 됩니다. 그리고 `em.buffer()`에 넘긴 값은 그 인스턴스에서만 기본값을 덮어씁니다.
 
 | Option | Type | Default | 설명 |
 |--------|------|---------|------|
-| `retainAfterFlush` | `boolean` | `true` | Flush 후 추적 엔티티의 snapshot을 갱신해서, 축적-flush 사이클을 사용할 수 있게 해요 |
-| `cascade` | `boolean \| BufferCascadeOptions` | `true` | 관계 메타데이터를 통해 persist/remove/merge/detach를 전파해요. 객체(`{ persist, merge, remove, refresh }`)로 주면 작업별로 켜고 끌 수 있습니다 |
-| `orphanRemoval` | `boolean` | `false` | 컬렉션 배열에서 제거된 O2M 자식을 자동 삭제해요 |
-| `manyToManySync` | `boolean` | `true` | 컬렉션 변경 시 M2M pivot 테이블 행을 자동 동기화해요 |
-| `flushMode` | `FlushMode` | `MANUAL` | 쿼리 전 자동 flush 시점: `MANUAL`, `AUTO`, `ALWAYS` ([Flush Modes](#flush-modes) 참고) |
+| `retainAfterFlush` | `boolean` | `true` | flush 후 추적 엔티티의 스냅샷을 갱신합니다. 그래서 축적-flush 사이클을 쓸 수 있습니다 |
+| `cascade` | `boolean \| BufferCascadeOptions` | `true` | 관계 메타데이터를 따라 persist/remove/merge/detach를 전파합니다. `{ persist, merge, remove, refresh }` 객체로 지정하면 작업별로 켜고 끌 수 있습니다 |
+| `orphanRemoval` | `boolean` | `false` | 컬렉션 배열에서 제거된 `@OneToMany` 자식을 자동으로 삭제합니다 |
+| `manyToManySync` | `boolean` | `true` | 컬렉션이 바뀌면 `@ManyToMany` 조인 테이블의 행을 자동으로 동기화합니다 |
+| `flushMode` | `FlushMode` | `MANUAL` | 쿼리 전 자동 flush 시점: `MANUAL`, `AUTO`, `ALWAYS` ([Flush Modes](#flush-모드) 참고) |
 | `autoFlush` | `boolean` | `false` | `FlushMode.AUTO`의 단축 옵션 |
-| `changeTracking` | `ChangeTrackingPolicy` | `DEFERRED_IMPLICIT` | 엔티티 dirty check 시점 |
-| `batchInsert` | `boolean` | `false` | 같은 엔티티 타입의 INSERT 여러 개를 하나의 multi-row 구문으로 합쳐요 |
-| `batchUpdate` | `boolean` | `false` | 같은 엔티티 타입의 UPDATE 여러 개를 하나의 CASE WHEN 구문으로 합쳐요 |
-| `onFlush` | `(result) => void` | — | Flush 성공 후 콜백 |
-| `logging` | `boolean` | `false` | 디버깅용 상세 라이프사이클 로그 |
-| `maxIdentityMapSize` | `number` | 무제한 | Identity Map 크기 상한. 넘으면 가장 오래 쓰지 않은 clean 엔트리부터 제거합니다(dirty, new, removed 엔티티는 제거하지 않아요) |
-| `validateBeforeFlush` | `boolean` | `false` | flush 전에 dirty하거나 persist된 모든 엔티티에 유효성 검사 데코레이터를 실행합니다. 실패하면 `ValidationError`로 flush를 중단해요 |
+| `changeTracking` | `ChangeTrackingPolicy` | `DEFERRED_IMPLICIT` | 엔티티의 변경 여부를 검사하는 시점 |
+| `batchInsert` | `boolean` | `false` | 같은 엔티티 타입의 INSERT 여러 개를 multi-row SQL 문 하나로 합칩니다 |
+| `batchUpdate` | `boolean` | `false` | 같은 엔티티 타입의 UPDATE 여러 개를 CASE WHEN SQL 문 하나로 합칩니다 |
+| `onFlush` | `(result) => void` | 없음 | flush 성공 후 실행할 콜백 |
+| `logging` | `boolean` | `false` | 디버깅용 상세 생명주기 로그 |
+| `maxIdentityMapSize` | `number` | 무제한 | Identity Map 크기 상한입니다. 상한을 넘으면 가장 오래 쓰지 않은 clean 항목부터 제거합니다. dirty, new, removed 엔티티는 제거하지 않습니다 |
+| `validateBeforeFlush` | `boolean` | `false` | flush 전에 dirty 상태이거나 persist된 모든 엔티티에 검증 데코레이터를 실행합니다. 검증에 실패하면 `ValidationError`로 flush를 중단합니다 |
 
 ---
 
-## Next Steps
+## 다음 단계
 
-- [Write Buffer — Basics](./write-buffer.md) — 핵심 개념, Identity Map, dirty checking, flush
-- [Plugin System](./plugins.md) — 커스텀 플러그인 작성
-- [Events & Subscribers](./events.md) — 엔티티 라이프사이클 이벤트
-- [API Reference](./api-reference.md) — 전체 메서드 시그니처
+- [Write Buffer: 기본편](./write-buffer.md): 핵심 개념, Identity Map, 변경 추적(dirty checking), flush
+- [Plugin System](./plugins.md): 커스텀 플러그인 작성
+- [Events & Subscribers](./events.md): 엔티티 생명주기 이벤트
+- [API Reference](./api-reference.md): 전체 메서드 시그니처

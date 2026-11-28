@@ -1,31 +1,31 @@
 # 분석 쿼리 Cookbook
 
-ORM의 Expressions DSL, window function, `date_trunc`, ordered-set aggregate, recursive CTE 위에 구축된 실전 분석 쿼리 레시피예요. 이 페이지의 모든 레시피는 [`nestjs-linear-clone` 분석 서비스](https://github.com/biud436/stingerloom-orm/blob/main/examples/nestjs-linear-clone/src/modules/analytics/analytics.service.ts)에서 그대로 가져왔어요 -- 각 레시피는 예제의 e2e 테스트가 검증하므로 코드베이스와 항상 동기화돼요.
+ORM의 Expressions DSL, 윈도 함수, `date_trunc`, ordered-set aggregate, 재귀 CTE로 만든 실전 분석 쿼리 레시피입니다. 모든 레시피는 [`nestjs-linear-clone` 분석 서비스](https://github.com/biud436/stingerloom-orm/blob/main/examples/nestjs-linear-clone/src/modules/analytics/analytics.service.ts)에서 그대로 가져왔습니다. 그래서 각 레시피는 예제의 e2e 테스트로 검증되고 코드베이스와 항상 동기화됩니다.
 
-아직 [Raw SQL & CTE](./raw-sql.md) 페이지를 읽지 않았다면 먼저 확인해 보세요. 거기서 소개한 `em.ref()` / `em.aliasRef()` / `RawQueryBuilder`가 모든 레시피의 빌딩 블록이에요.
+아직 [Raw SQL & CTE](./raw-sql.md) 페이지를 읽지 않았다면 먼저 읽어 보세요. 그 페이지에서 소개하는 `em.ref()` / `em.aliasRef()` / `RawQueryBuilder`가 모든 레시피의 기본 구성 요소입니다.
 
 ## 한눈에 보기
 
-| 레시피 | 패턴 | Dialect 지원 |
+| 레시피 | 패턴 | 다이얼렉트 지원 |
 |--------|------|-------------|
-| [Sprint burndown](#sprint-burndown) | `date_trunc` + group-by + JS 측 prefix sum | PostgreSQL / MySQL / SQLite |
-| [Time-in-status](#time-in-status) | `LEAD()` window function + `dateDiff` | PostgreSQL / MySQL / SQLite |
+| [Sprint burndown](#sprint-burndown) | `date_trunc` + GROUP BY + JS 쪽 누적 합 | PostgreSQL / MySQL / SQLite |
+| [Time-in-status](#time-in-status) | `LEAD()` 윈도 함수 + `dateDiff` | PostgreSQL / MySQL / SQLite |
 | [Weekly lead time](#weekly-lead-time) | `dateTrunc('week', ...)` + 평균 | PostgreSQL / MySQL / SQLite |
 | [Cycle-time percentile report](#cycle-time-percentile-report) | `percentile_cont` (PG) 또는 `ROW_NUMBER()` 에뮬레이션 (MySQL) | PostgreSQL 네이티브, MySQL 에뮬레이션 |
 | [Recursive issue tree](#recursive-issue-tree) | `RawQueryBuilder`로 `WITH RECURSIVE` | PostgreSQL / MySQL |
 
 ## Sprint burndown
 
-> **문제.** 스프린트의 burndown 차트를 그려요. 매일 캘린더 일자별로, 그 날 완료된 이슈 수, 누적 완료 수, 남은 estimate를 보여줘요.
+> 문제: 스프린트의 burndown 차트를 그립니다. 날짜마다 그날 완료된 이슈 수, 누적 완료 수, 남은 estimate를 보여 줍니다.
 
-전체 모양을 window function 없이 표현할 수 있어요. 단일 GROUP BY 쿼리로 일별 집계를 만들고, prefix sum은 JavaScript에서 처리해요. 핵심은 `Expressions.dateTrunc(completedAt, "day")` -- 같은 표현식이 PostgreSQL은 `DATE_TRUNC(...)`, MySQL은 `DATE(...)`, SQLite는 `date(..., 'start of day')`로 컴파일돼서 그대로 portable해요.
+이 쿼리는 윈도 함수 없이 표현할 수 있습니다. GROUP BY 쿼리 하나로 일별 집계를 만들고 누적 합은 그 뒤에 JavaScript에서 계산합니다. 핵심은 `Expressions.dateTrunc(completedAt, "day")`입니다. 같은 표현식이 PostgreSQL에서는 `DATE_TRUNC(...)`, MySQL에서는 `DATE(...)`, SQLite에서는 `date(..., 'start of day')`로 컴파일됩니다. 그래서 쿼리를 쓴 그대로 여러 데이터베이스에서 동작합니다.
 
 ```typescript
 import { Expressions, qAlias } from "@stingerloom/orm";
 
 const i = qAlias(Issue, "i");
 
-// 1. 스프린트 총 estimate -- 단일 scalar.
+// 1. 스프린트 총 estimate: 스칼라 값 하나
 const totalRow = await em
   .createQueryBuilder(Issue, "i")
   .select([
@@ -36,7 +36,7 @@ const totalRow = await em
   .getRawOne();
 const totalEstimate = Number(totalRow?.totalEstimate ?? 0);
 
-// 2. 완료된 이슈에 대한 일별 집계.
+// 2. 완료된 이슈의 일별 집계
 const day = Expressions.dateTrunc(i.completedAt, "day");
 const dailyRows = await em
   .createQueryBuilder(Issue, "i")
@@ -53,8 +53,8 @@ const dailyRows = await em
   .addOrderBy(day, "ASC")
   .getRawMany();
 
-// 3. JS에서 누적합 처리 (스프린트 윈도우가 짧으니 prefix sum을 애플리케이션에서
-//    처리하면 SQL에서 window-over-CTE 배관이 빠져 깔끔해져요).
+// 3. 누적 합은 JS에서 계산합니다. 스프린트 기간이 짧으므로 애플리케이션에서
+//    계산하면 SQL에서 CTE 위에 윈도 함수를 얹지 않아도 되어 깔끔합니다.
 let cumulativeCompleted = 0;
 let cumulativeEstimate = 0;
 const burndown = dailyRows.map((row) => {
@@ -84,13 +84,13 @@ GROUP BY DATE_TRUNC('day', "i"."completed_at")
 ORDER BY DATE_TRUNC('day', "i"."completed_at") ASC;
 ```
 
-MySQL은 `DATE(...)`와 백틱을 쓰고, SQLite는 `date(...)`를 써요. Expressions DSL이 dialect별로 알맞은 형태를 골라요.
+MySQL에서는 `DATE(...)`와 백틱 인용을 쓰고 SQLite에서는 `date(...)`를 씁니다. Expressions DSL이 다이얼렉트마다 알맞은 형태를 고릅니다.
 
 ## Time-in-status
 
-> **문제.** 이슈의 상태 timeline을 만들어요. 상태 전환마다 한 행씩, 다음 변경 전까지 그 상태에 머문 시간을 hour 단위로 표시해요.
+> 문제: 이슈의 상태 타임라인을 만듭니다. 상태 전환마다 한 행씩 만들고 다음 변경 전까지 그 상태에 머문 시간을 시간 단위로 표시합니다.
 
-소스 데이터는 `activity_log` 테이블이에요 -- 각 행이 상태 변경을 기록해요 (`statusFrom` / `statusTo`는 audit subscriber가 채우는 정규화된 컬럼). 한 행의 머무름 시간은 `next_row.created_at - this_row.created_at`이에요. "파티션 내 다음 행"에 가장 자연스러운 window function이 `LEAD()`이고, `dateDiff`가 portable한 초 단위 interval을 만들어요.
+소스 데이터는 `activity_log` 테이블입니다. 이 테이블의 각 행은 상태 변경 하나를 기록합니다. `statusFrom` / `statusTo`는 감사 구독자가 채우는 비정규화 컬럼이고 타입이 정해져 있습니다. 한 행이 그 상태에 머문 시간은 `next_row.created_at - this_row.created_at`입니다. "파티션 안의 다음 행"을 구하는 데 가장 자연스러운 윈도 함수는 `LEAD()`입니다. 그리고 `dateDiff`는 어느 다이얼렉트에서든 동작하는 초 단위 간격을 만듭니다.
 
 ```typescript
 import { Expressions, qAlias } from "@stingerloom/orm";
@@ -123,7 +123,7 @@ const rows = await em
   .getRawMany();
 ```
 
-`.floatValue().div(3600)`로 모든 dialect에서 나눗셈이 부동소수로 유지돼요 (PostgreSQL은 그냥 두면 정수 나눗셈으로 잘려요).
+`.floatValue().div(3600)`을 쓰면 모든 다이얼렉트에서 나눗셈 결과가 부동소수점으로 유지됩니다. 이렇게 하지 않으면 PostgreSQL에서는 정수 나눗셈이 되어 소수점 아래가 잘립니다.
 
 **컴파일된 SQL (PostgreSQL):**
 ```sql
@@ -145,13 +145,13 @@ WHERE "a"."issue_id" = $1 AND "a"."status_to" IS NOT NULL
 ORDER BY "a"."created_at" ASC;
 ```
 
-`LEAD()`는 세 dialect 모두 지원하고, `dateDiff` 렌더링만 다이얼렉트별로 달라져요.
+`LEAD()`는 지원하는 세 다이얼렉트에서 모두 동작합니다. 다이얼렉트마다 달라지는 것은 `dateDiff` 렌더링뿐입니다.
 
 ## Weekly lead time
 
-> **문제.** 프로젝트의 주별 평균 lead time (`createdAt`부터 `completedAt`까지의 시간, hour 단위)을 최근 `windowDays` 동안의 데이터로 그려요.
+> 문제: 프로젝트의 주별 평균 lead time을 최근 `windowDays`일 동안의 데이터로 그립니다. lead time은 `createdAt`부터 `completedAt`까지 걸린 시간이고 시간 단위로 셉니다.
 
-`Expressions.dateTrunc(completedAt, "week")`는 dialect별로 ISO 월요일 시작 주를 만들어요 -- PostgreSQL `date_trunc('week', ...)`, MySQL `DATE_SUB(... INTERVAL WEEKDAY(...) DAY)`, SQLite `date(..., '-N days')`. 집계는 derived scalar에 대한 단순 `AVG()`예요.
+`Expressions.dateTrunc(completedAt, "week")`는 모든 다이얼렉트에서 ISO 기준으로 월요일에 시작하는 주를 만듭니다. PostgreSQL에서는 `date_trunc('week', ...)`, MySQL에서는 `DATE_SUB(... INTERVAL WEEKDAY(...) DAY)`, SQLite에서는 `date(..., '-N days')`가 됩니다. 집계는 계산으로 얻은 스칼라 값에 단순히 `AVG()`를 적용합니다.
 
 ```typescript
 import { Expressions, qAlias } from "@stingerloom/orm";
@@ -201,19 +201,19 @@ ORDER BY DATE_TRUNC('week', "i"."completed_at") ASC;
 
 ## Cycle-time percentile report
 
-> **문제.** 최근 윈도우의 이슈 cycle time (`createdAt` ~ `completedAt`의 hour 단위 차)에 대해 P50 / P75 / P95를 계산해요.
+> 문제: 최근 윈도에 속한 이슈의 cycle time에서 P50 / P75 / P95를 계산합니다. cycle time은 `createdAt`과 `completedAt`의 차이를 시간 단위로 잰 값입니다.
 
-이 레시피는 **dialect 지원 매트릭스**가 결정적인 교과서적 케이스예요:
+이 레시피는 다이얼렉트별 지원 차이가 중요해지는 대표적인 사례입니다.
 
-- **PostgreSQL**은 SQL 표준 ordered-set aggregate `percentile_cont(p) WITHIN GROUP (ORDER BY x)`가 있어요. `Expressions.percentileCont(...)`가 이를 그대로 렌더링하므로 전체 쿼리가 `SelectQueryBuilder` 안에 머물러요.
-- **MySQL**은 네이티브 ordered-set aggregate가 없어요. 표준 에뮬레이션은 쿼리 전체를 재작성해요 -- CTE가 `ROW_NUMBER() OVER (ORDER BY x)`를 cycle-time마다 붙이고, 외부 쿼리가 `rn = CEIL(N * p)`인 행을 골라요. 이건 다른 표현식이 아니라 쿼리 전체를 다시 짜야 하므로, DSL aggregate가 MySQL에서 `OrmError(UNSUPPORTED_OPERATION)`을 던지며 에뮬레이션 패턴을 안내해요.
+- **PostgreSQL**에는 SQL 표준 ordered-set aggregate인 `percentile_cont(p) WITHIN GROUP (ORDER BY x)`가 있습니다. `Expressions.percentileCont(...)`가 이 함수를 그대로 렌더링합니다. 그래서 쿼리 전체가 `SelectQueryBuilder` 안에서 끝납니다.
+- **MySQL**에는 네이티브 ordered-set aggregate가 없습니다. 표준 에뮬레이션은 쿼리 자체를 다시 작성합니다. CTE가 cycle time마다 `ROW_NUMBER() OVER (ORDER BY x)`를 붙이고 바깥 쿼리가 `rn = CEIL(N * p)`인 행을 고릅니다. 표현식 하나만 바꾸는 것이 아니라 쿼리 전체를 다시 짜야 합니다. 그래서 MySQL에서 DSL aggregate는 `OrmError(UNSUPPORTED_OPERATION)`을 던지고 에뮬레이션 패턴을 안내합니다.
 
-### Dialect 분기
+### 다이얼렉트 분기
 
 ```typescript
 if (em.getDriver() instanceof SqliteDriver) {
   throw new NotImplementedException(
-    "cycleTimePercentiles는 PostgreSQL과 MySQL에서만 사용 가능해요.",
+    "cycleTimePercentiles는 PostgreSQL과 MySQL에서만 사용할 수 있습니다.",
   );
 }
 const isPg = detectDialect(em) === "postgres";
@@ -222,9 +222,9 @@ return isPg
   : cycleTimePercentilesMySqlEmulation(projectId, windowDays);
 ```
 
-### PostgreSQL -- 네이티브 ordered-set aggregate
+### PostgreSQL: 네이티브 ordered-set aggregate
 
-순수 DSL: `Expressions.percentileCont`로 세 percentile을 한 쿼리에 projection해요.
+DSL만으로 작성합니다. `Expressions.percentileCont`로 백분위수 세 개를 쿼리 하나에서 투영합니다.
 
 ```typescript
 const i = qAlias(Issue, "i");
@@ -249,7 +249,7 @@ const row = await em
   .getRawOne();
 ```
 
-이렇게 렌더링돼요:
+렌더링 결과는 다음과 같습니다.
 
 ```sql
 SELECT
@@ -261,9 +261,9 @@ FROM "issue" AS "i"
 WHERE "i"."project_id" = $1 …;
 ```
 
-### MySQL -- `ROW_NUMBER()` 에뮬레이션
+### MySQL: `ROW_NUMBER()` 에뮬레이션
 
-CTE는 완전히 타입화되어 있어요 -- projection, `ROW_NUMBER` 정렬, sample size를 위한 `COUNT(*) OVER ()` 모두 쿼리 빌더에서 나와요. percentile 행을 픽하는 부분만 raw로 남아요 (`MAX(CASE WHEN rn = CEIL(total * p) …)` 모양에는 DSL 헬퍼가 없어요).
+CTE는 전부 타입 있는 코드로 작성합니다. 투영, `ROW_NUMBER` 정렬, 표본 크기를 구하는 `COUNT(*) OVER ()`가 모두 쿼리 빌더에서 나옵니다. 백분위수에 해당하는 행을 고르는 부분만 raw SQL로 남습니다. `MAX(CASE WHEN rn = CEIL(total * p) …)` 형태를 만드는 DSL 헬퍼는 없기 때문입니다.
 
 ```typescript
 import sql, { raw } from "sql-template-tag";
@@ -310,13 +310,13 @@ const built = RawQueryBuilder.create()
 const rows = await em.query<Record<string, unknown>>(built);
 ```
 
-이런 모양인 이유: `COUNT(*) OVER ()`로 `total`을 CTE 안에 묶어 들고 다니면 외부 쿼리가 `cycles`를 바로 읽을 수 있어요 -- FROM 서브쿼리 없이 끝나요. `cycles` 행은 CTE가 비어 있지 않을 때만 존재하므로 `total >= 1`이고 `CEIL(total * p) >= 1`이에요 -- floor가 필요 없어요.
+쿼리를 이렇게 짠 데는 이유가 있습니다. `COUNT(*) OVER ()`로 `total`을 CTE 안에 함께 담아 두면 바깥 쿼리가 FROM 서브쿼리 없이 `cycles`를 바로 읽을 수 있습니다. 그리고 `cycles` 행은 CTE가 비어 있지 않을 때만 존재합니다. 그래서 `total >= 1`이고 `CEIL(total * p) >= 1`입니다. 따로 하한을 둘 필요가 없습니다.
 
 ## Recursive issue tree
 
-> **문제.** 루트 이슈가 주어졌을 때 `parent_id` 체인을 따라 내려가서 전체 하위 이슈 트리를 반환해요. UI가 트리를 그릴 수 있게 depth와 `1/2/3` 스타일 path도 함께 줘요.
+> 문제: 루트 이슈가 주어지면 `parent_id` 체인을 따라 내려가서 하위 이슈 트리 전체를 반환합니다. UI가 트리를 그릴 수 있도록 깊이와 `1/2/3` 형태의 경로도 함께 반환합니다.
 
-`RawQueryBuilder.withRecursive(...)`가 시작 `WITH RECURSIVE …` 절을 써 줘요 -- 우리는 UNION-ALL 본문만 제공해요. `em.ref(Issue, "r")` / `em.ref(Issue, "c")`로 양쪽 arm을 엔티티 인지 상태로 유지하고, `em.aliasRef("t")`로 CTE 전용 `depth` / `path` 컬럼을 참조해요.
+`RawQueryBuilder.withRecursive(...)`가 맨 앞의 `WITH RECURSIVE …` 절을 만듭니다. 직접 작성할 부분은 UNION ALL 본문뿐입니다. `em.ref(Issue, "r")` / `em.ref(Issue, "c")`를 쓰면 UNION ALL의 양쪽 쿼리가 모두 엔티티 메타데이터를 인식합니다. 그리고 `em.aliasRef("t")`로 CTE에만 있는 `depth` / `path` 컬럼을 참조합니다.
 
 ```typescript
 import sql, { raw } from "sql-template-tag";
@@ -325,8 +325,8 @@ import { RawQueryBuilder, Sql } from "@stingerloom/orm";
 const dialect = detectDialect(em);          // "postgres" | "mysql"
 const isMySql = dialect === "mysql";
 
-// MySQL은 anchor에서 recursive 컬럼 타입을 고정시키므로 `maxDepth` 만큼의 zero-padded
-// 세그먼트를 담을 명시적 너비가 필요해요. PG는 anchor에서 TEXT를 잡아 자유롭게 늘어나요.
+// MySQL은 anchor에서 재귀 컬럼의 타입을 고정합니다. 그래서 0을 채운 세그먼트를 `maxDepth`개만큼
+// 담을 너비를 명시해야 합니다. PostgreSQL은 anchor에서 TEXT로 정해지므로 길이가 자유롭게 늘어납니다.
 const castText = isMySql ? "VARCHAR(4000)" : "TEXT";
 
 const r = em.ref(Issue, "r");
@@ -334,8 +334,8 @@ const c = em.ref(Issue, "c");
 const t = em.aliasRef("t");
 const Q = (name: string) => raw(em.wrap(name));
 
-// LPAD로 zero-padded된 `path` 세그먼트가 있으면 ORDER BY path가 id 기준 depth-first
-// preorder를 만들어요 (lexicographic "10 < 2" 문제 해결).
+// `path` 세그먼트에 LPAD로 0을 채워 두면 ORDER BY path가 id 기준 깊이 우선 전위 순서가 됩니다.
+// 문자열 비교에서 "10 < 2"가 되는 문제도 해결됩니다.
 const padded = (idSql: Sql) =>
   sql`LPAD(CAST(${idSql} AS ${raw(castText)}), 10, '0')`;
 
@@ -368,14 +368,14 @@ const built = RawQueryBuilder.create()
 const rows = await em.query<Record<string, unknown>>(built);
 ```
 
-JS에서 LPAD 0을 떼서 사람이 읽기 좋은 `1/2/3` path로 만들어요. 정렬은 DB에서 padded form 기준으로 이미 끝났으니 unpad 단계에서 다시 정렬할 필요는 없어요.
+JS에서 LPAD로 채운 0을 떼어 내면 사람이 읽기 좋은 `1/2/3` 경로가 됩니다. 정렬은 데이터베이스에서 0을 채운 형태를 기준으로 이미 끝났습니다. 그래서 0을 떼어 낸 뒤 다시 정렬할 필요는 없습니다.
 
-**같은 엔티티에 ref 두 개를 쓰는 이유.** `r`은 anchor 행(루트 이슈), `c`는 recursive step(CTE에 다시 조인되는 자식 행)이에요. 동일 `Issue`에 다른 alias를 준 두 ref를 쓰면 양쪽 arm 모두 충돌 없이 타입 인지 상태를 유지해요 -- `em.ref(Entity, alias)`가 정확히 이 패턴을 위해 설계됐어요.
+같은 엔티티에 ref를 두 개 쓰는 데는 이유가 있습니다. `r`은 anchor 행인 루트 이슈입니다. `c`는 재귀 단계의 행으로 CTE에 다시 조인되는 자식 행입니다. 같은 `Issue`에 별칭을 다르게 준 ref 두 개를 쓰면 UNION ALL의 양쪽 쿼리가 충돌 없이 타입 정보를 유지합니다. `em.ref(Entity, alias)`는 바로 이 패턴을 위해 설계됐습니다.
 
-**SQLite 노트.** SQLite도 `WITH RECURSIVE`를 지원해요. 예제는 2-way `mysql` / `postgres` 스위치를 쓰지만, SQLite 분기를 추가하는 건 dialect 감지에 한 줄 더 늘리는 정도이고 쿼리 모양은 그대로 유지돼요.
+SQLite도 `WITH RECURSIVE`를 지원합니다. 예제는 `mysql`과 `postgres` 두 갈래로만 분기합니다. 하지만 SQLite 분기를 추가할 때는 다이얼렉트 감지 코드만 조금 고치면 됩니다. 쿼리 형태는 바뀌지 않습니다.
 
 ## 다음 단계
 
-- [Raw SQL & CTE](./raw-sql.md) -- 모든 레시피가 사용하는 빌딩 블록 (`em.ref()`, `em.aliasRef()`, `RawQueryBuilder`).
-- [Query Builder QueryDSL](./query-builder-querydsl.md) -- `Expressions.*` 레퍼런스, ordered-set aggregate와 window function 포함.
-- [`nestjs-linear-clone` 예제](https://github.com/biud436/stingerloom-orm/tree/main/examples/nestjs-linear-clone) -- 이 레시피들의 원본 실행 가능 소스. PostgreSQL과 MySQL에서 SQL을 고정하는 e2e 테스트가 있어요.
+- [Raw SQL & CTE](./raw-sql.md): 모든 레시피가 사용하는 기본 구성 요소인 `em.ref()`, `em.aliasRef()`, `RawQueryBuilder`
+- [Query Builder QueryDSL](./query-builder-querydsl.md): ordered-set aggregate와 윈도 함수를 포함한 `Expressions.*` 레퍼런스
+- [`nestjs-linear-clone` 예제](https://github.com/biud436/stingerloom-orm/tree/main/examples/nestjs-linear-clone): 이 레시피들을 가져온 실행 가능한 원본 소스입니다. PostgreSQL과 MySQL에서 생성되는 SQL을 검증하는 e2e 테스트가 있습니다.

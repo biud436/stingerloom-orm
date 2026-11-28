@@ -39,7 +39,7 @@ combining conditions. Each deeper topic has its own page:
 
 Before diving in, it's worth asking: why not just use `find()` for everything?
 
-The answer comes down to what `find()` can't express. `find()` gives you `WHERE field = value`, but it can't do `WHERE age >= 18`, or `JOIN` to unrelated tables, or `GROUP BY category HAVING COUNT(*) > 5`. For these, you need a query builder.
+The answer comes down to what `find()` can't express. `find()` gives you `WHERE field = value` and operator filters such as `{ age: { gte: 18 } }`, but it can't `JOIN` to unrelated tables or return an aggregate such as `COUNT(*)` for each `GROUP BY` group. For these, you need a query builder.
 
 Stingerloom's query builder provides three execution methods with different safety guarantees:
 
@@ -101,7 +101,7 @@ const users = await em
   .getPartialMany();
 ```
 
-So far, there's no real advantage. The power of the query builder becomes clear when you need things that `find()` can't express — operators like `>=`, JOINs to unrelated tables, GROUP BY with aggregates, or pessimistic locking.
+So far, there's no real advantage. The power of the query builder becomes clear when you need things that `find()` can't express — JOINs to unrelated tables or aggregates returned per group.
 
 The `"u"` in `createQueryBuilder(User, "u")` is a **table alias**. It's the short name used to qualify columns in the generated SQL: `"u"."id"`, `"u"."name"`, etc. You'll see why aliases matter when we get to JOINs.
 

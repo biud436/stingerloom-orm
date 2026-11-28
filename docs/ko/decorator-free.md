@@ -1,24 +1,24 @@
 # 데코레이터 없이 사용하기
 
-Stingerloom의 모든 기능은 **데코레이터 없이** 사용할 수 있습니다. 이 페이지는 그 전체 지도입니다. 각 데코레이터에 대해 데코레이터를 쓰지 않는 대안과 실행 가능한 예제를 함께 보여줍니다. 만약 데코레이터로*만* 도달할 수 있는 기능을 발견했다면, 그것은 버그이므로 이슈로 등록해 주세요.
+Stingerloom의 모든 기능은 데코레이터 없이 사용할 수 있습니다. 아래에는 데코레이터마다 데코레이터를 쓰지 않는 대안과 실행 가능한 예제가 있습니다. 데코레이터로*만* 쓸 수 있는 기능을 발견했다면 버그이므로 이슈로 등록해 주세요.
 
-## 왜 필요한가
+## 필요한 이유
 
-TypeScript 데코레이터는 `emitDecoratorMetadata` 컴파일러 옵션에 의존합니다. 일부 툴체인(esbuild, SWC, TypeScript 5의 *표준* 데코레이터, Vite 기본 트랜스포머)은 이 메타데이터를 방출하지 않으므로, 데코레이터 기반 엔티티는 컬럼 타입을 모르는 사이 잃어버립니다. 툴링 문제를 떠나, 많은 팀이 도메인 클래스를 프레임워크 어노테이션으로부터 자유롭게 유지하는 "순수 클래스(plain class)" 철학을 선호하기도 합니다.
+TypeScript 데코레이터는 `emitDecoratorMetadata` 컴파일러 옵션에 의존합니다. esbuild, SWC, TypeScript 5의 *표준* 데코레이터, Vite 기본 트랜스포머 같은 일부 툴체인은 이 메타데이터를 생성하지 않습니다. 그래서 데코레이터 기반 엔티티는 경고 없이 컬럼 타입을 잃습니다. 툴링 문제와 별개로 많은 팀은 도메인 클래스에 프레임워크 어노테이션을 붙이지 않는 "순수 클래스(plain class)" 철학을 선호합니다.
 
-Stingerloom은 데코레이터와 **완전히 동일한 메타데이터**를 등록하는 두 개의 API로 이 두 가지를 모두 해결합니다.
+Stingerloom은 데코레이터와 완전히 같은 메타데이터를 등록하는 API로 두 문제를 모두 해결합니다.
 
 | 관심사 | 데코레이터 | 데코레이터 없는 대안 |
 | --- | --- | --- |
-| 엔티티 / 컬럼 / 관계 / 인덱스 / 훅 / 상속 정의 | `@Entity`, `@Column`, `@ManyToOne`, … | **[`defineEntity` + `t`](./define-entity.md)** (권장) — 또는 더 낮은 수준의 [`EntitySchema`](#entityschema-엔티티-정의) |
+| 엔티티 / 컬럼 / 관계 / 인덱스 / 훅 / 상속 정의 | `@Entity`, `@Column`, `@ManyToOne`, … | [`defineEntity` + `t`](./define-entity.md) (권장) 또는 더 낮은 수준의 [`EntitySchema`](#entityschema-엔티티-정의) |
 | 작업 단위를 트랜잭션으로 감싸기 | `@Transactional` | [`em.transaction()`](#transactional-없이-트랜잭션) |
 | NestJS 의존성 주입 | `@InjectRepository`, `@InjectEntityManager` | [순수 프로바이더 / `em.getRepository()`](#데코레이터-없이-nestjs-주입) |
 
-::: tip `defineEntity`로 시작하세요
-새 코드에는 플루언트 빌더 API — [**엔티티 정의하기**](./define-entity.md) — 를 선호하세요. 이 API는 스키마에서 엔티티 타입을 추론하므로(`InferEntity`) 클래스도, 별도의 인터페이스도 작성하지 않습니다. 아래에서 다루는 `EntitySchema` 형식은 이 빌더가 그 위에 세워진 더 낮은 수준의 객체 리터럴 API입니다. 완전한 수동 제어가 필요하거나 데코레이터를 일대일로 매핑할 때 사용하세요.
+::: tip 새 코드는 `defineEntity`로 시작합니다
+새 코드에는 플루언트 빌더 API를 쓰세요. 자세한 내용은 [엔티티 정의하기](./define-entity.md)에 있습니다. 이 API를 쓰면 엔티티 타입이 스키마에서 추론됩니다(`InferEntity`). 그래서 클래스도 별도의 인터페이스도 작성하지 않아도 됩니다. 아래의 `EntitySchema` 형식은 이 빌더의 기반이 되는 더 낮은 수준의 객체 리터럴 API입니다. 모든 것을 직접 제어해야 하거나 데코레이터를 일대일로 옮길 때 사용하세요.
 :::
 
-데코레이터 기반, `defineEntity` 기반, `EntitySchema` 기반 엔티티는 모두 동일한 메타데이터를 생성하므로, 한 프로젝트에서 **셋을 섞어 써도** ORM의 나머지 부분(EntityManager, SchemaGenerator, QueryBuilder, WriteBuffer)은 차이를 구분하지 못합니다.
+데코레이터 기반, `defineEntity` 기반, `EntitySchema` 기반 엔티티는 모두 같은 메타데이터를 생성합니다. 그래서 한 프로젝트에서 셋을 섞어 써도 됩니다. EntityManager, SchemaGenerator, QueryBuilder, WriteBuffer 같은 ORM의 나머지 부분은 차이를 구분하지 못합니다.
 
 ## 전체 매핑 표
 
@@ -66,11 +66,11 @@ Stingerloom은 데코레이터와 **완전히 동일한 메타데이터**를 등
 
 ## EntitySchema: 엔티티 정의
 
-기본 사항(컬럼, 관계, 유니크 인덱스, 훅, 검증, 상속)은 [엔티티 & 컬럼 → 데코레이터 없이 엔티티 정의하기](./entities.md#데코레이터-없이-엔티티-정의하기-entityschema)에서 다룹니다. 아래 섹션은 과거에 전용 데코레이터가 필요했던 기능들을 다룹니다.
+컬럼, 관계, 고유 인덱스, 훅, 검증, 상속 같은 기본 사항은 [엔티티 & 컬럼 → 데코레이터 없이 엔티티 정의하기](./entities.md#데코레이터-없이-엔티티-정의하기-entityschema)에 있습니다. 아래 절은 예전에 전용 데코레이터가 필요했던 기능을 설명합니다.
 
 ### 계산 컬럼 (`@ComputedColumn`)
 
-데이터베이스 레벨의 생성 컬럼은 `columns`가 **아니라** `computedColumns`에 정의합니다. 이들은 INSERT/UPDATE에서 제외되고 `GENERATED ALWAYS AS (...)`로 렌더링됩니다. 리터럴 문자열 형식과 다이얼렉트 이식 가능한 빌더 형식 모두 지원합니다.
+데이터베이스 수준의 생성 컬럼은 `columns`가 아니라 `computedColumns`에 정의합니다. 생성 컬럼은 INSERT/UPDATE에서 제외되고 `GENERATED ALWAYS AS (...)`로 렌더링됩니다. 리터럴 문자열 형식과 어느 다이얼렉트에서든 동작하는 빌더 형식을 모두 지원합니다.
 
 ```typescript
 import { EntitySchema } from "@stingerloom/orm";
@@ -91,13 +91,13 @@ new EntitySchema<User>({
     lastName:  { type: "varchar", name: "last_name" },
   },
   computedColumns: {
-    // 리터럴 SQL — 대상 다이얼렉트에서 유효해야 합니다.
+    // 리터럴 SQL: 대상 다이얼렉트에서 유효해야 합니다.
     fullName: {
       expression: "first_name || ' ' || last_name",
       stored: true,
       type: "varchar",
     },
-    // 다이얼렉트 이식 가능 빌더 — 모든 드라이버에서 올바른 DDL을 생성합니다.
+    // 다이얼렉트 이식 가능 빌더: 모든 드라이버에서 올바른 DDL을 생성합니다.
     cycleTimeHours: {
       expression: (e) =>
         e.dateDiff(e.col("completed_at"), e.col("created_at"), "hour"),
@@ -123,11 +123,11 @@ new EntitySchema<Post>({
 });
 ```
 
-PostgreSQL은 GIN `to_tsvector` 인덱스를, MySQL은 `FULLTEXT` 인덱스를 생성하며, SQLite에서는 아무 동작도 하지 않습니다.
+PostgreSQL에서는 GIN `to_tsvector` 인덱스를 생성하고 MySQL에서는 `FULLTEXT` 인덱스를 생성합니다. SQLite에서는 아무 동작도 하지 않습니다.
 
 ### JSON 경로 인덱스 (`@JsonIndex`)
 
-인덱싱할 JSON/JSONB 컬럼과 함께 컬럼별로 선언합니다.
+JSON 경로 인덱스는 인덱싱할 JSON/JSONB 컬럼에 컬럼별로 선언합니다.
 
 ```typescript
 new EntitySchema<User>({
@@ -142,11 +142,11 @@ new EntitySchema<User>({
 });
 ```
 
-`path`는 데코레이터와 정확히 동일하게 세그먼트로 파싱됩니다(`"contact.email"` → `["contact", "email"]`). 전체 옵션은 [JSON 경로 인덱스](./entities.md#json-경로-인덱스-jsonindex)를 참고하세요.
+`path`는 데코레이터와 정확히 같은 방식으로 세그먼트로 파싱됩니다. 예를 들어 `"contact.email"`은 `["contact", "email"]`이 됩니다. 전체 옵션은 [JSON 경로 인덱스](./entities.md#json-경로-인덱스-jsonindex)를 참고하세요.
 
 ### 외래 키 컬럼 (`@RelationColumn`)
 
-`manyToOne` / `oneToOne` 관계에 명시적 FK 컬럼 메타데이터(이름, 타입, NULL 허용, 참조 컬럼)를 붙입니다.
+`manyToOne` / `oneToOne` 관계에 외래 키 컬럼 메타데이터를 명시적으로 붙입니다. 이름, 타입, NULL 허용 여부, 참조 컬럼을 지정할 수 있습니다.
 
 ```typescript
 new EntitySchema<Post>({
@@ -196,11 +196,11 @@ new EntitySchema<Token>({
 });
 ```
 
-`generationStrategy`는 `"increment"`(기본), `"uuid"`(UUIDv4), `"uuid-v7"`(시간 정렬 가능)을 받습니다.
+`generationStrategy`는 `"increment"`(기본값), `"uuid"`(UUIDv4), `"uuid-v7"`(시간순 정렬 가능)을 받습니다.
 
 ### 고급 복합 인덱스 (`@Index([cols], options)`)
 
-`options` 객체를 전달해 부분 / 표현식 / `USING` / `INCLUDE` 설정을 담습니다.
+부분 / 표현식 / `USING` / `INCLUDE` 설정은 `options` 객체에 담아 전달합니다.
 
 ```typescript
 new EntitySchema<Order>({
@@ -226,10 +226,10 @@ new EntitySchema<Order>({
 
 ### 테넌트 컬럼 (`@TenantColumn` / `@NonTenantEntity`)
 
-전역 `tenantStrategy`가 `"tenant_column"`일 때, 구분 컬럼을 `tenant: true`로 표시하면 엔티티 인스턴스에서 값을 읽을 수 있고, 전역 테이블은 `nonTenant: true`로 제외할 수 있습니다.
+전역 `tenantStrategy`가 `"tenant_column"`이면 테넌트 구분 컬럼을 `tenant: true`로 표시하세요. 그러면 엔티티 인스턴스에서 그 값을 읽을 수 있습니다. 전역 테이블은 `nonTenant: true`로 제외할 수 있습니다.
 
 ```typescript
-// 테넌트별 엔티티 — 테넌트 컬럼을 log.tenantId로 읽을 수 있음
+// 테넌트별 엔티티: 테넌트 컬럼을 log.tenantId로 읽을 수 있음
 new EntitySchema<AuditLog>({
   target: AuditLog,
   columns: {
@@ -239,7 +239,7 @@ new EntitySchema<AuditLog>({
   },
 });
 
-// 본질적으로 전역인 엔티티 — 테넌트 컬럼/WHERE 주입 없음
+// 본질적으로 전역인 엔티티: 테넌트 컬럼과 WHERE 주입 없음
 new EntitySchema<Tenant>({
   target: Tenant,
   nonTenant: true,
@@ -254,7 +254,7 @@ new EntitySchema<Tenant>({
 
 ## `@Transactional` 없이 트랜잭션
 
-`em.transaction(callback, options)`는 `@Transactional`의 데코레이터 없는 대응물입니다. 데코레이터가 받는 `isolationLevel`, `propagation`, `connectionName` 옵션을 **동일하게** 받으며, 데코레이터가 제공하지 않는 데드락 재시도까지 추가로 지원합니다.
+`em.transaction(callback, options)`는 `@Transactional`을 데코레이터 없이 대신하는 API입니다. 데코레이터가 받는 `isolationLevel`, `propagation`, `connectionName` 옵션을 똑같이 받습니다. 그리고 데코레이터가 제공하지 않는 데드락 재시도도 선택적으로 지원합니다.
 
 ```typescript
 import { EntityManager, TransactionPropagation } from "@stingerloom/orm";
@@ -279,28 +279,28 @@ await em.transaction(async (txEm) => {
   /* ... */
 }, { connectionName: "reporting" });
 
-// 데드락 재시도 — 콜백 API에서만 사용 가능
+// 데드락 재시도: 콜백 API에서만 사용 가능
 await em.transaction(async (txEm) => {
   /* ... */
 }, { retryOnDeadlock: true, maxRetries: 3 });
 ```
 
-`TransactionOptions` 레퍼런스:
+`TransactionOptions` 레퍼런스는 다음과 같습니다.
 
 | 옵션 | 타입 | 기본값 | 대응 데코레이터 형식 |
 | --- | --- | --- | --- |
 | `isolationLevel` | `"READ UNCOMMITTED" \| "READ COMMITTED" \| "REPEATABLE READ" \| "SERIALIZABLE"` | READ COMMITTED (PostgreSQL은 서버 기본값) | `@Transactional("SERIALIZABLE")` |
 | `propagation` | `TransactionPropagation` | `REQUIRED` | `@Transactional({ propagation })` |
 | `connectionName` | `string` | 기본 연결 | `@Transactional({ connectionName })` |
-| `retryOnDeadlock` | `boolean` | `false` | — (콜백 전용) |
-| `maxRetries` | `number` | `3` | — (콜백 전용) |
-| `retryDelayMs` | `number` | `100` | — (콜백 전용) |
+| `retryOnDeadlock` | `boolean` | `false` | 없음 (콜백 전용) |
+| `maxRetries` | `number` | `3` | 없음 (콜백 전용) |
+| `retryDelayMs` | `number` | `100` | 없음 (콜백 전용) |
 
-격리 수준, 전파, 세이브포인트에 대한 개념 가이드는 [트랜잭션](./transactions.md)을 참고하세요.
+격리 수준, 전파, 세이브포인트의 개념은 [트랜잭션](./transactions.md)을 참고하세요.
 
 ## 데코레이터 없이 NestJS 주입
 
-`@InjectRepository`와 `@InjectEntityManager`는 엔티티 메타데이터가 아니라 NestJS DI 편의 기능입니다. 생성자 파라미터에 어노테이션을 붙이고 싶지 않다면, `EntityManager` 프로바이더를 주입받아 거기서 리포지토리를 얻으면 됩니다.
+`@InjectRepository`와 `@InjectEntityManager`는 엔티티 메타데이터가 아니라 NestJS 의존성 주입(DI)의 편의 기능입니다. 생성자 파라미터에 어노테이션을 붙이고 싶지 않다면 `EntityManager` 프로바이더를 주입받아 리포지토리를 얻으면 됩니다.
 
 ```typescript
 import { Injectable } from "@nestjs/common";
@@ -321,14 +321,14 @@ export class UserService {
 }
 ```
 
-`em.getRepository(Entity)`는 `@InjectRepository(Entity)`가 주입했을 것과 동일한 `BaseRepository` 인스턴스를 반환합니다.
+`em.getRepository(Entity)`는 `@InjectRepository(Entity)`가 주입했을 것과 같은 `BaseRepository` 인스턴스를 반환합니다.
 
 ## 정말 데코레이터가 없는지 검증하기
 
-`emitDecoratorMetadata`를 완전히 제거하는 것이 목표라면, **모든** 엔티티를 `EntitySchema`로 정의하고 실제 툴체인(esbuild/SWC)으로 통과시켜 보세요. `EntitySchema`는 `design:type` 메타데이터를 스스로 설정하므로 컴파일러가 방출하는 메타데이터가 필요 없습니다. 빠른 스모크 테스트:
+`emitDecoratorMetadata`를 완전히 없애는 것이 목표라면 모든 엔티티를 `EntitySchema`로 정의하고 esbuild나 SWC 같은 실제 툴체인으로 빌드해 보세요. `EntitySchema`는 `design:type` 메타데이터를 직접 설정합니다. 그래서 컴파일러가 생성하는 메타데이터가 필요 없습니다. 간단한 스모크 테스트는 다음과 같습니다.
 
 ```typescript
 await em.register({ entities: [User, AuditLog, /* ... */], synchronize: "dry-run" });
 ```
 
-`synchronize: "dry-run"`은 데이터베이스를 건드리지 않고 실행할 DDL을 로그로 출력하므로, 모든 컬럼·인덱스·관계가 올바르게 해석되었는지 빠르게 확인할 수 있습니다.
+`synchronize: "dry-run"`은 데이터베이스를 건드리지 않고 실행할 DDL을 로그로 출력합니다. 그래서 모든 컬럼·인덱스·관계가 올바르게 해석되었는지 빠르게 확인할 수 있습니다.

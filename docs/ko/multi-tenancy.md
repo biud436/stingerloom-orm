@@ -1,31 +1,31 @@
-# Multi-Tenancy
+# 멀티테넌시
 
 ## 문제 상황
 
-SaaS 제품을 만든다고 생각해 봅시다. 수백 개의 회사가 사용하는 프로젝트 관리 도구입니다. A 회사에는 직원이 50명, B 회사에는 200명이 있고, 두 회사 모두 같은 서버, 같은 데이터베이스를 사용합니다.
+SaaS 제품을 만든다고 생각해 봅시다. 회사 수백 곳이 쓰는 프로젝트 관리 도구입니다. A 회사에는 직원이 50명 있고 B 회사에는 200명 있습니다. 두 회사는 같은 서버와 같은 데이터베이스에서 같은 애플리케이션을 씁니다.
 
-하지만 A 회사는 **절대** B 회사의 데이터를 볼 수 없어야 합니다. API 응답에서도, DB 쿼리에서도, 버그로 인한 우연한 노출도 허용되지 않아야 하죠. 이게 바로 **멀티테넌시**입니다 — 하나의 애플리케이션 안에 여러 고객(테넌트)을 격리하는 것입니다.
+하지만 A 회사가 B 회사의 데이터를 보는 일은 절대 없어야 합니다. API 응답에서도, 데이터베이스 쿼리에서도 안 되고 버그로 우연히 노출되어서도 안 됩니다. 이것이 **멀티테넌시**(multi-tenancy)입니다. 멀티테넌시는 애플리케이션 하나 안에서 여러 고객을 서로 격리하는 방식입니다. 이 고객 하나하나를 테넌트(tenant)라고 부릅니다.
 
-일반적으로 네 가지 접근 방식이 있습니다:
+흔히 쓰는 접근 방식은 네 가지입니다.
 
-1. **DB 분리** — 테넌트마다 별도의 물리 DB. 격리는 가장 강하지만 운영 비용이 가장 높습니다.
-2. **DB 공유, 스키마 분리** — DB는 하나지만 테넌트마다 별도 네임스페이스(스키마)를 사용합니다. 격리와 효율의 균형이 좋습니다.
-3. **전부 공유** — DB 하나, 스키마 하나, 모든 테이블에 `tenant_id` 컬럼. 가장 저렴하지만 WHERE 절 하나 빠지면 데이터가 유출됩니다.
-4. **DB 분리 + 라우팅 레이어** — #1과 형태는 같지만 ORM이 `MetadataContext` 기반으로 매 요청을 알맞은 풀에 자동 라우팅합니다.
+1. **DB 분리**: 테넌트마다 물리 데이터베이스를 따로 둡니다. 격리는 가장 강하지만 운영 비용이 가장 높습니다.
+2. **DB 공유, 스키마 분리**: 데이터베이스는 하나이고 테넌트마다 자기 스키마(네임스페이스)를 씁니다. 격리와 효율의 균형이 좋습니다.
+3. **전부 공유**: 데이터베이스 하나와 스키마 하나를 쓰고 모든 테이블에 `tenant_id` 컬럼을 둡니다. 가장 저렴하지만 WHERE 절 하나만 빠져도 데이터가 유출됩니다.
+4. **DB 분리 + 라우팅 레이어**: #1과 형태는 같습니다. 다만 ORM이 `MetadataContext`를 보고 요청마다 알맞은 풀로 자동 라우팅합니다.
 
-Stingerloom ORM은 네 가지를 모두 지원합니다:
+Stingerloom ORM은 네 가지를 모두 지원합니다.
 
-- **#2 (스키마 기반)** — `search_path` / `schema_qualified` 전략 (PostgreSQL 전용), **레이어드 메타데이터 시스템** 위에서 동작합니다.
-- **#3 (컬럼 기반)** — `tenant_column` 전략 (모든 다이얼렉트).
-- **#1 / #4 (DB 기반)** — `database` 전략 + `MultiTenantEntityManager` (모든 다이얼렉트).
+- **#2 (스키마 기반)**: `search_path` 전략과 `schema_qualified` 전략을 씁니다. PostgreSQL 전용이고 레이어드 메타데이터 시스템 위에서 동작합니다.
+- **#3 (컬럼 기반)**: `tenant_column` 전략을 씁니다. 모든 다이얼렉트에서 동작합니다.
+- **#1 / #4 (DB 기반)**: `database` 전략과 `MultiTenantEntityManager`를 씁니다. 모든 다이얼렉트에서 동작합니다.
 
 ---
 
-## 작동 원리 — OverlayFS 비유
+## 작동 원리: OverlayFS 비유
 
-Docker를 사용해 보셨다면, 컨테이너가 베이스 이미지를 공유하면서 각자 쓰기 가능한 레이어를 갖는 구조에 익숙하실 겁니다. 변경 사항은 최상위 레이어에 기록되고 베이스는 그대로 유지됩니다. 파일을 읽을 때는 최상위 레이어를 먼저 확인하고, 없으면 베이스로 폴백합니다.
+Docker를 써 봤다면 이 구조가 익숙할 것입니다. 컨테이너는 베이스 이미지를 공유하면서 각자 쓰기 가능한 레이어를 하나씩 가집니다. 변경 사항은 최상위 레이어에 기록되고 베이스는 그대로 남습니다. 파일을 읽을 때 Docker는 최상위 레이어를 먼저 확인하고 없으면 베이스로 넘어갑니다.
 
-Stingerloom의 메타데이터 시스템도 같은 방식입니다:
+Stingerloom의 메타데이터 시스템도 같은 방식입니다.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -37,17 +37,17 @@ Stingerloom의 메타데이터 시스템도 같은 방식입니다:
 └──────────────────────────────────────────────┘
 ```
 
-**메타데이터 읽기:** 테넌트 레이어를 먼저 확인하고, 없으면 public 레이어로 폴백합니다.
+메타데이터 읽기: 테넌트 레이어를 먼저 확인하고 없으면 public 레이어로 넘어갑니다.
 
-**메타데이터 쓰기:** 항상 테넌트 레이어에 기록합니다. Public 레이어는 런타임에 절대 수정되지 않습니다. Docker OverlayFS와 동일한 Copy-on-Write 원칙입니다.
+메타데이터 쓰기: 항상 테넌트 레이어에 기록합니다. public 레이어는 런타임에 절대 수정되지 않습니다. Docker OverlayFS와 같은 Copy-on-Write 원칙입니다.
 
-핵심은 **이걸 직접 신경 쓸 필요가 없다**는 점이에요. "이 요청이 어떤 테넌트에 속하는지"만 설정하면, ORM이 자동으로 올바른 스키마로 쿼리를 라우팅해 줍니다.
+핵심은 이 구조를 직접 신경 쓸 필요가 없다는 점입니다. 요청이 어떤 테넌트에 속하는지만 설정하면 ORM이 모든 쿼리를 올바른 스키마로 자동 라우팅합니다.
 
 ---
 
 ## 테넌트 컨텍스트 설정
 
-SaaS 앱에서 모든 HTTP 요청은 특정 테넌트에 속합니다. ORM에게 어떤 테넌트인지 알려주려면 `MetadataContext.run()`을 사용합니다:
+SaaS 앱에서 모든 HTTP 요청은 특정 테넌트에 속합니다. ORM에 그 테넌트를 알리려면 `MetadataContext.run()`을 씁니다.
 
 ```typescript
 import { MetadataContext } from "@stingerloom/orm";
@@ -64,9 +64,9 @@ const users = await em.find(User);
 // → SELECT * FROM "user"  (public schema)
 ```
 
-### 내부적으로 어떻게 동작하나요?
+### 내부 동작
 
-`MetadataContext.run()`은 Node.js의 `AsyncLocalStorage`를 사용합니다. 파라미터로 넘기지 않아도 전체 async 호출 체인에 컨텍스트를 전파해 주는 내장 메커니즘이죠. async JavaScript의 "thread-local 변수"라고 생각하면 됩니다.
+`MetadataContext.run()`은 Node.js의 `AsyncLocalStorage`를 씁니다. `AsyncLocalStorage`는 값을 파라미터로 넘기지 않아도 async 호출 체인 전체에 컨텍스트를 전파하는 내장 기능입니다. async JavaScript의 thread-local 변수라고 생각하면 됩니다.
 
 ```
 HTTP Request arrives with header "X-Tenant-Id: acme_corp"
@@ -92,7 +92,7 @@ MetadataContext.run("acme_corp", async () => {
 // Context automatically reverts to "public"
 ```
 
-콜 스택이 아무리 깊어져도 — controller → service → repository → EntityManager — `AsyncLocalStorage`를 통해 테넌트 컨텍스트를 항상 가져올 수 있습니다. `tenantId`를 함수 파라미터로 일일이 넘길 필요가 없어요.
+호출 스택이 controller → service → repository → EntityManager처럼 아무리 깊어져도 테넌트 컨텍스트는 항상 `AsyncLocalStorage`에서 조회됩니다. 그래서 `tenantId`를 함수 파라미터로 일일이 넘길 필요가 없습니다.
 
 ### 현재 컨텍스트 확인
 
@@ -106,7 +106,7 @@ const isActive = MetadataContext.isActive();
 
 ### 동시성 안전
 
-각 HTTP 요청은 고유한 `AsyncLocalStorage` 컨텍스트를 가집니다. "acme_corp"과 "globex" 요청이 정확히 같은 밀리초에 들어와도 각각 다른 테넌트 ID를 보게 됩니다. 덮어쓸 수 있는 공유 전역 변수 같은 건 존재하지 않습니다.
+HTTP 요청은 저마다 자기 `AsyncLocalStorage` 컨텍스트를 가집니다. "acme_corp" 요청과 "globex" 요청이 정확히 같은 밀리초에 들어와도 각 요청은 자기 테넌트 ID를 봅니다. 서로 덮어쓸 공유 전역 변수가 없기 때문입니다.
 
 ```
 Request A (acme_corp)  ──────────────────────────►  sees "acme_corp" throughout
@@ -118,7 +118,7 @@ Request B (globex)     ───────────────────
 
 ## NestJS 미들웨어로 자동 설정
 
-실제 애플리케이션에서는 매 요청마다 `MetadataContext.run()`을 직접 호출하지 않습니다. 대신 미들웨어를 사용해서 HTTP 요청에서 테넌트를 추출하고, 전체 요청 라이프사이클을 테넌트 컨텍스트로 감싸면 됩니다.
+실제 애플리케이션에서는 요청마다 `MetadataContext.run()`을 직접 호출하지 않습니다. 대신 미들웨어에서 HTTP 요청의 테넌트를 추출합니다. 그리고 요청의 생명주기 전체를 테넌트 컨텍스트로 감쌉니다.
 
 ```typescript
 // tenant.middleware.ts
@@ -150,7 +150,7 @@ export class AppModule implements NestModule {
 }
 ```
 
-이렇게 하면 NestJS 앱의 모든 controller와 service가 자동으로 올바른 테넌트 컨텍스트에서 실행됩니다. 비즈니스 로직은 손댈 필요가 없어요:
+이제 NestJS 앱의 모든 controller와 service가 자동으로 올바른 테넌트 컨텍스트에서 실행됩니다. 비즈니스 로직은 고칠 필요가 없습니다.
 
 ```bash
 # Query users for acme_corp
@@ -166,26 +166,26 @@ curl http://localhost:3000/users
 # → SELECT * FROM "user"
 ```
 
-### 테넌트 ID는 어디서 가져와야 하나요?
+### 테넌트 ID의 출처
 
-`X-Tenant-Id` 헤더가 가장 간단하지만, 프로덕션에서는 다른 방법도 사용할 수 있습니다:
+`X-Tenant-Id` 헤더가 가장 간단합니다. 프로덕션에서는 다음 방법도 씁니다.
 
 | 소스 | 예시 | 사용 시점 |
 |------|------|----------|
 | HTTP 헤더 | `X-Tenant-Id: acme_corp` | 내부 API, 마이크로서비스 |
 | 서브도메인 | `acme.yourapp.com` | 고객 대면 앱 |
 | JWT claim | `{ tenantId: "acme_corp" }` | 토큰 기반 인증 |
-| URL 경로 | `/tenants/acme_corp/users` | 명시적 스코핑이 있는 REST API |
+| URL 경로 | `/tenants/acme_corp/users` | 테넌트 범위를 경로에 명시하는 REST API |
 
-어떤 방법을 쓰든 미들웨어 패턴은 동일합니다 — 테넌트 ID를 추출하고 `MetadataContext.run()`에 넘기면 됩니다.
+어떤 방법을 쓰든 미들웨어 패턴은 같습니다. 테넌트 ID를 추출해 `MetadataContext.run()`에 넘기면 됩니다.
 
 ---
 
 ## PostgreSQL 스키마 기반 격리
 
-지금까지 쿼리 라우팅에 대해 이야기했는데, 정작 테넌트 데이터는 실제로 어디에 저장될까요? PostgreSQL 스키마를 사용하면 각 테넌트가 모든 테이블의 복사본을 포함하는 별도의 네임스페이스를 갖게 됩니다.
+지금까지는 쿼리 라우팅을 살펴봤습니다. 그렇다면 테넌트 데이터는 실제로 어디에 저장될까요? PostgreSQL 스키마를 쓰면 테넌트마다 자기 네임스페이스가 생깁니다. 이 네임스페이스에는 모든 테이블의 복사본이 들어 있습니다.
 
-PostgreSQL 스키마는 파일시스템의 폴더라고 생각하면 됩니다:
+PostgreSQL 스키마는 파일 시스템의 폴더와 비슷합니다.
 
 ```
 Database "mydb"
@@ -203,11 +203,11 @@ Database "mydb"
     └── comment
 ```
 
-각 스키마는 자체 `user` 테이블을 갖고, 자체 데이터를 포함합니다. `acme_corp.user`와 `globex.user`는 완전히 별개입니다 — 데이터, 인덱스, 시퀀스가 모두 다릅니다.
+스키마마다 자기 `user` 테이블이 있고 그 테이블에는 자기 행이 들어 있습니다. `acme_corp.user`와 `globex.user`는 완전히 별개입니다. 데이터도, 인덱스도, 시퀀스도 모두 다릅니다.
 
 ### TenantMigrationRunner로 테넌트 스키마 생성
 
-`PostgresTenantMigrationRunner`는 테넌트 스키마 생성을 자동화합니다. public 스키마의 테이블 구조를 새 테넌트 스키마로 복제해 줍니다.
+`PostgresTenantMigrationRunner`는 테넌트 스키마 생성을 자동화합니다. public 스키마의 테이블 구조를 새 테넌트 스키마로 복제합니다.
 
 ```typescript
 import { PostgresTenantMigrationRunner, EntityManager } from "@stingerloom/orm";
@@ -236,7 +236,7 @@ const runner = new PostgresTenantMigrationRunner(driver, {
 await runner.ensureSchema("acme_corp");
 ```
 
-이렇게 하면 다음 SQL이 실행됩니다:
+이 호출은 다음 SQL을 실행합니다.
 
 ```sql
 -- 1. Create the schema
@@ -250,9 +250,9 @@ CREATE TABLE IF NOT EXISTS "acme_corp"."post"
   (LIKE "public"."post" INCLUDING ALL);
 ```
 
-`INCLUDING ALL`은 컬럼, 인덱스, 제약 조건, 기본값, 시퀀스를 모두 복사합니다 — 데이터만 빼고요. 테넌트는 모든 테이블의 빈 복사본으로 시작합니다.
+`INCLUDING ALL`은 데이터만 빼고 컬럼, 인덱스, 제약 조건, 기본값, 시퀀스를 모두 복사합니다. 그래서 테넌트는 모든 테이블의 빈 복사본으로 시작합니다.
 
-`ensureSchema()`는 멱등(idempotent)입니다 — 같은 테넌트에 두 번 호출해도 두 번째 호출은 아무것도 하지 않습니다. 내부적으로 advisory lock을 사용해서, 여러 프로세스가 동시에 같은 스키마를 생성하려는 race condition도 방지합니다.
+`ensureSchema()`는 멱등(idempotent)입니다. 같은 테넌트로 두 번 호출해도 두 번째 호출은 아무것도 하지 않습니다. 내부에서는 어드바이저리 잠금(advisory lock)을 씁니다. 그래서 여러 프로세스가 같은 스키마를 동시에 생성하려 할 때 생기는 경쟁 상태(race condition)도 막습니다.
 
 ### 여러 테넌트 일괄 프로비저닝
 
@@ -278,23 +278,23 @@ runner.getProvisionedSchemas();       // ["acme_corp", "globex", ...]
 
 ### 복제할 테이블 고르기
 
-기본값은 원본 스키마의 모든 테이블을 복제하는 것입니다. `tables` 옵션으로 범위를 좁힐 수 있어요. 엔티티 클래스나 테이블 이름으로, 또는 접두사/접미사로 고릅니다:
+기본적으로 원본 스키마의 모든 테이블을 복제합니다. `tables` 옵션은 이 범위를 좁힙니다. 엔티티 클래스나 테이블 이름으로 고르거나 접두사와 접미사로 고릅니다.
 
 ```typescript
 const runner = new PostgresTenantMigrationRunner(driver, {
   tables: {
     include: [User, Post],        // 이 테이블만 (엔티티 클래스 또는 테이블 이름)
-    exclude: ["__migrations"],    // 이건 절대 복제하지 않음
+    exclude: ["__migrations"],    // 이 테이블은 절대 복제하지 않음
     excludePrefix: ["audit_"],    // audit_ 로 시작하는 테이블도 제외
   },
 });
 ```
 
-필터는 `include` → `includePrefix` / `includeSuffix` → `exclude` → `excludePrefix` / `excludeSuffix` 순서로 적용됩니다. `@Entity({ schema })`로 고정했거나 `@NonTenantEntity()`를 붙인 테이블은 필터와 무관하게 항상 원본 스키마에 남습니다. [공유 테이블](#공유-테이블-엔티티를-스키마에-고정하기)을 참고하세요.
+필터는 `include` → `includePrefix` / `includeSuffix` → `exclude` → `excludePrefix` / `excludeSuffix` 순서로 적용됩니다. `@Entity({ schema })`로 고정했거나 `@NonTenantEntity()`를 붙인 테이블은 필터와 관계없이 항상 원본 스키마에 남습니다. 자세한 내용은 [공유 테이블](#공유-테이블-엔티티를-스키마에-고정하기)을 참고하세요.
 
 ### NestJS에서 자동 프로비저닝
 
-앱 시작 시 알려진 모든 테넌트를 프로비저닝하는 서비스를 만들 수 있습니다:
+다음 서비스는 앱이 시작할 때 알려진 테넌트를 모두 프로비저닝합니다.
 
 ```typescript
 // tenant-provisioning.service.ts
@@ -326,33 +326,33 @@ export class TenantProvisioningService implements OnModuleInit {
 ```
 
 ::: info
-스키마 기반 멀티테넌시는 현재 PostgreSQL에서만 지원됩니다. MySQL은 데이터베이스와 별개의 스키마 개념이 없고, SQLite는 스키마 자체를 지원하지 않습니다. MySQL이나 SQLite에서 `TenantMigrationRunner`를 사용하면 `UnsupportedError`가 발생합니다.
+Stingerloom은 현재 PostgreSQL에서만 스키마 기반 멀티테넌시를 지원합니다. MySQL에는 데이터베이스와 별개인 스키마 개념이 없습니다. SQLite는 스키마 자체를 지원하지 않습니다. MySQL이나 SQLite에서 `TenantMigrationRunner`의 메서드를 호출하면 코드가 `ORM_UNSUPPORTED_DATABASE`인 `OrmError`를 던집니다.
 :::
 
 ---
 
 ## 테넌트 쿼리 전략
 
-테넌트 컨텍스트 안에서 쿼리가 실행되면, ORM이 올바른 곳 — 스키마, 컬럼 predicate, 또는 물리 데이터베이스 — 으로 라우팅해야 합니다. 네 가지 전략이 있고, 선택에 따라 성능 / 격리 강도 / 운영 비용이 달라집니다.
+테넌트 컨텍스트 안에서 쿼리가 실행되면 ORM은 쿼리를 올바른 곳으로 라우팅해야 합니다. 올바른 곳은 스키마일 수도 있고 컬럼 조건이나 물리 데이터베이스일 수도 있습니다. 전략은 네 가지입니다. 어떤 전략을 고르느냐에 따라 성능, 격리 강도, 운영 비용이 달라집니다.
 
 ### 한눈에 보기
 
 | 항목 | `search_path` | `schema_qualified` | `tenant_column` | `database` |
 |---|---|---|---|---|
-| Dialect 지원 | PostgreSQL 전용 | PostgreSQL 전용 | 전 dialect (MySQL/PG/SQLite) | 전 dialect |
-| 격리 수준 | 스키마 | 스키마 | row (predicate) | **물리 DB** |
-| read 라운드 트립 | ~5 (BEGIN/SET LOCAL/...) | 1 | 1 | 1 |
-| Connection pool | 1개 공유 | 1개 공유 | 1개 공유 | **N개 (테넌트마다)** |
-| 신규 테넌트 비용 | `CREATE SCHEMA` | `CREATE SCHEMA` | 무료 | **`CREATE DATABASE`** |
-| Cross-tenant join | OK (같은 DB) | OK (같은 DB) | OK (`tenant_id` 필터) | 불가능 (다른 DB) |
-| 지원 테넌트 수 | 100~1k | 100~1k | 1k+ | ~50 (pool 예산) |
+| 다이얼렉트 지원 | PostgreSQL 전용 | PostgreSQL 전용 | 모든 다이얼렉트 (MySQL/PG/SQLite) | 모든 다이얼렉트 |
+| 격리 수준 | 스키마 | 스키마 | 행 (조건) | 물리 DB |
+| 읽기 라운드 트립 | ~5 (BEGIN/SET LOCAL/...) | 1 | 1 | 1 |
+| 연결 풀 | 1개 공유 | 1개 공유 | 1개 공유 | N개 (테넌트마다) |
+| 신규 테넌트 비용 | `CREATE SCHEMA` | `CREATE SCHEMA` | 무료 | `CREATE DATABASE` |
+| 테넌트 간 JOIN | OK (같은 DB) | OK (같은 DB) | OK (`tenant_id` 필터) | 불가능 (다른 DB) |
+| 지원 테넌트 수 | 100~1k | 100~1k | 1k+ | ~50 (풀 예산) |
 | 지리 / 컴플라이언스 분리 | 미지원 | 미지원 | 미지원 | 지원 |
-| 테넌트별 백업/복구 | DB 단위 | DB 단위 | DB 단위 | **간단** |
-| 운영 복잡도 | 낮음 | 낮음 | 가장 낮음 | **가장 높음** |
+| 테넌트별 백업/복구 | DB 단위 | DB 단위 | DB 단위 | 간단 |
+| 운영 복잡도 | 낮음 | 낮음 | 가장 낮음 | 가장 높음 |
 
-### "라운드 트립"이란?
+### "라운드 트립"의 의미
 
-라운드 트립은 애플리케이션과 PostgreSQL 서버 사이의 한 번의 요청-응답 사이클입니다. 각 라운드 트립마다 최소 한 번의 네트워크 지연이 발생합니다. DB가 10ms 거리에 있다면, 5번의 라운드 트립 = 데이터를 받기도 전에 50ms의 오버헤드가 생기는 셈이죠.
+라운드 트립(round trip)은 애플리케이션과 PostgreSQL 서버 사이에서 요청과 응답을 한 번 주고받는 일입니다. 라운드 트립마다 적어도 네트워크 지연이 한 번 생깁니다. 데이터베이스까지 10ms가 걸린다면 라운드 트립 5번은 데이터를 받기도 전에 50ms의 오버헤드가 됩니다.
 
 ### 전략 1: `"search_path"` (기본값)
 
@@ -366,7 +366,7 @@ await em.register({
 });
 ```
 
-`MetadataContext.run("acme_corp", ...)` 블록 안에서 `em.find(User)`를 실행하면, 네트워크 레벨에서 다음과 같은 일이 일어납니다:
+`MetadataContext.run("acme_corp", ...)` 블록 안에서 `em.find(User)`를 실행하면 네트워크 수준에서 다음 일이 일어납니다.
 
 ```
 App                                    PostgreSQL
@@ -385,17 +385,17 @@ App                                    PostgreSQL
  │◄── OK ───────────────────────────────── │
 ```
 
-단일 테넌트 읽기에 4번의 라운드 트립이 필요합니다 (connect + BEGIN + SET LOCAL + SELECT + COMMIT). `SET LOCAL`은 search_path 변경이 이 트랜잭션에만 적용되도록 보장합니다 — 다른 커넥션에는 영향을 주지 않아요.
+테넌트 읽기 한 번에 라운드 트립이 4번 필요합니다. BEGIN, SET LOCAL, SELECT, COMMIT입니다. 여기에 연결을 얻는 과정이 더해집니다. `SET LOCAL`로 바꾼 search_path는 이 트랜잭션 안에서만 적용됩니다. 그래서 다른 연결에는 영향을 주지 않습니다.
 
-**장점:** PostgreSQL에서 잘 정립된 패턴입니다. pg_dump, 모니터링 등 기존 도구와 자연스럽게 호환됩니다.
+장점: PostgreSQL에서 잘 정립된 패턴입니다. pg_dump나 모니터링 같은 기존 도구가 그대로 동작합니다.
 
-**단점:** 모든 테넌트 읽기에 트랜잭션 래핑이 필요해서 지연이 추가됩니다.
+단점: 테넌트 읽기마다 트랜잭션으로 감싸야 하므로 지연이 늘어납니다.
 
-#### 테넌트 마커는 유효한 PG 식별자여야 합니다
+#### 테넌트 마커의 PG 식별자 규칙
 
-`search_path`가 기본 전략이기 때문에, `MetadataContext.run(<value>)`에 넘긴 값이 그대로 PostgreSQL 스키마 이름으로 사용됩니다 (`SET LOCAL search_path TO "<value>"`). 즉 마커는 유효한 PG 식별자여야 합니다 — 알파벳·숫자·언더스코어·하이픈·`$`만 허용되며, 시작 문자는 알파벳 또는 언더스코어여야 합니다.
+`search_path`가 기본 전략이므로 `MetadataContext.run(<value>)`에 넘긴 값은 `SET LOCAL search_path TO "<value>"`에서 그대로 PostgreSQL 스키마 이름으로 쓰입니다. 그래서 마커는 유효한 PostgreSQL 식별자여야 합니다. 허용하는 문자는 알파벳, 숫자, 언더스코어, 하이픈, `$`이고 첫 글자는 알파벳이나 언더스코어여야 합니다.
 
-식별자 검증을 통과하지 못하는 값(예: `"12345"` 같은 순수 숫자 workspace id)을 넘기면, 커넥터는 모든 트랜잭션을 중단하는 대신 `SET LOCAL`을 **skip하고** 유니크한 invalid 마커당 한 번씩 경고를 남깁니다:
+식별자 검증을 통과하지 못하는 값을 넘기면 커넥터는 트랜잭션마다 에러로 중단하는 대신 `SET LOCAL`을 건너뜁니다. `"12345"`처럼 숫자로만 된 workspace id가 그런 값입니다. 이때 커넥터는 잘못된 마커마다 경고를 한 번씩 남깁니다.
 
 ```
 WARN [PostgresConnector] MetadataContext tenant "12345" is not a valid
@@ -405,15 +405,15 @@ schema-name tenant marker. If you use MetadataContext only for app-side
 context, set tenantStrategy:"tenant_column" to silence this warning.
 ```
 
-세 가지 해결 경로가 있습니다:
+해결 방법은 세 가지입니다.
 
-1. **스키마 이름 형태의 마커로 바꿉니다.** 숫자 id를 prefix와 함께 감싸서 동일한 문자열을 스키마 이름으로도 사용하세요: `MetadataContext.run(\`tenant_${workspaceId}\`, ...)`.
-2. **`schema_qualified`로 전환합니다.** 동일한 격리 모델이지만 `SET LOCAL` 라운드 트립이 없고, 마커에 대한 식별자 규칙은 동일하게 적용됩니다.
-3. **`tenant_column`(또는 `database`)으로 전환합니다.** `MetadataContext.run()`을 순전히 앱 컨텍스트 마커로만 사용하고 있다면 — 즉 활성 workspace를 subscriber·감사 로그·row-level guard에 노출하기 위해 열고 있고 실제 격리는 컬럼 레벨에서 강제하고 있다면 — 그 의도를 전략으로 명시하세요. 그러면 커넥터는 더 이상 `search_path`를 건드리지 않습니다.
+1. **스키마 이름 형태의 마커로 바꿉니다.** 숫자 id 앞에 접두사를 붙이고 같은 문자열을 스키마 이름으로도 쓰세요. `MetadataContext.run(\`tenant_${workspaceId}\`, ...)`처럼 씁니다.
+2. **`schema_qualified`로 전환합니다.** 격리 모델은 같고 `SET LOCAL` 라운드 트립이 없습니다. 마커의 식별자 규칙은 똑같이 적용됩니다.
+3. **`tenant_column`(또는 `database`)으로 전환합니다.** `MetadataContext.run()`을 앱 쪽 컨텍스트 마커로만 쓰는 경우입니다. 활성 workspace를 구독자, 감사 로그, 행 수준 가드(row-level guard)에 보여 주려고 컨텍스트를 열고 실제 격리는 컬럼 수준에서 강제하는 경우가 여기에 해당합니다. 이때는 그 의도를 전략으로 명시하세요. 그러면 커넥터는 `search_path`를 건드리지 않습니다.
 
 ### 전략 2: `"schema_qualified"`
 
-search_path를 변경하는 대신, 테이블 이름 앞에 스키마 이름을 직접 붙이는 방식입니다:
+이 전략은 search_path를 바꾸지 않고 테이블 이름 앞에 스키마 이름을 직접 붙입니다.
 
 ```typescript
 await em.register({
@@ -423,7 +423,7 @@ await em.register({
 });
 ```
 
-`MetadataContext.run("acme_corp", ...)` 안에서 `em.find(User)`를 실행하면:
+이제 `MetadataContext.run("acme_corp", ...)` 안에서 `em.find(User)`를 실행하면 다음과 같이 동작합니다.
 
 ```
 App                                    PostgreSQL
@@ -432,7 +432,7 @@ App                                    PostgreSQL
  │◄── rows ─────────────────────────────── │
 ```
 
-단 1번의 라운드 트립입니다 (커넥션 제외). 단순 읽기에는 트랜잭션이 필요 없습니다.
+라운드 트립은 연결을 빼면 1번뿐입니다. 단순 읽기에는 트랜잭션이 필요 없습니다.
 
 ```sql
 -- With schema_qualified strategy, tenant context = "acme_corp":
@@ -442,26 +442,26 @@ SELECT * FROM "acme_corp"."user"
 SELECT * FROM "user"
 ```
 
-**장점:** 더 빠릅니다. 읽기에 불필요한 트랜잭션 오버헤드가 없습니다.
+장점: 더 빠릅니다. 읽기에 불필요한 트랜잭션 오버헤드가 없습니다.
 
-**단점:** 실질적으로 없습니다 — SQL이 약간 다를 뿐 두 전략 모두 동일한 결과를 만들어요.
+단점: 실제로는 없습니다. SQL이 조금 다를 뿐 두 전략의 결과는 같습니다.
 
 ### 성능 비교
 
 | 시나리오 | `search_path` | `schema_qualified` |
 |---------|:-------------:|:------------------:|
-| 테넌트 읽기 (라운드 트립) | 4-5 | **1-2** |
+| 테넌트 읽기 (라운드 트립) | 4-5 | 1-2 |
 | 비테넌트 읽기 | 1-2 | 1-2 |
 | 쓰기 작업 | 트랜잭션 (동일) | 트랜잭션 (동일) |
 | 결과 정확성 | 동일 | 동일 |
 
-**`schema_qualified`를 선택해야 할 때:** 테넌트 스코프 쿼리가 많은 읽기 위주 앱 — 대부분의 SaaS 앱이 여기에 해당됩니다. 네트워크 지연이 10ms라면, 단일 테넌트 읽기의 오버헤드가 약 40ms (search_path)에서 약 10ms (schema_qualified)로 줄어듭니다.
+`schema_qualified`를 고를 때: 테넌트 범위 쿼리가 많은 읽기 위주 앱에 맞습니다. 대부분의 SaaS 앱이 여기에 해당합니다. 네트워크 지연이 10ms라면 테넌트 읽기 한 번의 오버헤드가 search_path의 약 40ms에서 schema_qualified의 약 10ms로 줄어듭니다.
 
-두 전략 모두 동일한 결과를 만듭니다. 차이는 순수하게 성능에만 있어요. search_path를 써야 하는 특별한 이유(예: 스키마 한정 이름을 지원하지 않는 도구와의 호환)가 없다면, **`schema_qualified`가 더 나은 기본값**입니다.
+두 전략의 결과는 같습니다. 차이는 성능뿐입니다. search_path를 써야 할 특별한 이유가 없다면 `schema_qualified`가 더 나은 기본값입니다. 스키마 한정 이름을 지원하지 않는 도구와 호환해야 하는 경우가 그런 이유의 한 예입니다.
 
 ### 트랜잭션 안에서 테넌트 바꾸기 {#switching-tenants-inside-a-transaction}
 
-테넌트 스키마는 모두 한 데이터베이스 안에 있으므로, 트랜잭션 하나에 여러 테넌트의 작업을 담을 수 있습니다. 트랜잭션을 어느 테넌트에서 시작했든, 각 문장은 그 문장을 보낼 때 활성화된 테넌트의 스키마에서 실행됩니다:
+테넌트 스키마는 모두 한 데이터베이스 안에 있습니다. 그래서 트랜잭션 하나에 여러 테넌트의 작업을 담아도 됩니다. 트랜잭션을 어느 테넌트에서 시작했든 각 SQL 문은 그 SQL 문을 보낼 때 활성화된 테넌트의 스키마에서 실행됩니다.
 
 ```typescript
 await MetadataContext.run("acme_corp", async () => {
@@ -475,15 +475,15 @@ await MetadataContext.run("acme_corp", async () => {
 });
 ```
 
-`search_path` 전략에서는 트랜잭션의 `SET LOCAL`이 트랜잭션을 시작한 테넌트를 가리킵니다. 테넌트가 바뀌면 ORM이 다음 문장 앞에 `SET LOCAL search_path`를 한 번 더 보내고, 작업이 원래 테넌트로 돌아올 때도 다시 보냅니다. 바뀔 때마다 라운드 트립이 하나 늘 뿐이고, 테넌트가 그대로면 추가 문장은 없어요. `schema_qualified`에서는 테넌트 테이블이 이미 SQL에 스키마와 함께 적혀 있습니다. 테넌트 트랜잭션 안의 `"public"` 작업은 같은 방식으로 기본 스키마를 다시 가리키게 됩니다. `MetadataContext.run()` 밖에서 시작한 트랜잭션도 마찬가지로, 테넌트 블록 안의 작업은 그 테넌트의 스키마로 갑니다.
+`search_path` 전략에서는 트랜잭션의 `SET LOCAL`이 트랜잭션을 시작한 테넌트를 가리킵니다. 테넌트가 바뀌면 ORM이 다음 SQL 문 앞에 `SET LOCAL search_path`를 한 번 더 보냅니다. 작업이 원래 테넌트로 돌아올 때도 다시 보냅니다. 바뀔 때마다 라운드 트립이 하나 늘 뿐이고 테넌트가 그대로면 추가 SQL 문은 없습니다. `schema_qualified`에서는 테넌트 테이블이 이미 SQL에 스키마와 함께 적혀 있습니다. 테넌트 트랜잭션 안의 `"public"` 작업도 같은 방식으로 기본 스키마를 다시 가리킵니다. `MetadataContext.run()` 밖에서 시작한 트랜잭션도 마찬가지입니다. 테넌트 블록 안의 작업은 그 테넌트의 스키마로 갑니다.
 
-모든 테넌트의 작업은 함께 커밋되거나 함께 롤백됩니다. `ROLLBACK TO SAVEPOINT`(실패한 `NESTED` 트랜잭션)는 세이브포인트를 만들 때의 search_path도 되돌리며, 그 뒤의 문장도 계속 각자의 테넌트 스키마에서 실행됩니다. [`database` 전략](#cross-tenant-transactions-are-forbidden)은 다릅니다. 그쪽은 테넌트마다 데이터베이스가 따로라서, 트랜잭션 안에서 테넌트를 바꾸면 예외가 납니다.
+모든 테넌트의 작업은 함께 커밋되거나 함께 롤백됩니다. 실패한 `NESTED` 트랜잭션이 실행하는 `ROLLBACK TO SAVEPOINT`는 세이브포인트를 만들 때의 search_path도 되돌립니다. 그 뒤의 SQL 문도 계속 각자의 테넌트 스키마에서 실행됩니다. [`database` 전략](#cross-tenant-transactions-are-forbidden)은 다릅니다. 이 전략에서는 테넌트마다 데이터베이스가 따로 있습니다. 그래서 트랜잭션 안에서 테넌트를 바꾸면 에러를 던집니다.
 
 ### 공유 테이블: 엔티티를 스키마에 고정하기
 
-두 전략 모두 *모든* 테이블을 테넌트 스키마로 보냅니다. 테넌트 데이터라면 그게 목적이지만, 모든 테넌트가 함께 쓰는 테이블도 있어요. 구독 플랜, 국가 코드, 피처 플래그, 그리고 `tenants` 테이블 자체가 그렇습니다. `MetadataContext.run("acme_corp", ...)` 안에서는 이런 테이블에 닿을 수 없습니다. `search_path`는 테넌트 스키마만 지정하고(`public` fallback이 없습니다), `schema_qualified`는 이름을 `"acme_corp"."plan"`으로 바꿔 쓰니까요. PostgreSQL은 `relation "plan" does not exist`로 답하고, 지금까지의 유일한 우회책은 테이블을 테넌트 스키마마다 복제하는 것이었습니다. 테넌트마다 비어 있는 사본이 하나씩 생기는 셈이죠.
+두 전략 모두 *모든* 테이블을 테넌트 스키마로 보냅니다. 테넌트 데이터에는 이 동작이 맞습니다. 하지만 모든 테넌트가 함께 쓰는 테이블도 있습니다. 구독 플랜, 국가 코드, 피처 플래그, 그리고 `tenants` 테이블 자체가 그렇습니다. `MetadataContext.run("acme_corp", ...)` 안에서는 이런 테이블에 닿지 못합니다. `search_path`는 테넌트 스키마만 지정하고 `public`으로 넘어가지 않습니다. `schema_qualified`는 이름을 `"acme_corp"."plan"`으로 바꿔 씁니다. 그러면 PostgreSQL은 `relation "plan" does not exist`로 응답합니다. 지금까지 유일한 우회책은 테이블을 테넌트 스키마마다 복제하는 것이었습니다. 그러면 테넌트마다 자기만 쓰는 빈 사본이 하나씩 생깁니다.
 
-대신 엔티티를 스키마에 고정하세요:
+대신 엔티티를 스키마에 고정하세요.
 
 ```typescript
 @Entity({ schema: "public" })
@@ -501,7 +501,7 @@ class Subscription {
 }
 ```
 
-고정된 엔티티는 어떤 테넌트가 활성이든, 어떤 전략이든 항상 `"schema"."table"`로 지칭됩니다:
+고정된 엔티티는 어떤 테넌트가 활성이든 어떤 전략을 쓰든 항상 `"schema"."table"`로 표기됩니다.
 
 ```sql
 -- MetadataContext.run("acme_corp") 안, schema_qualified
@@ -513,16 +513,16 @@ SET LOCAL search_path TO "acme_corp";
 SELECT * FROM "public"."plan"
 ```
 
-고정은 테이블 이름이 쓰이는 모든 곳에 적용됩니다:
+고정은 테이블 이름이 쓰이는 모든 곳에 적용됩니다.
 
-- **쿼리** — `find*`, 쓰기, 관계 로딩, `SelectQueryBuilder` JOIN, `em.ref()`.
-- **Synchronize** — 테이블을 해당 스키마에 만들고(스키마가 없으면 함께 만들어요) 거기서 변경하며, 테넌트 테이블에서 공유 테이블로 가는 FK는 `"public"."plan"`을 참조합니다.
-- **`migrate:generate`** — diff가 고정된 스키마를 인트로스펙션합니다.
-- **프로비저닝** — `PostgresTenantMigrationRunner`는 고정 테이블(과 고정 소유자의 ManyToMany 조인 테이블)을 원본 스키마에 남겨 둡니다. `tables.include`에 적혀 있어도 테넌트로 복제하지 않아요.
+- **쿼리**: `find*`, 쓰기, 관계 로딩, `SelectQueryBuilder` JOIN, `em.ref()`.
+- **Synchronize**: 테이블을 고정된 스키마에 생성하고 그 스키마에서 변경합니다. 스키마가 없으면 스키마도 함께 생성합니다. 테넌트 테이블에서 공유 테이블로 가는 외래 키는 `"public"."plan"`을 참조합니다.
+- **`migrate:generate`**: diff가 고정된 스키마를 인트로스펙션합니다.
+- **프로비저닝**: `PostgresTenantMigrationRunner`는 고정 테이블을 원본 스키마에 남겨 둡니다. 고정된 엔티티가 소유한 ManyToMany 조인 테이블도 마찬가지입니다. 이런 테이블은 `tables.include`에 적혀 있어도 테넌트로 복제하지 않습니다.
 
-`@NonTenantEntity()`는 스키마 이름 없이 같은 일을 합니다. `search_path`와 `schema_qualified`에서는 엔티티를 연결의 기본 스키마(`schema` 옵션, 없으면 `public`)에 고정해요. 그래서 데코레이터 하나가 모든 전략에서 "전역 테이블"을 뜻합니다. 같은 클래스가 `tenant_column`에서는 구분 컬럼에서 빠지는 쪽으로 동작하고요.
+`@NonTenantEntity()`는 스키마 이름 없이 같은 일을 합니다. `search_path`와 `schema_qualified`에서는 엔티티를 연결의 기본 스키마에 고정합니다. 기본 스키마는 `schema` 옵션의 값이고 이 옵션이 없으면 `public`입니다. 그래서 이 데코레이터 하나가 모든 전략에서 "전역 테이블"을 뜻합니다. `tenant_column`에서는 같은 클래스에 구분 컬럼이 붙지 않습니다.
 
-`JOINED`(table-per-type) 계층의 자식 엔티티는 따로 지정하지 않는 한 루트의 스키마를 물려받고, 원하면 자기 테이블을 다른 스키마에 둘 수 있습니다. `SINGLE_TABLE` 자식은 루트와 테이블을 공유하므로 스키마도 루트를 따르며, 다른 `schema`를 적어도 경고와 함께 무시됩니다. code-first 엔티티도 같은 옵션을 받아요: `defineEntity("plans", { ... }, { schema: "public" })`, `new EntitySchema({ target, schema: "public", ... })`. `em.resolveEntitySchema(Plan)`은 엔티티가 해석되는 스키마를 돌려줍니다 (테넌트 전략을 따르면 `undefined`). MySQL과 SQLite에는 스키마 계층이 없어서 이 옵션은 무시됩니다.
+`JOINED`(table-per-type) 계층의 자식 엔티티는 따로 지정하지 않으면 루트의 스키마를 물려받습니다. 자식의 테이블만 다른 스키마에 고정해도 됩니다. `SINGLE_TABLE` 자식은 루트와 테이블을 공유하므로 스키마도 루트를 따릅니다. 자식에 다른 `schema`를 적으면 경고를 남기고 무시합니다. 코드 우선(code-first) 엔티티도 같은 옵션을 받습니다. `defineEntity("plans", { ... }, { schema: "public" })`와 `new EntitySchema({ target, schema: "public", ... })`처럼 씁니다. `em.resolveEntitySchema(Plan)`은 엔티티가 해석되는 스키마를 반환합니다. 엔티티가 테넌트 전략을 따르면 `undefined`를 반환합니다. MySQL과 SQLite에는 스키마 계층이 없으므로 이 옵션을 무시합니다.
 
 ::: warning
 고정은 라우팅 결정이지 접근 제어가 아닙니다. 모든 테넌트가 고정 테이블의 같은 행을 읽고 씁니다. 테넌트 소유 데이터는 고정하지 않은 엔티티에 두세요.
@@ -530,7 +530,7 @@ SELECT * FROM "public"."plan"
 
 ### 프로그래밍 방식 접근
 
-커스텀 미들웨어나 테스트 같은 고급 사용 사례를 위해 전략 클래스가 export 되어 있습니다:
+커스텀 미들웨어나 테스트 같은 고급 용도에 쓰도록 전략 클래스를 export합니다.
 
 ```typescript
 import {
@@ -545,69 +545,73 @@ import {
 
 ## 전략 3: `tenant_column` (모든 다이얼렉트 지원)
 
-스키마 기반 격리는 PostgreSQL이 필요합니다. 앱이 MySQL이나 SQLite에서 돌아가거나, 테넌트 수가 수천 개로 불어나서 테넌트당 스키마 하나씩 만드는 게 카탈로그와 마이그레이션 부담이 되기 시작한다면, 세 번째 옵션이 있습니다 — 모든 테넌트의 행을 같은 테이블에 넣고 디스크리미네이터 컬럼으로 구분하는 방식입니다.
+스키마 기반 격리에는 PostgreSQL이 필요합니다. 하지만 앱이 MySQL이나 SQLite에서 실행될 수도 있습니다. 테넌트가 수천 개로 늘어나 테넌트마다 스키마를 하나씩 만드는 일이 카탈로그와 마이그레이션에 부담이 될 수도 있습니다. 이럴 때 쓰는 세 번째 방법이 있습니다. 모든 테넌트의 행을 같은 테이블에 넣고 구분 컬럼(discriminator column)으로 나누는 방식입니다.
 
-처음에 소개한 **#3** 접근입니다 — DB 하나, 스키마 하나, 테넌트 범위 테이블마다 `tenant_id` 컬럼. 전통적으로 이 방식은 위험합니다. `WHERE tenant_id = ?` 하나 빠뜨리면 다른 테넌트 데이터가 누출되니까요. Stingerloom은 이를 안전하게 만듭니다 — 모든 read / update / delete에 predicate를 자동으로 주입하고, 모든 insert에서 이를 검증하며, 의도적인 크로스 테넌트 접근이 필요한 관리자 케이스에는 명시적인 탈출구를 제공합니다.
+처음에 소개한 #3 접근입니다. 데이터베이스와 스키마를 공유하고 테넌트 범위 테이블마다 `tenant_id` 컬럼을 둡니다. 일반적으로 이 방식은 위험합니다. `WHERE tenant_id = ?` 하나만 빠뜨려도 다른 테넌트의 행이 노출되기 때문입니다. Stingerloom은 이 방식을 안전하게 만듭니다.
 
-### 언제 `schema_qualified` 대신 선택해야 하나요?
+- 모든 읽기, 갱신, 삭제에 조건을 자동으로 주입합니다.
+- 모든 삽입에서 테넌트 값을 검증합니다.
+- 테넌트를 넘나드는 접근이 의도된 관리자 작업에는 명시적인 탈출구를 제공합니다.
+
+### `schema_qualified` 대신 선택하는 경우
 
 | 항목 | `schema_qualified` (전략 2) | `tenant_column` (전략 3) |
 |---|---|---|
 | 다이얼렉트 지원 | PostgreSQL만 | MySQL, PostgreSQL, SQLite |
-| 새 테넌트 온보딩 | 모든 테이블마다 `CREATE SCHEMA` + `CREATE TABLE (LIKE …)` | 없음 — 첫 INSERT가 `tenant_id`를 채움 |
-| 스키마 변경 | 모든 테넌트 스키마에 각각 적용 | 한 번 적용하면 모든 테넌트가 즉시 반영 |
+| 새 테넌트 온보딩 | 모든 테이블마다 `CREATE SCHEMA` + `CREATE TABLE (LIKE …)` | 없음: 첫 INSERT가 `tenant_id`를 채움 |
+| 스키마 변경 | 모든 테넌트 스키마에 각각 적용 | 한 번 적용하면 모든 테넌트에 즉시 반영 |
 | `pg_catalog` 부하 | N 테이블 × M 테넌트 | 전체 N 테이블 |
 | 일반적인 테넌트 수 | 수십 ~ 수백 개 | 수천 개 이상 |
 | 격리 경계 | PostgreSQL 스키마 (DB 수준 강제) | ORM이 강제하는 WHERE 절 |
-| Raw SQL 안전성 | `search_path`나 qualified 이름으로 이미 스코프됨 | **수동으로 predicate를 포함해야 함** |
+| raw SQL 안전성 | `search_path`나 스키마 한정 이름으로 이미 범위가 정해짐 | 조건을 직접 넣어야 함 |
 
-`schema_qualified`는 DB 수준의 더 강한 격리를 제공합니다. 잘못된 컨텍스트에서 raw `SELECT * FROM user`를 실행하면 다른 테넌트의 데이터가 아니라 잘못된 스키마를 조회하게 됩니다. `tenant_column`은 그런 강한 경계를 내주는 대신, 테넌트당 DDL 없이 수천 개의 테넌트로 확장되는 단일 공유 스키마를 얻습니다.
+`schema_qualified`는 데이터베이스 수준에서 더 강하게 격리합니다. 잘못된 컨텍스트에서 raw `SELECT * FROM user`를 실행해도 다른 테넌트의 데이터가 아니라 엉뚱한 스키마를 조회할 뿐입니다. `tenant_column`은 이 강한 경계를 내주고 공유 스키마 하나를 얻습니다. 이 스키마는 테넌트마다 DDL을 실행하지 않고도 테넌트 수천 개로 확장됩니다.
 
 ### 전략 활성화
 
 ```typescript
 await em.register({
-  type: "mysql",            // "postgres" / "sqlite" 도 가능
+  type: "mysql",            // "postgres"나 "sqlite"도 가능
   // ...
   entities: [User, Post, Invoice],
   synchronize: true,
   tenantStrategy: "tenant_column",
   tenantColumnName: "tenant_id",   // optional — "tenant_id" is the default
   tenantColumnType: "varchar",     // optional — "varchar" | "uuid" | "int" | "bigint"
-  tenantColumnLength: 64,          // optional — varchar 에만 적용
-  tenantOnMissingContext: "throw", // optional — "throw" | "warn" (기본값) | "allow"
+  tenantColumnLength: 64,          // optional: varchar에만 적용
+  tenantOnMissingContext: "throw", // optional: "throw" | "warn" (기본값) | "allow"
 });
 ```
 
-### 자동으로 일어나는 일
+### 자동으로 적용되는 동작
 
-`tenantStrategy: "tenant_column"`을 설정하면, 엔티티별 코드 없이도 ORM이 모든 엔티티에 네 가지 동작을 적용합니다:
+`tenantStrategy: "tenant_column"`을 설정하면 엔티티별 코드 없이도 ORM이 모든 엔티티에 네 가지 동작을 적용합니다.
 
-1. **DDL 주입.** `SchemaRegistrar`가 모든 테이블에 `tenant_id VARCHAR(64) NOT NULL` (또는 설정된 타입)을 추가합니다. 엔티티 클래스에 컬럼을 선언할 필요가 없습니다.
-2. **INSERT 자동 채움 + 검증.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()`가 `MetadataContext.getCurrentTenant()` 값으로 `tenant_id`를 채웁니다. 테넌트 컨텍스트 없이 INSERT 하면 `MISSING_TENANT_CONTEXT`를 던지고, 컨텍스트와 다른 `tenant_id`를 명시적으로 넘기면 `TENANT_MISMATCH`를 던집니다. UPDATE 쪽도 마찬가지여서, 다른 테넌트를 지목한 payload로 `save()`를 하면 행이 옮겨지는 대신 거부됩니다.
-3. **read WHERE 주입.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, 그리고 `SelectQueryBuilder.getMany()` / `getCount()` / `exists()`에 `AND tenant_id = ?`가 자동으로 붙습니다. Eager JOIN과 relation loader도 같은 predicate를 상속하고, [Raw Pipeline](./raw-pipeline.md#멀티테넌시)의 `em.pipe()` 배치와 `count()`에도 붙어요.
-4. **write WHERE 주입.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()`, 그리고 `save()` / `saveMany()`의 UPDATE 분기까지 전부 `AND tenant_id = ?`를 받기 때문에, 테넌트 A에서 실행한 쿼리가 테넌트 B의 행을 건드릴 수 없습니다. upsert 계열도 충돌 분기에 같은 predicate가 붙어요(아래 표 참고). 테넌트 컨텍스트가 **아예 없는** 상태의 동작은 아래 `tenantOnMissingContext` 정책이 결정합니다.
+1. **DDL 주입.** `SchemaRegistrar`가 모든 테이블에 `tenant_id VARCHAR(64) NOT NULL`을 추가합니다. 타입은 설정에 따라 달라집니다. 엔티티 클래스에 컬럼을 선언할 필요가 없습니다.
+2. **INSERT 자동 채움 + 검증.** `save()` / `saveMany()` / `insertMany()` / `upsert()` / `batchUpsert()`가 `MetadataContext.getCurrentTenant()` 값으로 `tenant_id`를 채웁니다. 테넌트 컨텍스트 없이 INSERT하면 `MISSING_TENANT_CONTEXT`를 던집니다. 컨텍스트와 다른 `tenant_id`를 명시적으로 넘기면 `TENANT_MISMATCH`를 던집니다. UPDATE 쪽도 마찬가지입니다. 다른 테넌트를 지목한 페이로드로 `save()`를 호출하면 행을 옮기지 않고 거부합니다.
+3. **읽기 WHERE 주입.** `find()`, `findOne()`, `findByPK()`, `findAndCount()`, `findWithCursor()`, `count()`, `exists()`, `sum()`, `avg()`, `min()`, `max()`, 그리고 `SelectQueryBuilder.getMany()` / `getCount()` / `exists()`에 `AND tenant_id = ?`가 자동으로 붙습니다. eager JOIN과 관계 로더도 같은 조건을 물려받습니다. [Raw Pipeline](./raw-pipeline.md#멀티테넌시)의 `em.pipe()` 배치와 `count()`에도 붙습니다.
+4. **쓰기 WHERE 주입.** `updateMany()`, `deleteMany()`, `delete()`, `softDelete()`, `restore()`, 그리고 `save()` / `saveMany()`의 UPDATE 분기까지 모두 `AND tenant_id = ?`를 받습니다. 그래서 테넌트 A에서 실행한 쿼리는 테넌트 B의 행을 건드리지 못합니다. upsert 계열도 충돌 분기에 같은 조건이 붙습니다. 자세한 내용은 아래 표에 있습니다. 테넌트 컨텍스트가 아예 없을 때의 동작은 아래의 `tenantOnMissingContext` 정책을 따릅니다.
 
-#### 어떤 쓰기 경로에 predicate가 붙나
+#### 조건이 붙는 쓰기 경로
 
 | 연산 | 테넌트 A에서 테넌트 B 소유 행을 건드릴 때 |
 |------|---------------------------------------------|
-| `save({ id })` / `saveMany([{ id }])` | `EntityNotFoundError` — UPDATE가 `pk AND tenant_id`로 매칭되고, 존재 확인 프로브에도 같은 스코프가 걸립니다 |
-| payload에 다른 테넌트의 `tenant_id`를 넣은 `save()` | INSERT와 UPDATE 모두 `TENANT_MISMATCH`. 테넌트 컬럼은 UPDATE `SET` 목록에 아예 들어가지 않으므로, find로 읽어 온 엔티티를 그대로 저장해도 행이 옮겨가지 않습니다 |
-| `upsert()` / `batchUpsert()` | 충돌 분기가 해당 행을 건너뜁니다 — PostgreSQL/SQLite에서는 `affected`에 0으로 잡히고, 엔티티 클래스당 한 번 경고가 남습니다 |
-| `createInsertBuilder().doUpdate()` | 동일하게 건너뜁니다. 직접 지정한 `doUpdateWhere()` 조건은 테넌트 조건과 AND로 묶여요 |
-| `createInsertBuilder().values(columns, query)` | 쿼리는 자기 테넌트 조건대로 테넌트 A의 행만 읽고, 쓰는 행에는 모두 테넌트 A가 들어갑니다. `columns`에 테넌트 컬럼을 넣으면 `INVALID_QUERY`를 던져요 |
-| `insertIgnore()` | 원래 안전합니다 — `DO NOTHING`은 기존 행을 절대 쓰지 않습니다(대신 이번 INSERT가 버려집니다) |
+| `save({ id })` / `saveMany([{ id }])` | `EntityNotFoundError`: UPDATE는 `pk AND tenant_id`로 행을 찾고 존재 확인 쿼리에도 같은 범위가 걸립니다 |
+| 페이로드에 다른 테넌트의 `tenant_id`를 넣은 `save()` | INSERT와 UPDATE 모두 `TENANT_MISMATCH`입니다. 테넌트 컬럼은 UPDATE `SET` 목록에 아예 들어가지 않습니다. 그래서 조회한 엔티티를 그대로 저장해도 행이 다른 테넌트로 옮겨지지 않습니다 |
+| `upsert()` / `batchUpsert()` | 충돌 분기가 그 행을 건너뜁니다. PostgreSQL과 SQLite에서는 `affected`에 0으로 잡히고 엔티티 클래스마다 경고가 한 번 남습니다 |
+| `createInsertBuilder().doUpdate()` | 마찬가지로 건너뜁니다. 직접 지정한 `doUpdateWhere()` 조건은 테넌트 조건과 AND로 묶입니다 |
+| `createInsertBuilder().values(columns, query)` | 쿼리는 자기 테넌트 조건에 따라 테넌트 A의 행만 읽습니다. 그리고 쓰는 행에는 모두 테넌트 A가 들어갑니다. `columns`에 테넌트 컬럼을 넣으면 `INVALID_QUERY`를 던집니다 |
+| `insertIgnore()` | 원래 안전합니다. `DO NOTHING`은 기존 행에 절대 쓰지 않고 이번 INSERT를 버립니다 |
 | `update()` / `updateMany()` / `increment()` / `decrement()` / `delete()` / `deleteMany()` / `softDelete()` / `restore()` | `affected: 0`, 아무것도 쓰지 않습니다 |
 | `createUpdateBuilder()` | `affected: 0`, 아무것도 쓰지 않습니다 |
-| 테넌트 컬럼 자체를 쓰는 모든 연산 | `TENANT_MISMATCH` — 자기 행을 다른 테넌트에게 넘기는 것도 막습니다. `save()` / `updateMany()`는 *현재* 테넌트 값이면 통과시키고 `SET` 목록에서 빼지만, `createUpdateBuilder().set()`과 `createInsertBuilder().doUpdate()`는 값이 이미 렌더링된 뒤라 컬럼 자체를 거부합니다. 이 가드는 테넌트 컨텍스트가 살아 있는 동안 적용되므로, 의도적으로 행을 옮기려면 `MetadataContext.runUnscoped()`나 `MetadataContext.run("public", ...)`을 쓰세요 |
-| `clear()` | 테넌트 A의 행만 지웁니다 — 테넌트 B의 행은 남아요 |
-| `@ManyToMany` 조인 테이블의 `attachRelation()` / `detachRelation()` | `attachRelation()`은 `EntityNotFoundError`를 던지고, `detachRelation()`은 `affected: 0`을 반환합니다. 조인 테이블에는 테넌트 컬럼이 없어서, 쓰기 전에 두 id를 각자의 테이블에서 테넌트 조건으로 조회합니다. 두 행이 모두 테넌트 A의 것이거나 한쪽이 `@NonTenantEntity()`일 때만 링크를 씁니다 |
-| `em.query()` raw SQL | **스코프 없음** — 호출 지점당 한 번 경고합니다 |
+| 테넌트 컬럼 자체를 쓰는 모든 연산 | `TENANT_MISMATCH`: 자기 행을 다른 테넌트에 넘기는 것도 막습니다. `save()`와 `updateMany()`는 *현재* 테넌트 값이면 통과시키고 `SET` 목록에서 뺍니다. 반면 `createUpdateBuilder().set()`과 `createInsertBuilder().doUpdate()`는 SQL 문이 실행될 때 값이 이미 렌더링되어 있으므로 컬럼 자체를 거부합니다. 이 가드는 테넌트 컨텍스트가 활성인 동안 적용됩니다. 의도적으로 행을 옮기려면 `MetadataContext.runUnscoped()`나 `MetadataContext.run("public", ...)`을 쓰세요 |
+| `clear()` | 테넌트 A의 행만 삭제합니다. 테넌트 B의 행은 남습니다 |
+| `@ManyToMany` 조인 테이블의 `attachRelation()` / `detachRelation()` | `attachRelation()`은 `EntityNotFoundError`를 던지고 `detachRelation()`은 `affected: 0`을 반환합니다. 조인 테이블에는 테넌트 컬럼이 없습니다. 그래서 쓰기 전에 두 id를 각자의 테이블에서 테넌트 조건으로 조회합니다. 두 행이 모두 테넌트 A의 것이거나 한쪽이 `@NonTenantEntity()`일 때만 링크를 씁니다 |
+| `em.query()` raw SQL | 범위 없음: 호출 지점마다 한 번 경고합니다 |
 
-`upsert()` / `batchUpsert()` / `createInsertBuilder().doUpdate()`는 먼저 INSERT입니다. 새 행에 채워 넣을 테넌트 값이 없으니 테넌트 컨텍스트가 없으면 `tenantOnMissingContext` 정책과 무관하게, `runUnscoped()`나 `run("public", ...)` 안에서도 거부합니다.
+`upsert()`, `batchUpsert()`, `createInsertBuilder().doUpdate()`는 먼저 INSERT를 시도합니다. 그래서 테넌트 컨텍스트가 없으면 항상 거부합니다. 새 행에 채워 넣을 테넌트 값이 없기 때문입니다. `tenantOnMissingContext` 정책과 관계없고 `runUnscoped()`나 `run("public", ...)` 안에서도 마찬가지입니다.
 
-MySQL/MariaDB의 `ON DUPLICATE KEY UPDATE`에는 `WHERE`를 붙일 수 없어서, 대입 하나하나를 `col = IF(tbl.tenant_id = ?, VALUES(col), tbl.col)` 형태로 내보냅니다(MySQL 8.0.19+에서는 `VALUES(col)` 대신 `new.__col`)(`@Version` 증가는 `version = IF(tbl.tenant_id = ?, COALESCE(tbl.version, 0) + 1, tbl.version)`). 어느 쪽이든 남의 행은 그대로 남지만, 숫자의 의미는 달라집니다. `mysql2`는 `CLIENT_FOUND_ROWS`로 접속하기 때문에 차단된 행이 `affected: 1`(매칭됐지만 아무것도 쓰지 않음)로 잡히고, 이는 INSERT가 보고하는 숫자와 같습니다(실제 갱신은 2). 어느 쪽인지 알아야 하면 행을 다시 읽어 보세요.
+MySQL/MariaDB의 `ON DUPLICATE KEY UPDATE`에는 `WHERE`를 붙이지 못합니다. 그래서 대입 하나하나를 `col = IF(tbl.tenant_id = ?, VALUES(col), tbl.col)` 형태로 내보냅니다. MySQL 8.0.19+에서는 `VALUES(col)` 대신 `new.__col`을 씁니다. `@Version` 증가는 `version = IF(tbl.tenant_id = ?, COALESCE(tbl.version, 0) + 1, tbl.version)`으로 내보냅니다. 어느 쪽이든 다른 테넌트의 행은 그대로 남습니다. 하지만 `affected` 숫자의 뜻은 달라집니다. `mysql2`는 `CLIENT_FOUND_ROWS` 플래그를 켜고 연결합니다. 그래서 차단된 행은 `affected: 1`로 잡힙니다. 행은 찾았지만 아무것도 쓰지 않았다는 뜻입니다. 이 숫자는 INSERT가 보고하는 숫자와 같고 실제 갱신은 2를 보고합니다. 어느 쪽인지 알아야 하면 행을 다시 조회하세요.
 
 ```typescript
 @Entity()
@@ -637,7 +641,7 @@ await MetadataContext.run("acme", async () => {
 
 ### `@TenantColumn`으로 테넌트 값 읽기
 
-`@TenantColumn` 선언은 **선택 사항**입니다. 선언하든 안 하든 컬럼은 ORM이 관리합니다. 애플리케이션 코드에서 엔티티 인스턴스로부터 테넌트 id를 읽어야 할 때만 선언하세요 — 감사 로그, 관리자 대시보드, 크로스 테넌트 익스포트 같은 경우입니다:
+`@TenantColumn` 선언은 선택 사항입니다. 선언하든 안 하든 컬럼은 ORM이 관리합니다. 애플리케이션 코드가 엔티티 인스턴스에서 테넌트 id를 읽어야 할 때만 선언하세요. 감사 로그, 관리자 대시보드, 테넌트 간 익스포트가 그런 경우입니다.
 
 ```typescript
 import { TenantColumn } from "@stingerloom/orm";
@@ -646,15 +650,15 @@ import { TenantColumn } from "@stingerloom/orm";
 class AuditLog {
   @PrimaryGeneratedColumn() id!: number;
   @Column() action!: string;
-  @TenantColumn() tenantId!: string;   // 이제 log.tenantId 로 읽을 수 있음
+  @TenantColumn() tenantId!: string;   // 이제 log.tenantId로 읽을 수 있음
 }
 ```
 
-`save()` 할 때 `@TenantColumn` 프로퍼티에 값을 할당하면, 현재 컨텍스트와 반드시 일치해야 합니다 — 아니면 ORM이 `TENANT_MISMATCH`를 던집니다. INSERT든 UPDATE든 동일합니다. 프로퍼티를 수동으로 세팅해서 테넌트를 위조할 수는 없어요. 테넌트 predicate가 걸리는 동안에는 이 컬럼이 UPDATE `SET` 목록에서 빠지기 때문에, 쓰기로 행의 소유자가 바뀌는 일 자체가 없습니다.
+`save()`할 때 `@TenantColumn` 속성에 값을 할당하면 그 값은 현재 컨텍스트와 반드시 일치해야 합니다. 일치하지 않으면 ORM이 `TENANT_MISMATCH`를 던집니다. INSERT든 UPDATE든 같습니다. 속성을 직접 설정해 테넌트를 위조하지는 못합니다. 테넌트 조건이 걸리는 동안에는 이 컬럼이 UPDATE `SET` 목록에서 빠지기 때문입니다. 그래서 쓰기로 행의 소유자가 바뀌는 일 자체가 없습니다.
 
 ### `@NonTenantEntity`로 엔티티 제외
 
-일부 테이블은 본질적으로 전역입니다 — `Tenant` 테이블 자체, 시스템 설정, 공유 룩업 테이블 (국가, 통화, 피처 플래그). 이런 엔티티에는 `@NonTenantEntity()`를 붙이면 ORM이 건드리지 않습니다: DDL 컬럼 없음, WHERE 주입 없음, INSERT 검증 없음.
+어떤 테이블은 본래 전역입니다. `Tenant` 테이블 자체, 시스템 설정, 국가·통화·피처 플래그 같은 공유 룩업 테이블이 그렇습니다. 이런 엔티티에 `@NonTenantEntity()`를 붙이면 ORM이 건드리지 않습니다. DDL에 컬럼을 추가하지 않고 WHERE도 주입하지 않으며 INSERT도 검증하지 않습니다.
 
 ```typescript
 import { NonTenantEntity } from "@stingerloom/orm";
@@ -674,40 +678,40 @@ class Country {
 }
 ```
 
-테넌트 범위 엔티티에서 `@NonTenantEntity` 타겟으로 eager JOIN 해도 안전합니다 — ORM이 non-tenant 쪽의 tenant predicate를 자동으로 skip 합니다.
+테넌트 범위 엔티티에서 `@NonTenantEntity` 대상으로 eager JOIN해도 안전합니다. ORM이 테넌트 범위가 아닌 쪽의 테넌트 조건을 자동으로 건너뜁니다.
 
-같은 데코레이터가 스키마 기반 전략에서도 이 테이블들을 전역으로 유지합니다. `search_path`와 `schema_qualified`에서는 엔티티를 연결의 기본 스키마에 고정하므로, 테넌트 컨텍스트 안에서도 테이블에 닿을 수 있고 테넌트마다 복제되지도 않아요. [공유 테이블](#공유-테이블-엔티티를-스키마에-고정하기)을 참고하세요.
+같은 데코레이터는 스키마 기반 전략에서도 이 테이블을 전역으로 유지합니다. `search_path`와 `schema_qualified`에서는 엔티티를 연결의 기본 스키마에 고정합니다. 그래서 테넌트 컨텍스트 안에서도 이 테이블을 쓸 수 있습니다. 그리고 테넌트마다 복제되지도 않습니다. 자세한 내용은 [공유 테이블](#공유-테이블-엔티티를-스키마에-고정하기)을 참고하세요.
 
 ### 상속 계층
 
-테넌트 컬럼은 공유 행을 실제로 저장하는 테이블을 따라갑니다. 그래서 위치가 [상속 전략](./inheritance-mapping.md)마다 달라요.
+테넌트 컬럼은 공유 행을 실제로 저장하는 테이블을 따라갑니다. 그래서 위치가 [상속 전략](./inheritance-mapping.md)마다 달라집니다.
 
-| 전략 | 컬럼이 놓이는 곳 | 자식 엔티티의 스코프 방식 |
+| 전략 | 컬럼이 놓이는 곳 | 자식 엔티티의 범위 적용 방식 |
 |------|------------------|---------------------------|
-| `SINGLE_TABLE` | 공유 테이블에 한 번, `NOT NULL` | 루트와 같은 술어를 씁니다 |
-| `JOINED` | 루트 테이블에만 둡니다. 자식 테이블은 자기 컬럼과 키만 가져요 | 자식 INSERT가 루트 행에 테넌트를 기록합니다. 루트를 JOIN하는 읽기는 루트 컬럼으로 필터하고, 자식 테이블만 대상으로 하는 문장(`count`, `exists`, 집계, 쿼리 빌더, `delete`의 자식 쪽)은 `pk IN (SELECT pk FROM root WHERE tenant_id = ?)`로 필터합니다 |
-| `TABLE_PER_CLASS` | 모든 콘크리트 테이블 | 테이블마다 자체 술어를 갖고, 다형 루트 읽기는 각 브랜치에서 실제 컬럼을 투영합니다 |
+| `SINGLE_TABLE` | 공유 테이블에 한 번, `NOT NULL` | 루트와 같은 조건을 씁니다 |
+| `JOINED` | 루트 테이블에만 둡니다. 자식 테이블은 자기 컬럼과 키만 가집니다 | 자식 INSERT가 루트 행에 테넌트를 기록합니다. 루트를 JOIN하는 읽기는 루트 컬럼으로 필터합니다. 자식 테이블만 대상으로 하는 SQL 문(`count`, `exists`, 집계, 쿼리 빌더, `delete`의 자식 쪽)은 `pk IN (SELECT pk FROM root WHERE tenant_id = ?)`로 필터합니다 |
+| `TABLE_PER_CLASS` | 모든 구체 테이블 | 테이블마다 자기 조건을 가집니다. 다형 루트 읽기는 각 브랜치에서 실제 컬럼을 투영합니다 |
 
-이 컬럼은 해당 전략을 쓰는 연결이 살아 있는 동안에만 엔티티 메타데이터에 추가됩니다. `propagateShutdown()`이 컬럼을 되돌려 놓기 때문에, 이후에 `tenantStrategy: "tenant_column"` 없이 등록한 연결은 이 컬럼 없이 테이블을 만들고 씁니다. 같은 엔티티 클래스를 공유하면서 전략이 서로 다른 두 연결을 동시에 띄우는 구성은 지원하지 않아요. 클래스 메타데이터를 두 연결이 공유하기 때문입니다.
+이 컬럼은 해당 전략을 쓰는 연결이 살아 있는 동안에만 엔티티 메타데이터에 추가됩니다. `propagateShutdown()`은 이 컬럼을 메타데이터에서 다시 제거합니다. 그래서 그 뒤에 `tenantStrategy: "tenant_column"` 없이 등록한 연결은 이 컬럼 없이 테이블을 만들고 씁니다. 같은 엔티티 클래스를 공유하면서 전략이 서로 다른 연결 두 개를 동시에 띄우는 것은 지원하지 않습니다. 두 연결이 클래스 메타데이터를 공유하기 때문입니다.
 
 ### 탈출구: `runUnscoped()`
 
-진짜로 모든 테넌트를 가로질러 조회해야 할 때도 있습니다 — 청구 리포트, 야간 배치 작업, 데이터 익스포트. 그런 코드는 `MetadataContext.runUnscoped()`로 감싸면 WHERE 주입이 skip 됩니다:
+정말로 모든 테넌트를 가로질러 조회해야 할 때도 있습니다. 청구 리포트, 야간 배치 작업, 데이터 익스포트가 그렇습니다. 이런 코드를 `MetadataContext.runUnscoped()`로 감싸면 WHERE 주입을 건너뜁니다.
 
 ```typescript
 import { MetadataContext } from "@stingerloom/orm";
 
 await MetadataContext.runUnscoped(async () => {
   const allPosts = await em.find(Post);
-  // → SELECT ... FROM post           ← tenant 필터 없음
+  // → SELECT ... FROM post           ← 테넌트 필터 없음
 });
 ```
 
-`runUnscoped()`는 **read에만** 적용됩니다. INSERT는 여전히 테넌트 컨텍스트를 요구합니다 — `run("acme", …)` 블록 안에서 호출한 `runUnscoped()`는 `acme`로 INSERT 하고, 모든 `run()` 바깥에서 호출하면 채울 값이 없으니 `MISSING_TENANT_CONTEXT`를 던집니다. 이 비대칭은 의도적입니다 — 관리자 read는 안전하지만, 테넌트 귀속 없는 관리자 write는 안전하지 않으니까요.
+`runUnscoped()`는 읽기에만 적용됩니다. INSERT에는 여전히 테넌트 컨텍스트가 필요합니다. `run("acme", …)` 블록 안에서 호출한 `runUnscoped()`는 `acme`로 INSERT합니다. 어떤 `run()`에도 속하지 않은 곳에서 호출하면 채울 값이 없으므로 `MISSING_TENANT_CONTEXT`를 던집니다. 이 비대칭은 의도한 것입니다. 관리자의 읽기는 안전하지만 테넌트가 정해지지 않은 관리자의 쓰기는 안전하지 않기 때문입니다.
 
 ### 쿼리 단위 opt-out
 
-`runUnscoped()`는 컨텍스트 전체에 적용됩니다. 특정 쿼리 하나만 필터를 우회해야 한다면 쿼리 단위 opt-out을 사용하세요:
+`runUnscoped()`는 컨텍스트 전체에 적용됩니다. 특정 쿼리 하나만 필터를 우회해야 한다면 쿼리 단위 opt-out을 쓰세요.
 
 ```typescript
 // FindOption
@@ -719,13 +723,13 @@ await em.createQueryBuilder(Post, "p")
   .getMany();
 ```
 
-쿼리 단위 플래그는 read에만 적용됩니다. `updateMany` / `deleteMany` / `softDelete` / `restore`는 **의도적으로** 지원하지 않습니다 — 실수로 다른 테넌트 데이터를 수정하는 경우를 방지하려면, 한 줄짜리 리팩터링으로 켤 수 있는 플래그가 아니라 명시적인 `runUnscoped()` 블록이 필요합니다.
+쿼리 단위 플래그는 읽기에만 적용됩니다. `updateMany`, `deleteMany`, `softDelete`, `restore`는 이 플래그를 의도적으로 지원하지 않습니다. 실수로 다른 테넌트에 쓰는 일을 막으려는 것입니다. 테넌트를 넘나드는 쓰기에는 한 줄짜리 리팩터링으로 켜지는 플래그가 아니라 명시적인 `runUnscoped()` 블록이 필요합니다.
 
 ### 컨텍스트 부재: `tenantOnMissingContext`
 
-위의 WHERE 주입은 어떤 테넌트를 바인딩할지 알기 위해 활성화된 `MetadataContext.run()`이 필요합니다. 컨텍스트 바깥에서 실행되는 코드 — 큐 워커, 크론 작업, 테넌트 미들웨어를 빠뜨린 라우트 — 에는 테넌트가 없으니 predicate를 만들 수 없고, 그 쿼리는 **모든 테넌트의 행**을 대상으로 하게 됩니다. INSERT는 이 상태에서 처음부터 `MISSING_TENANT_CONTEXT`로 실패했지만, read/update/delete는 로그 한 줄 없이 필터 없는 채로 실행돼 왔습니다.
+위의 WHERE 주입이 어떤 테넌트를 바인딩할지 정하려면 활성화된 `MetadataContext.run()`이 필요합니다. 큐 워커, 크론 작업, 테넌트 미들웨어를 빠뜨린 라우트처럼 컨텍스트 바깥에서 실행되는 코드에는 테넌트가 없습니다. 그러면 조건을 만들지 못하고 그 쿼리는 모든 테넌트의 행을 대상으로 합니다. INSERT는 이 상태에서 처음부터 `MISSING_TENANT_CONTEXT`로 실패했습니다. 하지만 읽기, 갱신, 삭제는 지금까지 필터 없이 실행되면서도 로그를 한 줄도 남기지 않았습니다.
 
-`tenantOnMissingContext` 옵션이 이 동작을 제어합니다:
+`tenantOnMissingContext` 옵션은 이때의 동작을 제어합니다.
 
 ```typescript
 await em.register({
@@ -737,22 +741,22 @@ await em.register({
 
 | 정책 | 테넌트 컨텍스트가 없을 때의 동작 |
 |------|--------------------------------|
-| `"warn"` (기본값) | 쿼리는 필터 없이 실행되고, 엔티티 클래스당 한 번 경고를 로그합니다. 기존의 무음 동작과 backward compatible 합니다. |
-| `"throw"` | INSERT와 같은 에러인 `MISSING_TENANT_CONTEXT`로 reject 합니다. 프로덕션에 권장합니다. |
-| `"allow"` | 쿼리를 필터 없이 그대로 실행합니다. 스코프 접근과 글로벌 접근을 의도적으로 섞어 쓰는 앱을 위한 값입니다. |
+| `"warn"` (기본값) | 쿼리는 필터 없이 실행됩니다. ORM은 엔티티 클래스마다 경고를 한 번 남깁니다. 경고 없이 실행되던 이전 동작과 호환됩니다. |
+| `"throw"` | INSERT와 같은 에러인 `MISSING_TENANT_CONTEXT`로 거부합니다. 프로덕션에 권장합니다. |
+| `"allow"` | 쿼리를 필터 없이 경고도 남기지 않고 실행합니다. 테넌트 범위 접근과 전역 접근을 의도적으로 섞어 쓰는 앱에 맞는 값입니다. |
 
-이 정책은 자동 predicate를 받는 모든 경로에 적용됩니다: `find*`, `count`/`exists`를 포함한 aggregate, `SelectQueryBuilder`, relation loader, `updateMany`, `deleteMany`, `softDelete`, `restore`, 그리고 `save()` / `saveMany()`의 UPDATE 분기입니다. INSERT의 동작은 바꾸지 않고(컨텍스트가 없으면 항상 throw), 명시적인 탈출구에서는 절대 발화하지 않습니다:
+이 정책은 자동 조건을 받는 모든 경로에 적용됩니다. `find*`, `count`와 `exists`를 포함한 집계, `SelectQueryBuilder`, 관계 로더, `updateMany`, `deleteMany`, `softDelete`, `restore`, 그리고 `save()` / `saveMany()`의 UPDATE 분기가 그 경로입니다. INSERT의 동작은 바꾸지 않습니다. INSERT는 컨텍스트가 없으면 항상 에러를 던집니다. 그리고 다음과 같은 명시적인 탈출구에서는 이 정책이 동작하지 않습니다.
 
-- `MetadataContext.runUnscoped()` — 명시적인 크로스 테넌트 블록
-- `MetadataContext.run("public", ...)` — 명시적인 관리자/부트스트랩 컨텍스트
+- `MetadataContext.runUnscoped()`: 명시적으로 테넌트를 넘나드는 블록
+- `MetadataContext.run("public", ...)`: 명시적인 관리자·부트스트랩 컨텍스트
 - 쿼리 단위 `withoutTenantScope` 플래그
 - `@NonTenantEntity()` 엔티티
 
-기본값은 backward compatibility를 위해 `"warn"`이고, 다음 메이저 버전에서 `"throw"`로 바뀝니다. 새 프로젝트라면 처음부터 `"throw"`를 설정하세요.
+기본값은 하위 호환성을 위해 `"warn"`입니다. 다음 메이저 버전에서 `"throw"`로 바뀝니다. 새 프로젝트라면 처음부터 `"throw"`를 설정하세요.
 
 #### 컨텍스트 없는 백그라운드 작업
 
-큐 워커나 크론 작업은 보통 한 번에 한 테넌트의 데이터를 처리합니다. 작업 페이로드에서 테넌트를 읽어 핸들러를 감싸면, 일반 요청과 똑같이 스코프가 적용됩니다:
+큐 워커나 크론 작업은 보통 한 번에 한 테넌트의 데이터를 처리합니다. 작업 페이로드에서 테넌트를 읽어 핸들러를 감싸세요. 그러면 일반 요청과 똑같이 테넌트 범위가 적용됩니다.
 
 ```typescript
 worker.process(async (job) => {
@@ -762,7 +766,7 @@ worker.process(async (job) => {
 });
 ```
 
-정말로 테넌트를 가로지르는 유지보수 작업(야간 익스포트, 전역 backfill)이라면 `runUnscoped()`로 의도를 명시하세요 — `"throw"`를 포함한 모든 정책에서 통과합니다:
+야간 익스포트나 전역 backfill처럼 정말로 테넌트를 가로지르는 유지보수 작업이라면 `runUnscoped()`로 의도를 명시하세요. `runUnscoped()`는 `"throw"`를 포함한 모든 정책에서 통과합니다.
 
 ```typescript
 cron.schedule("0 3 * * *", () =>
@@ -774,7 +778,7 @@ cron.schedule("0 3 * * *", () =>
 
 ### Raw SQL 경고
 
-ORM이 빌드한 쿼리에는 tenant predicate를 주입합니다. 하지만 `em.query("SELECT * FROM post")`를 직접 호출하면 Stingerloom이 SQL을 재작성할 수 없습니다 — `WHERE` 절은 개발자가 직접 책임져야 합니다. 활성 테넌트 컨텍스트 하에서 각 호출 지점이 `em.query()`를 처음 실행할 때 ORM이 다음과 같은 경고를 남깁니다:
+ORM은 자기가 빌드한 쿼리에 테넌트 조건을 주입합니다. 하지만 `em.query("SELECT * FROM post")`를 직접 호출하면 Stingerloom이 SQL을 고쳐 쓰지 못합니다. 이때 `WHERE` 절은 개발자가 직접 책임져야 합니다. 테넌트 컨텍스트가 활성인 상태에서 호출 지점마다 `em.query()`를 처음 실행하면 ORM이 다음 경고를 남깁니다.
 
 ```
 [multi-tenancy] em.query() called under tenant="acme" — raw SQL bypasses
@@ -783,40 +787,40 @@ or wrap the call in MetadataContext.runUnscoped() when cross-tenant access
 is intended. Call site: at MyService.rawReport (src/my-service.ts:42:23)
 ```
 
-호출 지점은 `em.query()`를 호출한 줄이고, 번들로 빌드한 앱에서도 마찬가지입니다. 경고는 호출 지점 단위로 중복 제거되니까 뜨거운 루프에서도 수천 번이 아니라 한 번만 찍힙니다. 쿼리 빌더가 내부에서 `em.query()`로 실행하는 문장(`getMany()`, `getCount()`, `paginate()`, `stream()`, `prepare()`, `explain()` 등)은 이미 tenant predicate를 담고 있어서 경고하지 않습니다.
+호출 지점은 `em.query()`를 호출한 줄입니다. 번들로 빌드한 앱에서도 마찬가지입니다. ORM은 호출 지점 단위로 경고의 중복을 제거합니다. 그래서 자주 실행되는 루프에서도 수천 번이 아니라 한 번만 찍힙니다. 쿼리 빌더가 내부에서 `em.query()`로 실행하는 SQL 문은 이미 테넌트 조건을 담고 있으므로 경고하지 않습니다. `getMany()`, `getCount()`, `paginate()`, `stream()`, `prepare()`, `explain()` 등이 여기에 해당합니다.
 
-ORM은 SQL 내용을 읽지 않기 때문에 `tenant_id`로 직접 거르는 문장이라도 경고가 뜹니다. 그런 호출이나 의도적인 크로스 테넌트 read는 `runUnscoped()`로 감싸서 경고를 끄면 됩니다. 어느 쪽이든 raw 문장 자체는 작성한 그대로 실행돼요.
+ORM은 SQL 내용을 읽지 않습니다. 그래서 `tenant_id`로 직접 거르는 SQL 문이라도 경고가 뜹니다. 그런 호출이나 의도적으로 테넌트를 넘나드는 읽기는 `runUnscoped()`로 감싸 경고를 끄세요. 어느 쪽이든 raw SQL 문은 작성한 그대로 실행됩니다.
 
 ### 1차 캐시 격리
 
-Stingerloom의 Identity Map (WriteBuffer)은 이 전략에서 캐시 키에 현재 테넌트를 프리픽스로 붙입니다. 그래서 테넌트 "acme"에서 `em.findByPK(Post, 1)`을 해도, 테넌트 "globex"의 캐시된 행을 절대 돌려주지 않습니다. `runUnscoped()` 내부에서는 identity 캐시를 아예 skip 합니다 — 테넌트를 가로질러 읽는 상황에서는 bare PK가 모호하니까요.
+이 전략에서 Stingerloom의 Identity Map(WriteBuffer)은 캐시 키 앞에 현재 테넌트를 붙입니다. 그래서 테넌트 "acme"에서 `em.findByPK(Post, 1)`을 호출해도 테넌트 "globex"의 캐시된 행을 절대 반환하지 않습니다. `runUnscoped()` 안에서는 identity 캐시를 아예 건너뜁니다. 테넌트를 가로질러 읽을 때는 기본 키만으로는 행을 하나로 특정하지 못하기 때문입니다.
 
 ### Stingerloom이 RLS를 지원하지 않는 이유
 
-PostgreSQL Row-Level Security (`CREATE POLICY`)가 `tenant_column`의 더 안전한 버전으로 종종 제안됩니다 — ORM 대신 DB가 predicate를 강제한다는 이유로요. Stingerloom은 의도적으로 RLS를 지원하지 않습니다:
+PostgreSQL의 Row-Level Security(RLS, `CREATE POLICY`)는 `tenant_column`보다 안전한 방식으로 가끔 제안됩니다. ORM 대신 데이터베이스가 조건을 강제하기 때문입니다. 하지만 Stingerloom은 의도적으로 RLS를 지원하지 않습니다.
 
-- **PostgreSQL 전용.** `tenant_column`을 고른 주된 이유(다이얼렉트 이식성)를 스스로 무효화합니다.
-- **플래너 함정.** `STABLE` / `LEAKPROOF`로 표시되지 않은 RLS predicate는 인덱스를 우회하고 plan cache를 무효화할 수 있습니다. 사후 진단이 어려운 문제입니다.
-- **범위 폭증.** `CREATE POLICY`는 ORM이 처음부터 끝까지 소유해야 하는 DDL입니다 — 정책 생성, diff, 마이그레이션 — 단일 다이얼렉트 기능을 위해 스키마 서브시스템의 표면적을 두 배로 키우게 됩니다.
+- **PostgreSQL 전용.** `tenant_column`을 고르는 주된 이유는 다이얼렉트 이식성입니다. RLS는 이 이유를 없애 버립니다.
+- **플래너 함정.** `STABLE`이나 `LEAKPROOF`로 표시하지 않은 RLS 조건은 인덱스를 우회하고 플랜 캐시를 무효화할 수 있습니다. 이런 문제는 나중에 진단하기 어렵습니다.
+- **범위 폭증.** `CREATE POLICY`는 ORM이 처음부터 끝까지 맡아야 하는 DDL입니다. 정책 생성, diff, 마이그레이션을 모두 맡아야 합니다. 다이얼렉트 하나의 기능 때문에 스키마 서브시스템의 표면적이 두 배로 커집니다.
 
-PostgreSQL에서 DB 수준 행 격리가 필요하다면, Stingerloom과 별도로 DBA 레이어에서 RLS 정책을 적용하세요 — ORM이 이를 관리할 거라고 기대하지는 마시고요.
+PostgreSQL에서 데이터베이스가 강제하는 행 수준 격리가 필요하다면 Stingerloom과 별도로 DBA 레이어에서 RLS 정책을 적용하세요. ORM은 이 정책을 관리하지 않습니다.
 
 ---
 
 ## 전략 4: `database` (모든 다이얼렉트, 물리 격리)
 
-`tenantStrategy: "database"`는 테넌트마다 **자기 만의 물리 데이터베이스**를 줍니다. 자체 pool, 자체 DDL, 자체 백업 파일이죠. ORM은 `MultiTenantEntityManager`라는 얇은 proxy를 노출합니다. 이 proxy는 매 호출마다 `MetadataContext.getCurrentTenant()`를 보고 알맞은 테넌트 EntityManager로 위임합니다. 내부적으로는 `DatabaseClient`가 이미 multi-DB 용으로 사용하는 named-connection 메커니즘 위에서 동작하기 때문에, 쿼리 엔진을 깊게 다시 쓰는 게 아닙니다.
+`tenantStrategy: "database"`는 테넌트마다 자기만의 물리 데이터베이스를 줍니다. 풀도, DDL도, 백업 파일도 테넌트마다 따로 있습니다. ORM은 이 전략을 `MultiTenantEntityManager`라는 얇은 프록시로 제공합니다. 이 프록시는 호출마다 `MetadataContext.getCurrentTenant()`를 보고 알맞은 테넌트의 `EntityManager`에 위임합니다. 내부에서 각 테넌트는 `DatabaseClient`가 멀티 DB 설정에 이미 쓰는 이름 있는 연결(named connection) 기능 위에서 동작합니다. 그래서 이 전략은 쿼리 엔진을 깊게 다시 쓴 것이 아닙니다.
 
-### 언제 선택하나요
+### 선택하는 경우
 
-다음 중 하나라도 해당되면 database 전략이 적합합니다:
+다음 중 하나라도 해당하면 database 전략이 맞습니다.
 
-- **컴플라이언스** — GDPR data residency, HIPAA enterprise tier, KISA 등 물리 분리가 강제되는 경우.
-- **지리적 분산** — 테넌트마다 다른 region의 DB 호스트 (예: APAC 테넌트는 서울, EU 테넌트는 프랑크푸르트).
-- **테넌트별 백업/복구 SLA** — `pg_dump tenant_acme` 한 번에 한 테넌트 데이터만 떨어지길 원하는 경우.
-- **소수 (~50 이하)의 큰 enterprise 테넌트** — free tier 수천 명에는 부적합합니다.
+- **컴플라이언스**: GDPR data residency, HIPAA enterprise tier, KISA처럼 물리 분리를 요구하는 경우입니다.
+- **지리적 분산**: 테넌트마다 다른 지역의 DB 호스트를 쓰는 경우입니다. APAC 테넌트는 서울에, EU 테넌트는 프랑크푸르트에 두는 식입니다.
+- **테넌트별 백업/복구 SLA**: `pg_dump tenant_acme` 한 번으로 한 테넌트의 데이터만 받아야 하는 경우입니다.
+- **소수의 큰 enterprise 테넌트**: 보통 50곳 이하의 enterprise 고객입니다. free tier 계정 수천 개에는 맞지 않습니다.
 
-free tier가 수천 개인 SaaS 시나리오에서는 `tenant_column`이 운영 비용이 훨씬 낮습니다. 엄격한 격리가 추가 pool, 추가 배포, 추가 마이그레이션 비용을 정당화할 때만 `database`를 선택하세요.
+저렴한 테넌트가 수천 개인 SaaS라면 `tenant_column`의 운영 비용이 훨씬 낮습니다. 엄격한 격리가 늘어나는 풀, 배포, 마이그레이션 비용만큼 가치가 있을 때만 `database`를 고르세요.
 
 ### 전략 활성화
 
@@ -851,20 +855,20 @@ await MetadataContext.run("acme", () => em.find(User));   // → app_acme DB
 await MetadataContext.run("globex", () => em.find(User)); // → app_globex DB
 ```
 
-같은 옵션이 MySQL, SQLite에서도 동작합니다. 테넌트별 `type` / `host`만 바꿔 주세요.
+같은 옵션이 MySQL과 SQLite에서도 동작합니다. 테넌트별 `type`과 `host`만 바꾸세요.
 
 ### Resolver vs. 정적 map
 
-테넌트와 물리 DB의 매핑을 router에 알려주는 두 가지 방식이 있습니다:
+테넌트와 물리 DB의 매핑을 라우터에 알리는 방식은 두 가지입니다.
 
-- **`tenantDatabaseResolver: (tenantId) => DatabaseClientOptions | string`** — 테넌트 첫 사용 시 한 번 호출됩니다. 전체 옵션 객체를 반환하면 router가 새 pool을 자동 프로비저닝하고, 문자열을 반환하면 `DatabaseClient.connect()`로 미리 등록해 둔 named connection을 사용합니다. 실패는 캐시되지 않습니다 — 재시도 시 resolver가 다시 호출됩니다.
-- **`tenantDatabaseMap: Record<string, string>`** — 정적 매핑 dictionary. 모든 테넌트가 배포 시점에 알려져 있을 때 유용합니다. resolver보다 먼저 검사됩니다.
+- **`tenantDatabaseResolver: (tenantId) => DatabaseClientOptions | string`**: 테넌트를 처음 쓸 때 한 번 호출됩니다. 전체 옵션 객체를 반환하면 라우터가 새 풀을 자동으로 프로비저닝합니다. 문자열을 반환하면 `DatabaseClient.connect()`로 미리 등록해 둔 이름 있는 연결을 씁니다. 실패는 캐시하지 않으므로 재시도하면 resolver를 다시 호출합니다.
+- **`tenantDatabaseMap: Record<string, string>`**: 정적 매핑 객체입니다. resolver보다 먼저 검사합니다. 모든 테넌트를 배포 시점에 알 때 유용합니다.
 
-둘 다 동시에 사용할 수 있습니다. 같은 테넌트에 대한 항목이 양쪽에 있으면 map이 이깁니다.
+둘을 함께 써도 됩니다. 같은 테넌트의 항목이 양쪽에 있으면 map이 우선합니다.
 
-### Eager 프로비저닝
+### 사전 프로비저닝
 
-lazy 해석은 개발 환경에서는 괜찮지만, 프로덕션 트래픽이 첫 요청에서 cold-start 비용을 내면 안 됩니다:
+지연 해석은 개발 환경에서는 괜찮습니다. 하지만 프로덕션 트래픽이 첫 요청에서 콜드 스타트 비용을 치르면 안 됩니다.
 
 ```typescript
 await em.register({
@@ -875,22 +879,22 @@ await em.register({
 });
 ```
 
-`eagerProvisionTenants`는 `register()`가 반환되기 전에 listed 테넌트의 resolver를 실행하고 `synchronize`까지 마칩니다. 시작 헬스 체크와 함께 쓰세요.
+`eagerProvisionTenants`는 `register()`가 반환되기 전에 목록에 있는 테넌트마다 resolver를 실행하고 `synchronize`까지 마칩니다. 시작 시 헬스 체크와 함께 쓰세요.
 
 ### Public 컨텍스트 동작
 
-쿼리가 어떤 `MetadataContext.run()` 블록 **밖에서** `MultiTenantEntityManager`에 도달하면 정책이 필요합니다:
+쿼리가 `MetadataContext.run()` 블록 밖에서 `MultiTenantEntityManager`에 도달하면 이 전략에는 처리 정책이 필요합니다.
 
 ```typescript
-publicTenantBehavior: "default"   // (기본값) admin / public EntityManager 로 라우팅
-publicTenantBehavior: "throw"     // MISSING_TENANT_CONTEXT 로 거부
+publicTenantBehavior: "default"   // (기본값) admin / public EntityManager로 라우팅
+publicTenantBehavior: "throw"     // MISSING_TENANT_CONTEXT로 거부
 ```
 
-모든 요청에 테넌트가 *반드시* 설정되어야 하는 HTTP 서비스에서는 `"throw"`를 추천합니다. 컨텍스트 누락이 silent admin DB 쓰기 대신 fail-fast 버그가 됩니다.
+모든 요청에 테넌트가 *반드시* 설정되어야 하는 HTTP 서비스에서는 `"throw"`를 권장합니다. 그러면 컨텍스트 누락이 아무도 모르게 admin DB에 쓰는 대신 즉시 드러나는 버그가 됩니다.
 
-### Cross-tenant 트랜잭션은 금지됩니다 {#cross-tenant-transactions-are-forbidden}
+### 테넌트 간 트랜잭션 금지 {#cross-tenant-transactions-are-forbidden}
 
-SQL 트랜잭션은 단일 connection에 묶이고, connection은 단일 물리 DB에 묶입니다. 따라서 트랜잭션 도중 테넌트를 바꾸면 atomicity를 보장할 방법이 없습니다:
+SQL 트랜잭션은 연결 하나에 묶이고 연결은 물리 DB 하나에 묶입니다. 그래서 트랜잭션 도중에 테넌트를 바꾸면 원자성(atomicity)을 보장하지 못합니다.
 
 ```typescript
 await MetadataContext.run("acme", async () => {
@@ -898,20 +902,20 @@ await MetadataContext.run("acme", async () => {
     await em.save(User, { name: "alice" });
 
     await MetadataContext.run("globex", async () => {
-      // OrmErrorCode.CROSS_TENANT_TRANSACTION 으로 throw
+      // OrmErrorCode.CROSS_TENANT_TRANSACTION으로 에러를 던짐
       await em.save(User, { name: "carol" });
     });
   });
 });
 ```
 
-두 테넌트에 atomic 하게 써야 하는 상황이라면 사실 multi-tenant 문제가 아니라 distributed-transaction 문제입니다. 애플리케이션 레이어에서 saga / outbox 패턴을 쓰세요.
+두 테넌트에 원자적으로 써야 한다면 그것은 멀티테넌트 문제가 아니라 분산 트랜잭션 문제입니다. 애플리케이션 레이어에서 saga나 outbox 패턴을 쓰세요.
 
-PostgreSQL 스키마 전략은 모든 테넌트를 한 데이터베이스에 두므로, 그쪽에서는 트랜잭션 하나가 여러 테넌트에 걸칠 수 있습니다. [트랜잭션 안에서 테넌트 바꾸기](#switching-tenants-inside-a-transaction)를 참고하세요.
+PostgreSQL 스키마 전략은 모든 테넌트를 한 데이터베이스에 둡니다. 그래서 그 전략에서는 트랜잭션 하나가 여러 테넌트에 걸쳐도 됩니다. 자세한 내용은 [트랜잭션 안에서 테넌트 바꾸기](#switching-tenants-inside-a-transaction)를 참고하세요.
 
 ### 관리 작업: `forEachTenant`
 
-대시보드, 감사, 마이그레이션처럼 모든 테넌트에 대해 작업해야 할 때 사용합니다:
+대시보드, 감사, 마이그레이션처럼 모든 테넌트를 대상으로 작업해야 할 때 씁니다.
 
 ```typescript
 const counts = await em.forEachTenant(async (tenantEm, tenantId) => ({
@@ -921,13 +925,13 @@ const counts = await em.forEachTenant(async (tenantEm, tenantId) => ({
 // → [{ tenantId: "acme", value: { tenantId: "acme", total: 142 } }, ...]
 ```
 
-세 가지 모드를 지원합니다:
+세 가지 모드를 지원합니다.
 
-- `"all"` (기본) — `Promise.all`, 첫 실패에서 throw.
-- `"settled"` — `Promise.allSettled`, 테넌트별 `{ value }` 또는 `{ error }` 반환.
-- `"sequential"` — 한 번에 한 테넌트씩 순차 실행. 공유 인프라에 부담을 주지 않으려는 경우 유용합니다.
+- `"all"` (기본값): `Promise.all`을 쓰고 첫 실패에서 에러를 던집니다.
+- `"settled"`: `Promise.allSettled`를 쓰고 테넌트마다 `{ value }`나 `{ error }`를 반환합니다.
+- `"sequential"`: 한 번에 테넌트 하나씩 차례로 실행합니다. 공유 인프라에 부담을 주지 않으려는 경우에 유용합니다.
 
-`forEachTenant`는 router가 이미 해석한 테넌트만 순회합니다. lazy-only 테넌트는 먼저 한 번 touch 하거나 eager 프로비저닝 해두어야 합니다.
+`forEachTenant`는 라우터가 이미 해석한 테넌트만 순회합니다. 지연 해석만 하는 테넌트는 먼저 한 번 사용하거나 미리 프로비저닝해 두어야 합니다.
 
 ### NestJS 통합
 
@@ -960,37 +964,37 @@ class UserService {
   ) {}
 
   async listUsers() {
-    // 미들웨어가 테넌트 컨텍스트를 채워주면 알맞은 DB 로 라우팅됩니다.
+    // 미들웨어가 테넌트 컨텍스트를 채우면 알맞은 DB로 라우팅됩니다.
     return this.em.find(User);
   }
 }
 ```
 
-`@InjectEntityManager()`도 그대로 동작합니다. `tenantStrategy: "database"`에서는 `MultiTenantEntityManager`가 보유한 **admin / public** `EntityManager`로 해석되어 global 테이블 조작에 적합해요.
+`@InjectEntityManager()`도 그대로 동작합니다. `tenantStrategy: "database"`에서는 `MultiTenantEntityManager`가 가진 admin / public `EntityManager`로 해석됩니다. 그래서 전역 테이블을 다룰 때 알맞습니다.
 
-### Connection pool 예산
+### 연결 풀 예산
 
-물리 격리의 단점은 connection pool의 *증식*입니다. 테넌트 50개 × `pool.max: 10`이면 DB 서버에 connection 500개를 요구하게 되는데, PostgreSQL의 기본 `max_connections`는 100입니다. 보수적인 기본값:
+물리 격리의 단점은 연결 풀이 테넌트 수만큼 *불어난다*는 점입니다. 테넌트 50개에 `pool.max: 10`이면 DB 서버에 연결 500개를 요구합니다. 그런데 PostgreSQL의 기본 `max_connections`는 100입니다. 다음처럼 보수적으로 설정하세요.
 
-- 테넌트당 `pool.max`를 작게 (예: 5).
-- `tenantConnectionTtlMs`로 idle 한 테넌트 pool을 비우고 필요할 때 재사용.
-- `DatabaseClient.getInstance().getRegisteredNames().length` 모니터링 — 예상보다 늘어나는 시점을 잡아주세요.
+- 테넌트마다 `pool.max`를 5 정도로 작게 잡습니다.
+- `tenantConnectionTtlMs`로 유휴 테넌트 풀을 비우고 필요할 때 다시 만듭니다.
+- `DatabaseClient.getInstance().getRegisteredNames().length`를 모니터링해서 등록된 연결 수가 예상보다 늘어나는 시점을 알아챕니다.
 
-### Raw SQL은 안전합니다 (경고 없음)
+### Raw SQL의 안전성 (경고 없음)
 
-격리가 connection 레벨에서 강제되기 때문에, `em.query("SELECT * FROM user")`는 항상 현재 테넌트의 DB만 봅니다. `tenant_column`의 raw SQL 경고는 이 전략에서는 발생하지 않습니다 — 우회할 `WHERE tenant_id = ?` 자체가 없기 때문이죠.
+격리를 연결 수준에서 강제하므로 `em.query("SELECT * FROM user")`는 항상 현재 테넌트의 DB만 봅니다. `tenant_column`의 raw SQL 경고는 이 전략에서 나오지 않습니다. 우회할 `WHERE tenant_id = ?` 자체가 없기 때문입니다.
 
 ---
 
 ## 레이어드 메타데이터가 테넌트를 격리하는 방식
 
-위의 테넌트 전략들은 레이어드 메타데이터 저장소 위에서 동작합니다. Docker OverlayFS와 같은 오버레이 방식이에요. 모든 `@Entity`/`@Column`/`@ManyToOne` 데코레이터는 `"public"` 레이어에 기록합니다. 테넌트 컨텍스트는 그 위에 자기 레이어를 가질 수 있고, 조회는 테넌트 레이어를 먼저 읽은 뒤 값이 없으면 public 레이어로 폴백합니다.
+위의 테넌트 전략은 레이어드 메타데이터 저장소 위에서 동작합니다. Docker OverlayFS와 같은 오버레이 방식입니다. 모든 `@Entity`/`@Column`/`@ManyToOne` 데코레이터는 `"public"` 레이어에 기록합니다. 테넌트 컨텍스트는 그 위에 자기 레이어를 가질 수 있습니다. 조회는 테넌트 레이어를 먼저 읽고 값이 없으면 public 레이어로 넘어갑니다.
 
-이 저장소는 내부 구현이라 패키지가 export하지 않습니다. 따라서 테넌트별 메타데이터 덮어쓰기(특정 테넌트만 다른 테이블 이름을 쓰는 것 등)는 공개 API가 아니에요. 공개 API가 제공하는 것은 컨텍스트 전환인 `MetadataContext.run()`과 그 위에 만든 테넌트 전략들입니다.
+이 저장소는 내부 구현이므로 패키지가 export하지 않습니다. 그래서 테넌트별 메타데이터 덮어쓰기는 공개 API가 아닙니다. 특정 테넌트만 다른 테이블 이름을 쓰는 것이 그 예입니다. 공개 API는 컨텍스트 전환인 `MetadataContext.run()`과 그 위에 만든 테넌트 전략을 제공합니다.
 
 ### 격리 보장
 
-`MetadataContext.run("acme_corp", ...)` 안에서의 조회는 **public 레이어**와 **`acme_corp` 레이어**만 병합합니다. 다른 테넌트의 레이어는 절대 포함하지 않으므로, 여러 테넌트가 동시에 활성화되어 있어도 한 테넌트의 메타데이터가 다른 테넌트로 새지 않습니다.
+`MetadataContext.run("acme_corp", ...)` 안에서의 조회는 public 레이어와 `acme_corp` 레이어만 병합합니다. 다른 테넌트의 레이어는 절대 포함하지 않습니다. 그래서 여러 테넌트가 동시에 활성화되어 있어도 한 테넌트의 메타데이터가 다른 테넌트로 새지 않습니다.
 
 ```
 MetadataContext.run("acme_corp", ...) 안에서 조회할 때
@@ -1003,19 +1007,19 @@ MetadataContext.run("acme_corp", ...) 안에서 조회할 때
 
 ## 중요한 설계 규칙
 
-**전역 상태 없음.** 모든 테넌트 식별은 `AsyncLocalStorage`를 통해 이루어집니다. 동시 요청에서도 안전합니다. 한 요청이 다른 요청의 전역 변수를 실수로 덮어쓸 수 있는 상황은 존재하지 않아요.
+**전역 상태 없음.** 모든 테넌트 식별은 `AsyncLocalStorage`를 거칩니다. 그래서 동시 요청에서도 안전합니다. 한 요청이 다른 요청의 전역 변수를 실수로 덮어쓰는 일은 없습니다.
 
-**Public 레이어는 읽기 전용.** `@Entity`와 `@Column` 데코레이터로 등록된 엔티티 메타데이터는 public 레이어에 저장됩니다. 런타임에 수정할 수 없습니다 — 테넌트 레이어만 쓰기를 허용해요.
+**Public 레이어는 읽기 전용.** `@Entity`와 `@Column` 데코레이터로 등록된 엔티티 메타데이터는 public 레이어에 저장됩니다. 이 레이어는 런타임에 수정하지 못합니다. 쓰기는 테넌트 레이어에만 허용합니다.
 
-**컨텍스트 자동 복원.** `MetadataContext.run()` 블록 밖에서는 컨텍스트가 자동으로 `"public"`으로 돌아갑니다. 테넌트 컨텍스트가 다음 요청으로 누출될 위험이 없어요.
+**컨텍스트 자동 복원.** `MetadataContext.run()` 블록 밖에서는 컨텍스트가 자동으로 `"public"`으로 돌아갑니다. 테넌트 컨텍스트가 다음 요청으로 새어 나갈 위험이 없습니다.
 
-**`setContext()`는 deprecated.** 초기 버전에서는 전역 테넌트 상태를 설정하는 `setContext()` 메서드를 사용했지만, 동시 요청에서 위험합니다. 대신 항상 `MetadataContext.run()`을 사용하세요 — `AsyncLocalStorage`를 통해 콜백에 컨텍스트를 스코핑해 줍니다.
+**`setContext()`는 deprecated.** 초기 버전의 ORM은 전역 테넌트 상태를 설정하는 `setContext()` 메서드를 썼습니다. 이 메서드는 동시 요청에서 위험합니다. 대신 항상 `MetadataContext.run()`을 쓰세요. `MetadataContext.run()`은 `AsyncLocalStorage`로 컨텍스트의 범위를 콜백 안으로 한정합니다.
 
 ---
 
 ## 예제 프로젝트
 
-완전한 NestJS 멀티테넌시 예제가 `examples/nestjs-multitenant/`에 있습니다. 미들웨어 설정, 스키마 프로비저닝, 테넌트 격리 CRUD 작업을 보여줘요.
+완전한 NestJS 멀티테넌시 예제가 `examples/nestjs-multitenant/`에 있습니다. 이 예제는 미들웨어 설정, 스키마 프로비저닝, 테넌트별로 격리된 CRUD 작업을 보여 줍니다.
 
 ```bash
 cd examples/nestjs-multitenant
@@ -1027,6 +1031,6 @@ pnpm start
 
 ## 다음 단계
 
-- [Configuration Guide](./configuration.md) — 풀링, Read Replica 등 운영 설정
-- [Migrations](./migrations.md) — 프로덕션 스키마 관리
-- [Advanced Features](./advanced.md) — 이벤트 시스템, N+1 감지, 성능 최적화
+- [설정](./configuration.md): 풀링, 읽기 레플리카 같은 운영 설정
+- [마이그레이션](./migrations.md): 프로덕션 스키마 관리
+- [고급 기능 모음](./advanced.md): 이벤트 시스템, N+1 감지, 성능 최적화

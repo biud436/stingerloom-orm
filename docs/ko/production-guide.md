@@ -1,14 +1,14 @@
-# Production 운영 가이드
+# 프로덕션 운영 가이드
 
-개발 환경에서 프로덕션으로 전환할 때 필요한 설정, 전략, 트러블슈팅을 다루는 문서예요. 프로덕션 배포 전에 꼭 확인해 주세요.
+프로덕션 서비스에서 Stingerloom ORM을 안전하게 운영하려면 개발 환경과 다른 설정과 운영 전략이 필요합니다. 개발 환경에서 프로덕션으로 옮기기 전에 아래 항목을 꼭 확인하세요.
 
 ---
 
 ## 1. 권장 프로덕션 설정
 
-### Connection Pool 크기
+### 연결 풀 크기
 
-커넥션 풀 크기는 DB 서버의 `max_connections`와 애플리케이션 인스턴스 수를 기준으로 정해요.
+연결 풀 크기는 DB 서버의 `max_connections`와 애플리케이션 인스턴스 수를 기준으로 정합니다.
 
 **PostgreSQL 권장 설정**
 
@@ -50,7 +50,7 @@ await em.register({
 });
 ```
 
-> **Note:** MySQL은 `min`, `acquireTimeoutMs`, `idleTimeoutMs`를 지원하지 않아요. PostgreSQL이 더 세밀한 풀 제어가 가능해요.
+> 참고: MySQL은 `min`, `acquireTimeoutMs`, `idleTimeoutMs`를 지원하지 않습니다. PostgreSQL에서는 풀을 더 세밀하게 제어할 수 있습니다.
 
 **풀 크기 계산 공식**
 
@@ -63,9 +63,9 @@ Recommended pool.max = floor(DB max_connections / app instances) * 0.8
 
 ---
 
-### Query Timeout
+### 쿼리 타임아웃
 
-쿼리가 무한정 실행되면서 커넥션이 누수되는 걸 방지해요.
+쿼리 타임아웃은 쿼리가 끝없이 실행되어 연결이 누수되는 일을 막습니다.
 
 ```typescript
 await em.register({
@@ -74,7 +74,7 @@ await em.register({
 });
 ```
 
-특정 쿼리에만 다른 타임아웃을 적용할 수도 있어요.
+특정 쿼리에만 다른 타임아웃을 적용할 수도 있습니다.
 
 ```typescript
 // Separate timeout for heavy analytical queries
@@ -90,7 +90,7 @@ const user = await em.findOne(User, {
 });
 ```
 
-DB 드라이버별 내부 구현:
+드라이버별 내부 구현은 다음과 같습니다.
 
 | DB | Internal SQL |
 |----|-------------|
@@ -99,9 +99,9 @@ DB 드라이버별 내부 구현:
 
 ---
 
-### Retry 옵션
+### 재시도 옵션
 
-`register()`가 여는 연결을 다시 시도합니다. 데이터베이스가 아직 올라오는 중이거나 네트워크가 잠깐 닿지 않아도 애플리케이션이 시작할 수 있어요.
+`retry`는 `register()`가 여는 연결을 다시 시도합니다. 그래서 데이터베이스가 아직 시작 중이거나 네트워크가 잠깐 끊겨도 애플리케이션을 시작할 수 있습니다.
 
 ```typescript
 await em.register({
@@ -113,7 +113,7 @@ await em.register({
 });
 ```
 
-대기는 실패한 시도 뒤에 오므로, 다섯 번 시도하면 네 번 기다립니다.
+대기는 실패한 시도 뒤에 들어갑니다. 그래서 다섯 번 시도하면 네 번 기다립니다.
 
 | 실패한 시도 | 대기 시간 |
 |-------------|-----------|
@@ -126,25 +126,25 @@ await em.register({
 
 ### 시작 이후 끊긴 연결
 
-`retry`는 `register()`가 끝나면 역할이 끝납니다. 그 뒤로 서버가 닫은 연결(재시작, 페일오버, 방화벽이 끊은 유휴 연결)은 풀이 알아서 교체하고, 애플리케이션은 계속 돕니다. 남은 일은 그 사실을 관측하는 것뿐이에요. 이벤트를 메트릭으로 보내세요.
+`retry`의 역할은 `register()`가 끝나면 끝납니다. 그 뒤에 서버가 연결을 닫으면 풀이 알아서 그 연결을 교체합니다. 서버 재시작, 페일오버, 방화벽이 끊은 유휴 연결이 이런 경우입니다. 그동안 애플리케이션은 계속 실행됩니다. 남은 일은 이런 일이 일어나는지 지켜보는 것뿐입니다. 이벤트를 메트릭으로 보내세요.
 
 ```typescript
 await em.register({
   // ...
   onConnectionError: (error) => {
-    // error.code === "ORM_CONNECTION_LOST", error.cause는 드라이버 에러
+    // error.code === "ORM_CONNECTION_LOST"이고 error.cause는 드라이버 에러입니다
     metrics.increment("db.connection_lost");
   },
 });
 ```
 
-끊긴 연결 하나가 호출 한 번입니다. 호출이 한꺼번에 몰리면 데이터베이스가 재시작됐거나 페일오버된 것입니다. 꾸준히 조금씩 들어온다면 대개 애플리케이션과 데이터베이스 사이의 무언가가 유휴 연결을 닫고 있는 것이니, PostgreSQL이라면 `pool.idleTimeoutMs`를 그 타임아웃보다 짧게 잡으세요. 옵션을 주지 않으면 이벤트마다 경고 로그가 남습니다. 자세한 내용은 [시작 이후 끊긴 연결](./configuration.md#시작-이후-끊긴-연결)을 참고하세요.
+연결 하나가 끊길 때마다 콜백이 한 번 호출됩니다. 호출이 한꺼번에 몰리면 데이터베이스가 재시작됐거나 페일오버된 것입니다. 호출이 꾸준히 조금씩 들어온다면 대개 애플리케이션과 데이터베이스 사이의 무언가가 유휴 연결을 닫고 있는 것입니다. PostgreSQL이라면 `pool.idleTimeoutMs`를 그 타임아웃보다 짧게 잡으세요. `onConnectionError` 옵션을 지정하지 않으면 이벤트마다 경고 로그가 남습니다. 자세한 내용은 [시작 이후 끊긴 연결](./configuration.md#시작-이후-끊긴-연결)을 참고하세요.
 
 ---
 
 ### 로깅 레벨
 
-프로덕션에서는 slow query와 N+1 감지만 켜고, 전체 SQL 로깅은 꺼두세요.
+프로덕션에서는 느린 쿼리 경고와 N+1 감지만 켜고 전체 SQL 로깅은 꺼 두세요.
 
 ```typescript
 await em.register({
@@ -157,7 +157,7 @@ await em.register({
 });
 ```
 
-코드에서 직접 slow query를 조회할 수도 있어요.
+코드에서 느린 쿼리를 직접 조회할 수도 있습니다.
 
 ```typescript
 // Use in performance analysis endpoints, etc.
@@ -168,22 +168,22 @@ const slowQueries = em.getQueryLog().filter(
 
 ---
 
-## 2. synchronize에서 Migration으로 전환하기
+## 2. synchronize에서 마이그레이션으로 전환하기
 
 ### `synchronize: true`가 프로덕션에서 위험한 이유
 
-`synchronize: true`는 앱 시작 시 엔티티 정의와 실제 DB 스키마를 자동으로 동기화해요. 개발 중에는 편리하지만, 프로덕션에서는 다음과 같은 위험이 있어요.
+`synchronize: true`는 앱이 시작될 때 엔티티 정의에 맞춰 실제 DB 스키마를 자동으로 동기화합니다. 개발 중에는 편리합니다. 하지만 프로덕션에서는 다음과 같은 위험이 있습니다.
 
 | 위험 요소 | 설명 |
 |-----------|------|
-| **데이터 유실** | 컬럼 이름을 바꾸면 기존 컬럼을 DROP하고 새 컬럼을 ADD해요. 데이터가 사라져요. |
-| **의도치 않은 DDL** | 엔티티 수정 후 배포하면 프로덕션 DB에 스키마 변경이 즉시 적용돼요. |
-| **롤백 불가** | 자동 변경은 기록이 없어서 문제 발생 시 이전 상태로 되돌리기 어려워요. |
-| **다운타임** | 대형 테이블에 인덱스를 추가하면 full table lock이 걸릴 수 있어요. |
+| **데이터 유실** | 엔티티에 `@Column({ renamedFrom })`이 없고 두 이름이 같은 컬럼으로 보이지 않으면 컬럼 이름을 바꿀 때 기존 컬럼을 DROP하고 새 컬럼을 ADD합니다. 그 과정에서 데이터가 사라집니다. |
+| **의도치 않은 DDL** | 엔티티를 수정해서 배포하면 프로덕션 DB에 스키마 변경이 바로 적용됩니다. |
+| **롤백 불가** | 자동 변경은 기록이 남지 않습니다. 그래서 문제가 생겼을 때 이전 상태로 되돌리기 어렵습니다. |
+| **다운타임** | 큰 테이블에 인덱스를 추가하면 테이블 전체에 잠금이 걸릴 수 있습니다. |
 
 ### 단계별 전환 절차
 
-**Step 1: 현재 스키마와 엔티티 간 차이 확인**
+**Step 1: 현재 스키마와 엔티티의 차이 확인**
 
 ```typescript
 import { SchemaDiff } from "@stingerloom/orm";
@@ -197,7 +197,7 @@ console.log("Columns to change:", diff.alterColumns);
 console.log("Columns to drop:", diff.dropColumns);
 ```
 
-**Step 2: Migration 자동 생성**
+**Step 2: 마이그레이션 자동 생성**
 
 ```typescript
 import { SchemaDiff, SchemaDiffMigrationGenerator } from "@stingerloom/orm";
@@ -210,7 +210,7 @@ const file = await generator.save(content, "./migrations");
 console.log(`Migration written to ${file}`);
 ```
 
-**Step 3: Migration CLI 설정**
+**Step 3: 마이그레이션 CLI 설정**
 
 ```typescript
 // src/migrate.ts
@@ -265,7 +265,7 @@ await em.register({ synchronize: true, ... });
 await em.register({ synchronize: false, ... }); // or remove the option (default is false)
 ```
 
-**Step 5: 배포 파이프라인에 migration 단계 추가**
+**Step 5: 배포 파이프라인에 마이그레이션 단계 추가**
 
 ```bash
 # Deployment script example
@@ -276,17 +276,17 @@ pm2 restart app     # Restart the app
 
 ---
 
-## 3. Zero-Downtime Migration 전략
+## 3. 무중단 마이그레이션 전략
 
-### 안전한 Migration -- 즉시 적용 가능
+### 안전한 마이그레이션: 즉시 적용 가능
 
 | 작업 | 안전? | 이유 |
 |------|-------|------|
-| `ADD COLUMN NULL` | 안전 | 기존 행에 NULL이 들어가고, 서비스에 영향 없어요 |
-| `ADD COLUMN DEFAULT` | 안전 | 기본값으로 자동 채워져요 |
-| `CREATE INDEX CONCURRENTLY` | 안전 | 락 없이 인덱스를 생성해요 (PostgreSQL) |
-| `CREATE TABLE` | 안전 | 기존 테이블에 영향 없어요 |
-| `ADD FOREIGN KEY NOT VALID` | 안전 | 기존 데이터 검증을 건너뛰어요 |
+| `ADD COLUMN NULL` | 안전 | 기존 행에 NULL이 들어가며 서비스 영향 없음 |
+| `ADD COLUMN DEFAULT` | 안전 | 기본값으로 자동으로 채워짐 |
+| `CREATE INDEX CONCURRENTLY` | 안전 | 잠금 없이 인덱스 생성 (PostgreSQL) |
+| `CREATE TABLE` | 안전 | 기존 테이블에 영향 없음 |
+| `ADD FOREIGN KEY NOT VALID` | 안전 | 기존 데이터 검증을 건너뜀 |
 
 ```typescript
 // Safe migration example: Adding a nullable column
@@ -305,17 +305,17 @@ export class AddOptionalBioToUsers extends Migration {
 }
 ```
 
-### 위험한 Migration -- 단계별 적용 필요
+### 위험한 마이그레이션: 단계별 적용 필요
 
 | 작업 | 위험 원인 | 대응 전략 |
 |------|-----------|-----------|
 | `DROP COLUMN` | 앱 코드가 해당 컬럼을 참조하면 에러 | 코드에서 컬럼 참조 제거 후 DROP |
 | `RENAME COLUMN` | 기존 코드가 이전 이름으로 쿼리 | 새 컬럼 추가 -> 데이터 복사 -> 코드 변경 -> 이전 컬럼 삭제 |
 | `ADD COLUMN NOT NULL` | 기존 행에 값이 없으면 에러 | DEFAULT 추가 또는 NULL 허용 후 데이터 채우기 |
-| `CREATE INDEX` | Full table lock | PostgreSQL: `CONCURRENTLY` 옵션 사용 |
+| `CREATE INDEX` | 테이블 전체 잠금 | PostgreSQL: `CONCURRENTLY` 옵션 사용 |
 | `ALTER COLUMN TYPE` | 타입 변환 실패 가능 | 새 컬럼 추가 -> 변환 -> 교체 |
 
-**컬럼 이름 변경 -- Zero-Downtime 단계별 방법**
+**컬럼 이름 변경: Zero-Downtime 단계별 방법**
 
 ```typescript
 // Step 1: Add new column (app v1 writes to both columns)
@@ -343,9 +343,9 @@ export class Step3_DropOldColumn extends Migration {
 }
 ```
 
-### Blue-Green 배포 Migration 순서
+### Blue-Green 배포 마이그레이션 순서
 
-Blue-Green 배포에서는 이전 버전(Blue)과 새 버전(Green)이 동일한 DB에 동시 접근해요.
+Blue-Green 배포에서는 이전 버전(Blue)과 새 버전(Green)이 같은 DB에 동시에 접근합니다.
 
 ```
 Order:
@@ -367,11 +367,11 @@ pnpm migrate:run   # Final cleanup: DROP old columns, RENAME, etc.
 
 ---
 
-## 4. Connection Pool 모니터링
+## 4. 연결 풀 모니터링
 
 ### 풀 상태 확인
 
-PostgreSQL에서 현재 커넥션 상태를 직접 조회할 수 있어요.
+PostgreSQL에서는 현재 연결 상태를 직접 조회할 수 있습니다.
 
 ```typescript
 // Query connection status (PostgreSQL)
@@ -390,9 +390,9 @@ console.log("Connection status:", stats);
 // ]
 ```
 
-`idle in transaction`이 많으면 트랜잭션이 commit/rollback 없이 오래 열려 있다는 뜻이에요.
+`idle in transaction`이 많으면 트랜잭션이 커밋이나 롤백 없이 오래 열려 있다는 뜻입니다.
 
-**MySQL에서 커넥션 상태 조회**
+**MySQL에서 연결 상태 조회**
 
 ```typescript
 const processlist = await em.query<{ Command: string; Time: number }[]>(
@@ -403,22 +403,22 @@ const longRunning = processlist.filter((p) => p.Time > 30);
 console.log("Running for 30+ seconds:", longRunning.length);
 ```
 
-### Leak Detection (`ConnectionLeakDetector`)
+### 연결 누수 감지 (`ConnectionLeakDetector`)
 
-::: warning `pool.leakDetectionThresholdMs`는 현재 동작하지 않아요
-`PoolOptions`에 옵션이 선언되어 있고 `ConnectionLeakDetector` 클래스도 export되어 있지만, 이 둘을 연결하는 코드가 없어요. `leakDetectionThresholdMs`를 읽는 드라이버가 하나도 없어서 값을 넣어도 효과가 없어요.
+::: warning `pool.leakDetectionThresholdMs`는 현재 동작하지 않습니다
+`PoolOptions`에 이 옵션이 선언되어 있고 `ConnectionLeakDetector` 클래스도 export되어 있습니다. 하지만 둘을 연결하는 코드가 없습니다. `leakDetectionThresholdMs`를 읽는 드라이버가 하나도 없으므로 지금은 값을 지정해도 효과가 없습니다.
 
-커넥션 경로가 어긋나 있는 게 원인이에요. Detector는 `connector.acquireConnection()`이 돌려주는 `IConnection` 래퍼를 추적하는데, ORM의 실제 트랜잭션 경로는 `IDataSource.createConnection()`으로 **원시** 드라이버 커넥션을 체크아웃하고 `close()` / `commit()` / `rollback()` 여러 지점에서 해제해요. 둘을 연결하려면 모든 드라이버의 커넥션 생명주기를 바꿔야 하는데, 해제 경로를 하나라도 빠뜨리면 이미 반환된 커넥션을 계속 누수로 신고하게 돼요. 그래서 어설프게 절반만 하지 않고 보류한 상태예요.
+원인은 연결 경로가 서로 다르다는 데 있습니다. Detector는 `connector.acquireConnection()`이 반환하는 `IConnection` 래퍼를 추적합니다. 반면 ORM의 실제 트랜잭션 경로는 `IDataSource.createConnection()`으로 래퍼가 없는 드라이버 연결을 꺼내 씁니다. 그리고 `close()`, `commit()`, `rollback()` 등 여러 지점에서 그 연결을 해제합니다. 둘을 연결하려면 모든 드라이버의 연결 생명주기를 바꿔야 합니다. 이때 해제 경로를 하나라도 빠뜨리면 Detector는 없는 누수를 계속 보고합니다. 그래서 절반만 연결하지 않고 작업을 미뤄 두었습니다.
 
-그때까지는 위의 「풀 상태 확인」에 있는 DB 수준 쿼리와, 아래의 slow query 로깅 및 `queryTimeout`으로 누수를 찾으세요.
+그때까지는 위의 "풀 상태 확인"에 나온 DB 수준 쿼리로 누수를 찾으세요. 아래에 나오는 느린 쿼리 로깅과 `queryTimeout`도 함께 쓰세요.
 :::
 
-클래스 자체는 정상 동작하고 export되어 있으니, 커넥션을 직접 획득하는 코드라면 이렇게 쓸 수 있어요:
+클래스 자체는 정상적으로 동작하고 export되어 있습니다. 그래서 연결을 직접 획득하는 코드라면 다음처럼 쓸 수 있습니다.
 
 ```typescript
 import { ConnectionLeakDetector, DatabaseClient } from "@stingerloom/orm";
 
-const detector = new ConnectionLeakDetector(30_000); // 30초 초과 시 경고
+const detector = new ConnectionLeakDetector(30_000); // 30초를 넘기면 경고합니다
 const connector = DatabaseClient.getInstance().getConnection();
 
 const conn = detector.track(await connector.acquireConnection());
@@ -437,22 +437,22 @@ try {
 for 31250ms (threshold: 30000ms). Consider releasing it.
 ```
 
-Detector는 백그라운드 타이머로 스캔해요. 주기는 `checkIntervalMs`이고, 지정하지 않으면 `thresholdMs / 2`(최소 5초)가 됩니다. 스캔마다 임계값을 넘긴 커넥션당 1건씩 경고를 발행해요. 타이머는 `unref()` 처리되어 있어서 프로세스 종료를 막지 않고, 임계값을 `0`으로 주면 감지 자체가 꺼져요. `shutdown()`을 호출하면 타이머가 멈추고 추적 목록도 비워져요.
+Detector는 백그라운드 타이머로 주기적으로 스캔합니다. 주기는 `checkIntervalMs`입니다. 지정하지 않으면 `thresholdMs / 2`가 되고 최솟값은 5초입니다. 스캔할 때마다 임계값을 넘긴 연결 하나당 경고를 한 건씩 남깁니다. 타이머에는 `unref()`가 적용되어 있어서 프로세스 종료를 막지 않습니다. 임계값을 `0`으로 지정하면 감지가 아예 꺼집니다. `shutdown()`을 호출하면 타이머가 멈추고 추적 목록도 비워집니다.
 
-Detector는 **관찰 전용** 이에요 — 누수된 커넥션을 강제로 반환하지 않아요. 트랜잭션이 COMMIT 중일 수 있기 때문이죠. `queryTimeout`(아래)과 함께 쓰면, DB 수준 취소가 결국 멈춘 statement를 닫고 그 결과 커넥션도 해제돼요.
+Detector는 관찰만 합니다. 트랜잭션이 COMMIT 중일 수 있으므로 누수된 연결을 강제로 반환하지 않습니다. 아래에 나오는 `queryTimeout`과 함께 쓰세요. 그러면 멈춘 SQL 문을 데이터베이스가 결국 취소하고 그 결과 연결도 해제됩니다.
 
 **임계값 고르기:**
 
 | 시나리오 | 권장 임계값 |
 |---|---|
-| 일반 OLTP 워크로드 (<1초 쿼리) | `10000` (10초) — 누수를 빠르게 포착 |
-| 리포팅 쿼리 혼합 | `30000` (30초) |
+| 일반 OLTP 워크로드 (<1초 쿼리) | `10000` (10초): 누수를 빠르게 포착 |
+| 리포팅 쿼리가 섞인 워크로드 | `30000` (30초) |
 | 백그라운드 잡 / 대용량 배치 임포트 | `120000` (2분) 이상 |
-| **비활성화** (단기 스크립트 등) | `0` |
+| 비활성화 (단기 스크립트 등) | `0` |
 
-### Slow Query를 통한 커넥션 누수 감지
+### 느린 쿼리로 연결 누수 감지
 
-트랜잭션을 열고 닫지 않으면 커넥션이 풀에 반환되지 않아서 풀이 고갈돼요. `queryTimeout`으로 장시간 실행되는 쿼리를 자동 종료할 수 있어요.
+트랜잭션을 열고 닫지 않으면 연결이 풀에 반환되지 않습니다. 그래서 풀이 고갈됩니다. `queryTimeout`으로 오래 실행되는 쿼리를 자동으로 종료하세요.
 
 ```typescript
 await em.register({
@@ -469,9 +469,9 @@ await em.register({
 });
 ```
 
-### 커넥션 누수 트러블슈팅 가이드
+### 연결 누수 트러블슈팅 가이드
 
-**증상:** `acquireTimeoutMs` 초과 에러가 자주 발생
+증상: `acquireTimeoutMs` 초과 에러가 자주 발생합니다.
 
 **원인 1: 풀 크기가 너무 작음**
 ```typescript
@@ -492,7 +492,7 @@ async createOrder(data: CreateOrderDto) {
 }
 ```
 
-**원인 3: Query timeout 미설정**
+**원인 3: 쿼리 타임아웃 미설정**
 ```typescript
 // Solution: Set global timeout
 queryTimeout: 30000
@@ -504,7 +504,7 @@ queryTimeout: 30000
 
 ### `propagateShutdown()` 사용법
 
-`propagateShutdown()`은 `EntityManager`의 내부 상태를 안전하게 정리해요.
+`propagateShutdown()`은 `EntityManager`의 내부 상태를 안전하게 정리합니다.
 
 ```typescript
 em.propagateShutdown(); // This method performs:
@@ -515,11 +515,11 @@ em.propagateShutdown(); // This method performs:
 // - Clean up ReplicationRouter
 ```
 
-DB 커넥션 풀 종료는 `DatabaseClient`를 통해 처리돼요.
+DB 연결 풀은 `DatabaseClient`에서 종료합니다.
 
 ### NestJS `onApplicationShutdown` 연동 예제
 
-Graceful Shutdown은 예제 프로젝트(`examples/nestjs-cats/`)의 ORM 서비스에 이미 구현되어 있어요.
+Graceful Shutdown은 예제 프로젝트 `examples/nestjs-cats/`의 ORM 서비스에 이미 구현되어 있습니다.
 
 ```typescript
 // stingerloom-orm.service.ts
@@ -578,7 +578,7 @@ main().catch(console.error);
 
 ### NestJS enableShutdownHooks 설정
 
-NestJS에서 OS 시그널 수신 시 `onApplicationShutdown`이 호출되려면 이 설정이 필요해요.
+NestJS가 OS 시그널을 받았을 때 `onApplicationShutdown`을 호출하게 하려면 이 설정이 필요합니다.
 
 ```typescript
 // main.ts (NestJS)
@@ -597,27 +597,27 @@ async function bootstrap() {
 bootstrap();
 ```
 
-> **Note:** `enableShutdownHooks()`를 호출하지 않으면 Kubernetes Pod 종료 시 `onApplicationShutdown`이 호출되지 않아요.
+> 참고: `enableShutdownHooks()`를 호출하지 않으면 Kubernetes Pod가 종료될 때 `onApplicationShutdown`이 호출되지 않습니다.
 
 ---
 
-## 6. 대규모 Multi-Tenancy 운영
+## 6. 대규모 멀티테넌시 운영
 
 ### 수백 개 테넌트의 메모리 영향
 
-레이어드 메타데이터 시스템은 AsyncLocalStorage 기반이라서, 테넌트 수가 많아도 메모리는 주로 메타데이터 레이어에서 소비돼요.
+레이어드 메타데이터 시스템은 AsyncLocalStorage를 기반으로 합니다. 그래서 테넌트가 많아도 메모리는 주로 메타데이터 레이어가 차지합니다.
 
 | 요소 | 메모리 영향 | 비고 |
 |------|------------|------|
-| Layered metadata | 테넌트당 수 KB | 엔티티 수에 비례 |
-| Connection pool | **공유** (단일 풀) | 테넌트 수와 무관 |
-| AsyncLocalStorage | 요청당 컨텍스트 생성 | 요청 완료 시 자동 정리 |
+| 레이어드 메타데이터 | 테넌트당 수 KB | 엔티티 수에 비례 |
+| 연결 풀 | 공유 (단일 풀) | 테넌트 수와 무관 |
+| AsyncLocalStorage | 요청마다 컨텍스트만 생성 | 요청 완료 시 자동 정리 |
 
-테넌트 레이어는 `MetadataContext.run()`으로 생성되고, 콜백 완료 시 자동 정리돼요. 테넌트가 1,000개라도 동시 커넥션 풀은 하나를 공유해요.
+테넌트 레이어는 `MetadataContext.run()`으로 생성됩니다. 그리고 콜백이 끝나면 자동으로 정리됩니다. 테넌트가 1,000개라도 모든 테넌트가 연결 풀 하나를 함께 씁니다.
 
-### Connection Pool 공유 전략
+### 연결 풀 공유 전략
 
-PostgreSQL 스키마 기반 멀티테넌시에서는 모든 테넌트가 하나의 커넥션 풀을 공유해요. 트랜잭션마다 `SET LOCAL search_path`로 스키마를 전환하기 때문에 추가 커넥션이 필요 없어요.
+PostgreSQL 스키마 기반 멀티테넌시에서는 모든 테넌트가 연결 풀 하나를 공유합니다. 트랜잭션마다 `SET LOCAL search_path`로 스키마를 전환하므로 연결을 더 만들 필요가 없습니다.
 
 ```typescript
 // PostgreSQL multi-tenancy: Handle all tenants with a single pool.max
@@ -637,7 +637,7 @@ await em.register({
 
 ### 테넌트 프로비저닝 자동화
 
-`PostgresTenantMigrationRunner`가 새 테넌트 스키마를 자동 생성해요. 내부적으로 provisioning lock을 사용해서 중복 프로비저닝을 방지해요.
+`PostgresTenantMigrationRunner`는 새 테넌트 스키마를 자동으로 생성합니다. 그리고 내부에서 프로비저닝 잠금을 사용해 같은 테넌트를 중복으로 프로비저닝하지 않게 막습니다.
 
 ```typescript
 // tenant-provisioning.service.ts
@@ -713,7 +713,7 @@ export class TenantMiddleware implements NestMiddleware {
 
 ### 대량 테넌트 초기화 시 고려사항
 
-테넌트가 수백 개일 때 앱 시작 시 전부 프로비저닝하면 시작 시간이 느려질 수 있어요.
+테넌트가 수백 개일 때 앱 시작 시점에 전부 프로비저닝하면 시작이 느려질 수 있습니다.
 
 ```typescript
 // Recommended: Provision in batches
@@ -730,13 +730,13 @@ async function provisionAllTenants(
 }
 ```
 
-> **Note:** `ensureSchema()`는 내부 lock을 사용해서, 같은 tenantId로 동시 호출해도 프로비저닝은 한 번만 일어나요. 새 테넌트 등록 API에서 안전하게 사용할 수 있어요.
+> 참고: `ensureSchema()`는 내부 잠금을 사용합니다. 그래서 같은 tenantId로 동시에 호출해도 프로비저닝은 한 번만 일어납니다. 새 테넌트 등록 API에서도 안전하게 쓸 수 있습니다.
 
 ---
 
 ## 전체 프로덕션 설정 예제
 
-NestJS 프로덕션 환경에서 권장하는 전체 설정 예제예요.
+NestJS 프로덕션 환경에서 권장하는 전체 설정 예제입니다.
 
 ```typescript
 // app.module.ts
@@ -817,9 +817,9 @@ bootstrap();
 
 ---
 
-## Next Steps
+## 다음 단계
 
-- [Migrations](./migrations.md) -- Migration 파일 작성과 실행
-- [Multi-Tenancy](./multi-tenancy.md) -- 레이어드 메타데이터 시스템 상세
-- [Configuration Guide](./configuration.md) -- 전체 설정 옵션 레퍼런스
-- [Advanced Features](./advanced.md) -- N+1 감지, EntitySubscriber, EXPLAIN 쿼리
+- [Migrations](./migrations.md): 마이그레이션 파일 작성과 실행
+- [Multi-Tenancy](./multi-tenancy.md): 레이어드 메타데이터 시스템 상세
+- [Configuration Guide](./configuration.md): 전체 설정 옵션 레퍼런스
+- [Advanced Features](./advanced.md): N+1 감지, EntitySubscriber, EXPLAIN 쿼리
